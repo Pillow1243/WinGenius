@@ -2,10 +2,14 @@
 """Recompute docs/stats.json from real test runs.
 
     python scripts/stats.py --run     # run the suites, rewrite stats.json + showcase
-    python scripts/stats.py --check  # fast: only verify the stored numbers
+    python scripts/stats.py --check  # fast, stdlib-only: verify the stored numbers
 
 Earlier releases quoted hand-copied numbers (1,829 / 459 / 75%) that no longer
 matched any suite.  This script makes the numbers come from the suites.
+
+`--check` deliberately imports nothing from `app`: it runs in the lint job,
+which only installs ruff.  It counts the declarative `@tool(...)` decorators
+instead of loading the registry; `--run` verifies that the live registry agrees.
 """
 from __future__ import annotations
 
@@ -15,6 +19,7 @@ import os
 import re
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -29,6 +34,9 @@ SUITES = [
     ("security", "tests/security_test.py", re.compile(r"SECURITY CHECK\s+PASS\s+(\d+)")),
     ("packaging", "packaging/verify_package.py", re.compile(r"(\d+)\s*/\s*\d+[^\n]*checks passed")),
 ]
+
+_TOOL_DECORATOR = re.compile(r"^\s*@tool\(", re.M)
+_APP_VERSION = re.compile(r'^APP_VERSION\s*=\s*"([^"]+)"', re.M)
 
 
 def environment() -> dict:
@@ -52,7 +60,19 @@ def collect() -> dict:
     return counts
 
 
-def tool_count() -> int:
+def static_tool_count() -> int:
+    """Count declared tools without importing Qt or any third-party package."""
+    return sum(len(_TOOL_DECORATOR.findall(path.read_text(encoding="utf-8")))
+               for path in sorted((ROOT / "app" / "tools").glob("*.py")))
+
+
+def app_version() -> str:
+    match = _APP_VERSION.search((ROOT / "app" / "core" / "paths.py").read_text(encoding="utf-8"))
+    return match.group(1) if match else ""
+
+
+def live_tool_count() -> int:
+    sys.path.insert(0, str(ROOT))
     from app.core.registry import all_tools, load_all
 
     failures = load_all()
@@ -62,13 +82,15 @@ def tool_count() -> int:
 
 
 def run() -> int:
-    sys.path.insert(0, str(ROOT))
     counts = collect()
-    from app.core.paths import APP_VERSION
+    declared = static_tool_count()
+    live = live_tool_count()
+    if declared != live:
+        raise SystemExit(f"tool count drift: {declared} declared, {live} registered")
 
     stats = {
-        "version": APP_VERSION,
-        "tools": tool_count(),
+        "version": app_version(),
+        "tools": live,
         "categories": 10,
         "suites": counts,
         "checks": sum(counts.values()),
@@ -89,19 +111,24 @@ def run() -> int:
 
 def check() -> int:
     stats = json.loads(STATS.read_text(encoding="utf-8"))
+    errors: list[str] = []
     if stats["checks"] != sum(stats["suites"].values()):
-        print("FAIL docs/stats.json: checks != sum(suites)")
-        return 1
-    sys.path.insert(0, str(ROOT))
-    from app.core.paths import APP_VERSION
+        errors.append("checks != sum(suites)")
+    if stats["version"] != app_version():
+        errors.append(f"version {stats['version']} != {app_version()}")
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    if project["project"]["version"] != stats["version"]:
+        errors.append("pyproject.toml version differs")
+    declared = static_tool_count()
+    if stats["tools"] != declared:
+        errors.append(f"tools {stats['tools']} != {declared} declared @tool decorators")
 
-    if stats["version"] != APP_VERSION:
-        print(f"FAIL docs/stats.json version {stats['version']} != {APP_VERSION}")
+    if errors:
+        for error in errors:
+            print(f"FAIL  {error}")
         return 1
-    if stats["tools"] != tool_count():
-        print(f"FAIL docs/stats.json tools {stats['tools']} != {tool_count()}")
-        return 1
-    print(f"OK  {stats['tools']} tools · {stats['checks']} checks · v{APP_VERSION}")
+    print(f"OK  {declared} tools · {stats['checks']} checks · v{app_version()}"
+          " (stdlib-only check, no Qt needed)")
     return 0
 
 

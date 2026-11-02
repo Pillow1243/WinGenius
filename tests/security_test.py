@@ -165,8 +165,10 @@ def test_api_hardening() -> None:
     from app.core.api_server import api_token, token_path
 
     previous = os.environ.get("XDG_CONFIG_HOME")
+    previous_appdata = os.environ.get("APPDATA")
     isolated = tempfile.mkdtemp(prefix="wg_sec_cfg_")
     os.environ["XDG_CONFIG_HOME"] = isolated
+    os.environ["APPDATA"] = isolated          # Windows data_dir() uses APPDATA
     try:
         fresh = token_path()
         fresh.unlink(missing_ok=True)
@@ -181,6 +183,10 @@ def test_api_hardening() -> None:
             os.environ.pop("XDG_CONFIG_HOME", None)
         else:
             os.environ["XDG_CONFIG_HOME"] = previous
+        if previous_appdata is None:
+            os.environ.pop("APPDATA", None)
+        else:
+            os.environ["APPDATA"] = previous_appdata
 
 
 # ------------------------------------------------------------- packaging
