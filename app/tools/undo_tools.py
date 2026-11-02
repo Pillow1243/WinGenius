@@ -119,6 +119,7 @@ def trash_restore(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
 
 @tool(
     id="trash_cleanup", category="files", name="خالی کردن سطل داخلی", name_en="Empty internal trash",
+    danger=True,
     desc="سطل بازیافت داخلی را برای همیشه پاک می‌کند (بعد از آن بازگردانی ممکن نیست).",
     desc_en="Permanently empties the internal trash (no undo afterwards).",
     icon="trash", order=16, keywords=("empty trash", "cleanup", "خالی", "پاکسازی"),

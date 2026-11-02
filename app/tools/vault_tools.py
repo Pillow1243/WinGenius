@@ -185,6 +185,7 @@ def vault_extract(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
 
 @tool(
     id="vault_remove", category="security", name="حذف از گاوصندوق", name_en="Remove from vault",
+    danger=True,
     desc="یک یا چند مورد را از گاوصندوق حذف می‌کند (بدون امکان بازگردانی).",
     desc_en="Deletes one or more entries from the vault (not recoverable).",
     icon="trash", order=45, keywords=("vault", "remove", "گاوصندوق", "حذف"),

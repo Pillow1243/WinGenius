@@ -63,7 +63,7 @@ Version 4.1 was the hardening + distribution release, and is included here:
 | **Files** (37) | batch rename, dedupe, sync, shred, encrypt, hashes, tree export, permissions, timestamps |
 | **System** (38) | processes, startup impact, disks, services, battery, wifi, drivers, restore points, **OCR setup**, **crash report** |
 | **Media** (18) | trim, merge, compress, GIF, frames, audio extract/normalise/tempo, **speech to text + SRT** |
-| **Network** (14) | port scan, DNS, HTTP, WHOIS, site check, speed probe (no telemetry, all local) |
+| **Network** (14) | port scan, DNS, HTTP, WHOIS, site check, speed probe (no telemetry; these are the only tools that contact the internet, and only when you run them) |
 | **Security** (17) | password/hash tools, breach check (k-anonymity), secret scan, **encrypted vault** (scrypt + authenticated header, in-place upgrade of old vaults) |
 | **Convert** (30) | units, timezones, timestamps, bases, colour, tables, CSV↔SQL↔JSON↔YAML |
 | **Developer** (18) | regex, diff, JWT, URL, cron, semver, minify, SQL format, `.env` audit |
@@ -122,16 +122,19 @@ tokens that arrive in the query string (`allow_query_token=False`).
 
 ```bash
 python tests/smoke_test.py        # 154 real-file checks
-python tests/functional_test.py   # 459 engine/tool checks (schema, stress, fuzz, guards, CLI, v42, v50, scale)
+python tests/functional_test.py   # 458 engine/tool checks (schema, stress, fuzz, guards, CLI, v42, v50, scale)
 python tests/output_test.py       # 112 output-correctness checks (is the file right?)
 python tests/ui_test.py           # 1077 UI checks incl. accessibility, offscreen Qt
+python tests/security_test.py     # 57 security/consistency regression checks
+python -m pytest -q               # 44 collected tests (pytest entry point now works)
 python packaging/verify_package.py  # 27 build-input checks
 ruff check main.py app tests packaging  # lint gate (real-bug rules only)
 ```
 
 Everything runs headless (`QT_QPA_PLATFORM=offscreen`) on Linux, Windows and macOS,
 in CI (`.github/workflows/ci.yml`) on Python 3.12 and 3.13.
-Totals: **154 smoke · 459 functional · 112 output · 1077 UI · 27 packaging = 1,829 checks**.
+Totals: **154 smoke · 458 functional · 112 output · 1077 UI · 57 security · 27 packaging
+= 1,885 checks**. Coverage is gated at 75% in `pyproject.toml`.
 
 ## Security notes
 

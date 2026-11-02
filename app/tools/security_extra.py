@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Tuple
 
 from ..core.registry import tool
 from ..core.spec import (
-    K_BOOL, K_CHOICE, K_DIR, K_FILE, K_FILES, K_TEXT,
+    K_BOOL, K_CHOICE, K_DIR, K_FILE, K_FILES, K_PASSWORD, K_TEXT,
     Field, RunContext, RunResult, ToolError,
 )
 from ..core.utils import human_size, walk_files
@@ -282,7 +282,7 @@ def checksum_manifest(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     icon="shield", order=103,
     keywords=("haveibeenpwned", "breach", "نشت رمز", "رمز لو رفته"),
     fields=[
-        Field("password", K_TEXT, "رمز عبور", "Password", required=True),
+        Field("password", K_PASSWORD, "رمز عبور", "Password", required=True),
     ],
 )
 def password_breach_check(ctx: RunContext, v: Dict[str, Any]) -> RunResult:

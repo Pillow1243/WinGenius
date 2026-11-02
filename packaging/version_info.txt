@@ -18,11 +18,11 @@ VSVersionInfo(
       [
         StringTable(
           '040904B0',
-          [StringStruct('CompanyName', 'WinGenius'),
-           StringStruct('FileDescription', 'WinGenius — همه‌کاره‌ی آفلاین ویندوز'),
+          [StringStruct('CompanyName', 'Pillow1243'),
+           StringStruct('FileDescription', 'WinGenius — دستیار همه‌کاره‌ی ویندوز'),
            StringStruct('FileVersion', '5.0.0.0'),
            StringStruct('InternalName', 'WinGenius'),
-           StringStruct('LegalCopyright', 'Free for personal and educational use'),
+           StringStruct('LegalCopyright', 'AGPL-3.0-or-later — see LICENSE'),
            StringStruct('OriginalFilename', 'WinGenius.exe'),
            StringStruct('ProductName', 'WinGenius'),
            StringStruct('ProductVersion', '5.0.0.0')])

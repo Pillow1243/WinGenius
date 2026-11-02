@@ -71,6 +71,27 @@ class Hit:
         return f"{self.name} — {self.snippet}".replace("\n", " ") if self.snippet else self.name
 
 
+def excluded_dirs() -> set:
+    """User-defined folders that must never enter the (plaintext) FTS index."""
+    try:
+        from .settings import Settings
+
+        raw = str(Settings().get("index/exclude_folders", "") or "")
+    except Exception:                                   # pragma: no cover
+        raw = ""
+    parts = [part.strip().lower().replace("\\", "/")
+             for part in raw.replace(";", "\n").splitlines() if part.strip()]
+    return set(parts)
+
+
+def _excluded_by(path: Path, extra: set) -> bool:
+    try:
+        full = str(path.resolve()).lower().replace("\\", "/")
+    except OSError:                                     # pragma: no cover
+        full = str(path).lower().replace("\\", "/")
+    return any(part and part in full for part in extra)
+
+
 def index_path() -> Path:
     return data_dir() / "search_index.sqlite3"
 
@@ -238,6 +259,7 @@ def build(folders: Iterable[str], patterns: str = "", recursive: bool = True,
     if not folders:
         raise ValueError("no folder")
     wanted = [part.strip().lower() for part in (patterns or "").replace(";", ",").split(",") if part.strip()]
+    extra_excludes = excluded_dirs()
     files: List[Path] = []
     for folder in folders:
         root = Path(folder)
@@ -251,7 +273,9 @@ def build(folders: Iterable[str], patterns: str = "", recursive: bool = True,
             try:
                 if not path.is_file():
                     continue
-                if any(part in SKIP_DIRS for part in path.parts):
+                if any(part.lower() in SKIP_DIRS for part in path.parts):
+                    continue
+                if extra_excludes and _excluded_by(path, extra_excludes):
                     continue
                 suffix = path.suffix.lower()
                 if wanted:

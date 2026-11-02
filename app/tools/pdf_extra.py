@@ -23,6 +23,7 @@ def _writer(ctx: RunContext, src: Path, values: Dict[str, Any], suffix: str) -> 
 # ------------------------------------------------------------------ page edits
 @tool(
     id="pdf_delete_pages", category="pdf", name="حذف صفحه‌های PDF", name_en="Delete PDF pages",
+    danger=True,
     desc="صفحه‌های انتخابی را از PDF حذف می‌کند (مثال: 2,5-7).",
     desc_en="Remove selected pages from a PDF (e.g. 2,5-7).",
     icon="scissors", order=115,

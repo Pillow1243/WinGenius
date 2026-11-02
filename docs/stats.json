@@ -1,0 +1,17 @@
+{
+  "version": "5.0.0",
+  "tools": 254,
+  "categories": 10,
+  "suites": {
+    "smoke": 154,
+    "functional": 458,
+    "output": 112,
+    "ui": 1077,
+    "security": 57,
+    "packaging": 27
+  },
+  "checks": 1885,
+  "coverage": 75,
+  "python": ["3.12", "3.13"],
+  "notes": "Single source of truth for the numbers quoted in README, docs and the showcase. Regenerate with: python scripts/stats.py --run"
+}

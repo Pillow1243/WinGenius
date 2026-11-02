@@ -18,6 +18,7 @@ _DEFAULTS: dict[str, Any] = {
     "files/output_dir": str(default_output_dir()),
     "files/open_after_run": True,
     "index/ocr": True,                # OCR scanned PDFs while indexing
+    "index/exclude_folders": "",      # newline/semicolon separated paths never indexed
     "app/first_run": True,
     "app/window_pos": "",
     "favorites/list": [],

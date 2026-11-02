@@ -21,6 +21,7 @@ Routes
 from __future__ import annotations
 
 import json
+import os
 import secrets
 import threading
 import time
@@ -29,7 +30,10 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 from urllib.parse import parse_qs, urlparse
 
+from .logger import get_logger
 from .paths import APP_VERSION, data_dir
+
+log = get_logger("api")
 
 
 def token_path() -> Path:
@@ -42,12 +46,24 @@ def api_token(create: bool = True) -> str:
         if path.is_file():
             token = path.read_text(encoding="utf-8").strip()
             if token:
+                try:
+                    path.chmod(0o600)   # tighten a token written by an older build
+                except OSError:
+                    pass
                 return token
         if not create:
             return ""
-        token = secrets.token_urlsafe(24)
+        token = secrets.token_urlsafe(32)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(token, encoding="utf-8")
+        # The token is a credential: create it 0600 instead of relying on the
+        # process umask (which is usually 0644 on Linux).
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(token)
+        try:
+            path.chmod(0o600)
+        except OSError:                                  # Windows ACLs, best effort
+            pass
         return token
     except OSError:
         return ""
@@ -100,7 +116,7 @@ class ApiServer:
                  token: Optional[str] = None, lang: str = "fa",
                  output_dir: str = "", jobs: Any = None,
                  rate_limit: int = 300, rate_window: float = 60.0,
-                 allow_query_token: bool = True) -> None:
+                 allow_query_token: bool = False) -> None:
         self.host = host
         self.port = int(port)
         self.token = token if token is not None else api_token()
@@ -108,8 +124,8 @@ class ApiServer:
         self.output_dir = output_dir
         self.jobs = jobs
         self.limiter = RateLimiter(limit=rate_limit, window=rate_window)
-        # A token in the URL ends up in logs and shell history; keep it working for
-        # simple `curl` demos but let callers (and the docs) prefer the header.
+        # A token in the URL ends up in logs and shell history, so it is OFF by
+        # default.  Enable explicitly only for a throwaway local demo.
         self.allow_query_token = bool(allow_query_token)
         self.started_at = 0.0
         self._server: Optional[ThreadingHTTPServer] = None
@@ -237,7 +253,10 @@ class ApiServer:
                          "details": getattr(result, "details", "")}
 
         if route == "/undo" and method == "POST":
-            count = int((body or {}).get("count", 1) or 1)
+            try:
+                count = max(1, min(50, int((body or {}).get("count", 1) or 1)))
+            except (TypeError, ValueError):
+                return 400, {"error": "count must be an integer"}
             results = journal().undo_last(count)
             return 200, {"undone": [{"id": r["id"], "status": r["status"],
                                      "restored": r["restored"], "problems": r["problems"]}
@@ -252,6 +271,15 @@ def _make_handler(server: ApiServer):
         protocol_version = "HTTP/1.1"
 
         # ------------------------------------------------------------- helpers
+        def _host_ok(self) -> bool:
+            """Refuse DNS-rebinding: only our own loopback hostnames are valid."""
+            host = (self.headers.get("Host") or "").strip().lower()
+            if host.startswith("["):                    # IPv6 literal
+                host = host[1:].split("]")[0]
+            else:
+                host = host.split(":")[0]
+            return host in {"127.0.0.1", "localhost", "::1"}
+
         def _authorised(self, query: Dict[str, list]) -> bool:
             if not server.token:
                 return True
@@ -277,8 +305,12 @@ def _make_handler(server: ApiServer):
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(raw)))
             self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Referrer-Policy", "no-referrer")
             self.end_headers()
             self.wfile.write(raw)
+            # Audit trail without ever recording the token or the query string.
+            log.info("api %s %s -> %s", self.command, urlparse(self.path).path, status)
 
         def _body(self) -> Optional[Dict[str, Any]]:
             try:
@@ -312,19 +344,26 @@ def _make_handler(server: ApiServer):
             query = parse_qs(parsed.query)
             if self._throttled():
                 return
+            if not self._host_ok():
+                self._reply(403, {"error": "host not allowed"})
+                return
             if not self._authorised(query):
                 self._reply(401, {"error": "unauthorised"})
                 return
             try:
                 status, payload = server.dispatch("GET", parsed.path, query, None)
-            except Exception as exc:                   # noqa: BLE001
-                status, payload = 500, {"error": str(exc)}
+            except Exception:                           # noqa: BLE001
+                log.exception("api GET %s failed", parsed.path)
+                status, payload = 500, {"error": "internal error"}
             self._reply(status, payload)
 
         def do_POST(self) -> None:                     # noqa: N802
             parsed = urlparse(self.path)
             query = parse_qs(parsed.query)
             if self._throttled():
+                return
+            if not self._host_ok():
+                self._reply(403, {"error": "host not allowed"})
                 return
             if not self._authorised(query):
                 self._reply(401, {"error": "unauthorised"})
@@ -338,8 +377,9 @@ def _make_handler(server: ApiServer):
                 return
             try:
                 status, payload = server.dispatch("POST", parsed.path, query, body)
-            except Exception as exc:                   # noqa: BLE001
-                status, payload = 500, {"error": str(exc)}
+            except Exception:                           # noqa: BLE001
+                log.exception("api POST %s failed", parsed.path)
+                status, payload = 500, {"error": "internal error"}
             self._reply(status, payload)
 
         def log_message(self, fmt: str, *args) -> None:   # keep the console quiet

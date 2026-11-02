@@ -5,11 +5,19 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+STATS = json.loads((ROOT / "docs" / "stats.json").read_text(encoding="utf-8"))
+_PERSIAN = str.maketrans("0123456789,", "۰۱۲۳۴۵۶۷۸۹٬")
+
+
+def fa(number: int) -> str:
+    """Western digits with a thousands separator -> Persian digits."""
+    return f"{number:,}".translate(_PERSIAN)
 sys.path.insert(0, str(ROOT))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -38,7 +46,8 @@ SHOTS = [
     ("automation_fa.png", "خودکارسازی پوشه — قانون‌های دیده‌بان", "Folder automation — watcher rules"),
     ("drop_zone.png", "رهاشدن فایل: پیشنهاد هوشمند ابزار", "Smart drop: tools suggested for your files"),
     ("job_queue.png", "صف کارها: اجرای هم‌زمان و پس‌زمینه", "Job queue: parallel background runs"),
-    ("pdf_fa.png", "دسته‌ی PDF — ۳۴ ابزار", "PDF category — 34 tools"),
+    # caption is computed from the live registry in main() so it cannot rot
+    ("pdf_fa.png", "", ""),
     ("tool_fa.png", "پنل ابزار با فرم خودکار", "Tool sheet with an auto-generated form"),
     ("result_fa.png", "اجرای واقعی + کارت نتیجه", "A real run + result card"),
     ("assistant_fa.png", "دستیار: جست‌وجوی زبان طبیعی", "Assistant: natural-language search"),
@@ -95,11 +104,17 @@ def main() -> int:
     intents = len(planner.INTENTS)
     macros = len(macro_module.builtin_macros("fa"))
     presets = len(scheduler_module.PRESETS)
-    checks = 1829            # 154 smoke + 459 functional + 112 output + 1077 UI + 27 packaging
+    suites = STATS["suites"]
+    checks = STATS["checks"]                 # docs/stats.json is the only source
+    assert checks == sum(suites.values()), "docs/stats.json total is wrong"
     shots_dir = ROOT / "docs" / "screenshots"
 
     gallery = []
     for filename, caption_fa, caption_en in SHOTS:
+        if filename == "pdf_fa.png":
+            count = len(tools_in("pdf"))
+            caption_fa = f"دسته‌ی PDF — {fa(count)} ابزار"
+            caption_en = f"PDF category — {count} tools"
         path = shots_dir / filename
         if not path.exists():
             print("missing screenshot:", filename)
@@ -245,15 +260,15 @@ curl -H "X-WinGenius-Token: &lt;token&gt;" -X POST http://127.0.0.1:8770/run -d 
         می‌شود (تا ۸ مگابایت خوانده و دور ریخته می‌شود تا کلاینت پیام را ببیند، نه reset).</p></div>
       <div class="card" style="--accent:#FFB020"><h3>تست درستی خروجی</h3>
         <p class="en">Output-correctness suite — does the file make sense?</p>
-        <p>۸۰ بررسی که خود فایل تولیدشده را باز می‌کند: تعداد صفحه‌ی PDF، ابعاد تصویر، ستون‌های CSV،
+        <p>{fa(suites["output"])} بررسی که خود فایل تولیدشده را باز می‌کند: تعداد صفحه‌ی PDF، ابعاد تصویر، ستون‌های CSV،
         بازخوانی QR، فریم‌های ویدیو و رمزگشایی واقعی گاوصندوق. سه باگ واقعی همین‌جا پیدا شد.</p></div>
       <div class="card" style="--accent:#8B5CFF"><h3>CI و ابزار کیفیت</h3>
         <p class="en">GitHub Actions + ruff + packaging checks</p>
-        <p>ویندوز و لینوکس، پایتون ۳.۱۱ و ۳.۱۳، هر چهار مجموعه تست، <code>ruff</code> با قواعد
+        <p>ویندوز و لینوکس، پایتون ۳.۱۲ و ۳.۱۳، پنج مجموعه تست، <code>ruff</code> با قواعد
         خطای واقعی و <code>verify_package.py</code> برای هم‌خوانی فایل‌های ساخت.</p></div>
       <div class="card" style="--accent:#18C8F5"><h3>مجوز شفاف</h3>
         <p class="en">AGPL-3.0 + third-party notices</p>
-        <p><code>LICENSE</code> کامل، فهرست مجوز ۱۵ وابستگی و باینری‌های همراه، صفحه‌ی مجوز در
+        <p><code>LICENSE</code> کامل، فهرست مجوز وابستگی‌ها و باینری‌های همراه، صفحه‌ی مجوز در
         نصب‌کننده، و دو مسیر مستند برای رسیدن به مجوز سهل‌گیرانه.</p></div>
     </div>
   </section>
@@ -282,10 +297,10 @@ curl -H "X-WinGenius-Token: &lt;token&gt;" -X POST http://127.0.0.1:8770/run -d 
         <p class="en">The journal rebuilds itself if the file disappears</p>
         <p>اگر <code>journal.sqlite3</code> وسط اجرا حذف/بازنویسی شود، عمل بعدی با
         <code>no such table</code> نمی‌شکند: شِما همان‌جا بازسازی می‌شود.</p></div>
-      <div class="card" style="--accent:#18C8F5"><h3>۱٬۸۲۹ بررسی</h3>
-        <p class="en">1,829 automated checks, all green</p>
-        <p>۱۵۴ دودی · ۴۵۹ موتور · ۱۱۲ خروجی · ۱٬۰۷۷ رابط · ۲۷ بسته‌بندی — همه در همین ماشین و
-        بدون کلیک اجرا شده‌اند.</p></div>
+      <div class="card" style="--accent:#18C8F5"><h3>{fa(checks)} بررسی</h3>
+        <p class="en">{checks:,} automated checks, all green</p>
+        <p>{fa(suites["smoke"])} دودی · {fa(suites["functional"])} موتور · {fa(suites["output"])} خروجی · {fa(suites["ui"])} رابط · {fa(suites["security"])} امنیت · {fa(suites["packaging"])} بسته‌بندی — همه بدون دخالت دست اجرا شده‌اند.</p></div>
+
     </div>
   </section>
 
@@ -312,8 +327,8 @@ curl -H "X-WinGenius-Token: &lt;token&gt;" -X POST http://127.0.0.1:8770/run -d 
         <p class="en">Screen-reader names on every field</p>
         <p>هر فیلد فرم خودکار و هر دکمه‌ی نوار کناری نام و توضیح دسترس‌پذیر دارد و با تغییر زبان
         به‌روز می‌شود؛ تست UI همه‌ی ۵۰۰+ فیلد را بازبینی می‌کند.</p></div>
-      <div class="card" style="--accent:#18C8F5"><h3>۱۰۲ بررسی خروجی</h3>
-        <p class="en">Output-correctness suite grew to 102 checks</p>
+      <div class="card" style="--accent:#18C8F5"><h3>{fa(suites["output"])} بررسی خروجی</h3>
+        <p class="en">Output-correctness suite — {suites["output"]} checks on the produced files</p>
         <p>سیزده بررسی تازه برای ابزارهای PDF که تا حالا فقط «کرش نکردن»شان تست می‌شد: شماره‌صفحه،
         متادیتا، جست‌وجو، Markdown، صفحه‌ی خالی، ترتیب، CropBox، جزوه و پوستر.</p></div>
     </div>
@@ -416,15 +431,15 @@ app/ui      radial.py · main_window.py · tool_panel.py · quick_search.py
             jobs_drawer.py · drop_zone.py · settings_panel.py
             overlay.py · dashboard.py · plan_panel.py · workflow_panel.py · automation_panel.py · tray.py
 app/tools   ماژول‌های اعلانی در {categories} دسته (+ افزونه‌های کاربر)
-tests       smoke_test.py (۱۵۴) · functional_test.py (۴۵۹، شامل schema/stress/fuzz/guards/v42/v50/scale) ·
-            output_test.py (۱۱۲ بررسی درستی خروجی، شامل redaction و امضا) · ui_test.py
-            (۱٬۰۷۷ رابط + دسترس‌پذیری) · verify_package.py (۲۷) → جمع ۱٬۸۲۹ بررسی PASS</code></pre>
+tests       smoke_test.py ({fa(suites["smoke"])}) · functional_test.py ({fa(suites["functional"])}، شامل schema/stress/fuzz/guards) ·
+            output_test.py ({fa(suites["output"])} بررسی درستی خروجی) · security_test.py ({fa(suites["security"])} بررسی امنیتی) ·
+            ui_test.py ({fa(suites["ui"])} رابط + دسترس‌پذیری) · verify_package.py ({fa(suites["packaging"])}) → جمع {fa(checks)} بررسی PASS</code></pre>
     <p class="note">افزودن ابزار جدید = یک تابع با دکوراتور <code>@tool(...)</code>؛ فرم، اجرا در ترد،
     پیشرفت، لغو، نتیجه، جست‌وجوی دستیار و آیکون به‌صورت خودکار ساخته می‌شوند.</p>
   </section>
 
   <footer>WinGenius {APP_VERSION} — ساخته‌شده با PySide6 · {total_tools} ابزار ·
-  همه‌ی پردازش‌ها محلی و آفلاین</footer>
+  بدون تله‌متری؛ پردازش فایل‌ها محلی، ابزارهای شبکه فقط به درخواست شما</footer>
 </div>
 </body>
 </html>

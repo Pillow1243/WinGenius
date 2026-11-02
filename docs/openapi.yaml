@@ -1,0 +1,310 @@
+openapi: 3.1.0
+info:
+  title: WinGenius Local API
+  version: 5.0.0
+  summary: Loopback JSON API exposed by `WinGenius.exe --serve`.
+  description: |
+    The server binds to `127.0.0.1` only and requires a token in the
+    `X-WinGenius-Token` header (read from
+    `%APPDATA%\WinGenius\api_token.txt` / `$XDG_CONFIG_HOME/WinGenius/api_token.txt`,
+    created with mode 0600). Passing the token in the query string is disabled
+    by default. A `Host` header other than a loopback name is rejected (403) to
+    prevent DNS rebinding. Requests are rate-limited (300/min per IP by default)
+    and bodies larger than 1 MiB get a real `413`.
+
+    This API can run **any** registered tool, including destructive ones. Treat
+    the token as a local administrator credential and never expose the port.
+  license:
+    name: AGPL-3.0-or-later
+    identifier: AGPL-3.0-or-later
+
+servers:
+  - url: http://127.0.0.1:8770
+    description: Default local server (`--serve --port 8770`)
+
+security:
+  - bearerToken: []
+
+tags:
+  - name: discovery
+  - name: execution
+  - name: history
+
+paths:
+  /health:
+    get:
+      tags: [discovery]
+      summary: Liveness, tool count and guard configuration
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [app, version, status, tools, uptime, guard]
+                properties:
+                  app: { type: string, example: WinGenius }
+                  version: { type: string, example: "5.0.0" }
+                  status: { type: string, example: ok }
+                  tools: { type: integer, example: 254 }
+                  uptime: { type: number, example: 12.4 }
+                  guard:
+                    type: object
+                    properties:
+                      rate_limit: { type: integer, example: 300 }
+                      rate_window: { type: number, example: 60 }
+                      rejected: { type: integer, example: 0 }
+                      max_body: { type: integer, example: 1048576 }
+                      allow_query_token: { type: boolean, example: false }
+        "401": { $ref: "#/components/responses/Unauthorised" }
+        "403": { $ref: "#/components/responses/BadHost" }
+        "429": { $ref: "#/components/responses/Throttled" }
+
+  /tools:
+    get:
+      tags: [discovery]
+      summary: List registered tools
+      parameters:
+        - name: category
+          in: query
+          schema: { type: string }
+          description: Filter by category key (pdf, image, files, system, network, security, convert, dev, windows, automation)
+        - name: q
+          in: query
+          schema: { type: string }
+          description: Case-insensitive substring of id / name / English name
+      responses:
+        "200":
+          description: Tool list (max 400 items)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count: { type: integer }
+                  tools:
+                    type: array
+                    items: { $ref: "#/components/schemas/ToolSummary" }
+        "401": { $ref: "#/components/responses/Unauthorised" }
+
+  /tools/{id}:
+    get:
+      tags: [discovery]
+      summary: Describe one tool and its form fields
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+          example: pdf_to_images
+      responses:
+        "200":
+          description: Tool description
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ToolDetail" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /workflows:
+    get:
+      tags: [discovery]
+      summary: List saved workflows
+      responses:
+        "200":
+          description: Workflow list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workflows:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        name: { type: string }
+                        steps: { type: array, items: { type: string } }
+        "401": { $ref: "#/components/responses/Unauthorised" }
+
+  /plan:
+    get:
+      tags: [discovery]
+      summary: Turn a natural-language sentence into a tool chain
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema: { type: string }
+          example: "حجم این PDF را کم کن"
+      responses:
+        "200":
+          description: Matched plan
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  name: { type: string }
+                  steps:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        tool: { type: string }
+                        values: { type: object, additionalProperties: true }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /run:
+    post:
+      tags: [execution]
+      summary: Run any registered tool
+      description: >
+        Tool errors are returned as HTTP 200 with `ok: false`; a 404 means the
+        tool id is unknown. Dangerous tools are NOT blocked here — the API
+        assumes the token holder is trusted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tool]
+              properties:
+                tool: { type: string, example: uuid_generate }
+                values: { type: object, additionalProperties: true, default: {} }
+      responses:
+        "200":
+          description: Tool finished (check `ok`)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RunResult" }
+        "400": { description: Malformed JSON or `values` is not an object }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "413": { description: Body larger than 1 MiB }
+        "500": { description: Internal error (details are logged, never returned) }
+
+  /journal:
+    get:
+      tags: [history]
+      summary: Recent operations and journal statistics
+      responses:
+        "200":
+          description: Journal snapshot
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  operations: { type: array, items: { type: object } }
+                  stats: { type: object }
+        "401": { $ref: "#/components/responses/Unauthorised" }
+
+  /jobs:
+    get:
+      tags: [history]
+      summary: Queue statistics (or a hint when no queue is attached)
+      responses:
+        "200":
+          description: Job stats
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  stats: { type: object }
+                  jobs: { type: array, items: { type: object } }
+                  hint: { type: string }
+
+  /undo:
+    post:
+      tags: [history]
+      summary: Reverse the last N journaled operations (1–50)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                count: { type: integer, minimum: 1, maximum: 50, default: 1 }
+      responses:
+        "200":
+          description: Undo results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  undone: { type: array, items: { type: object } }
+        "400": { description: "count is not an integer" }
+
+components:
+  securitySchemes:
+    bearerToken:
+      type: apiKey
+      in: header
+      name: X-WinGenius-Token
+      description: Token from api_token.txt (0600). Query-string tokens are off by default.
+
+  schemas:
+    ToolSummary:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        name_en: { type: string }
+        category: { type: string }
+        desc: { type: string }
+        desc_en: { type: string }
+    ToolDetail:
+      allOf:
+        - $ref: "#/components/schemas/ToolSummary"
+        - type: object
+          properties:
+            fields:
+              type: array
+              items:
+                type: object
+                properties:
+                  key: { type: string }
+                  kind: { type: string }
+                  label: { type: string }
+                  label_en: { type: string }
+                  required: { type: boolean }
+                  default: {}
+    RunResult:
+      type: object
+      properties:
+        ok: { type: boolean }
+        tool: { type: string }
+        message: { type: string }
+        outputs: { type: array, items: { type: string } }
+        details: { type: string }
+        error: { type: string }
+
+  responses:
+    Unauthorised:
+      description: Missing or wrong token
+      content:
+        application/json:
+          schema: { type: object, properties: { error: { type: string, example: unauthorised } } }
+    BadHost:
+      description: Host header is not loopback (DNS-rebinding protection)
+      content:
+        application/json:
+          schema: { type: object, properties: { error: { type: string, example: host not allowed } } }
+    NotFound:
+      description: Unknown route or tool id
+      content:
+        application/json:
+          schema: { type: object, properties: { error: { type: string } } }
+    Throttled:
+      description: Rate limit exceeded
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string, example: too many requests }
+              retry_after: { type: number }

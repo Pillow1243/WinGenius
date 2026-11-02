@@ -31,3 +31,19 @@ desktop.ini
 # ── local settings (never commit user data)
 *.ini
 !requirements*.txt
+
+# ── test / coverage / build verification artefacts
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+dist-check/
+wingenius.egg-info/
+
+# ── local runtime data (portable mode, user vaults)
+data/
+portable.flag
+*.wgv

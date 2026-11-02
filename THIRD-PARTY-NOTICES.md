@@ -1,4 +1,4 @@
-# Third-party notices — WinGenius 4.0.0
+# Third-party notices — WinGenius 5.0.0
 
 WinGenius itself is released under the **GNU Affero General Public License v3.0 or
 later** (see `LICENSE`). That choice is not decorative: the app renders and edits
@@ -32,6 +32,12 @@ the bottom — it is a real, small piece of work, not a hand-wave.
 | `pytesseract` | Apache-2.0 | OCR front-end (needs the Tesseract engine) |
 | `dnspython` | ISC | MX/NS/TXT records |
 | `opencv-python-headless` | Apache-2.0 (OpenCV) | QR decoding |
+| `pyHanko` | MIT | real PDF digital signatures and validation (bundled in the exe) |
+| `pyhanko-certvalidator` | MIT | certificate path validation for pyHanko |
+| `asn1crypto` | MIT | ASN.1 structures used by pyHanko |
+| `mss` | MIT | fast cross-platform screenshots |
+| `aiohttp` | Apache-2.0 | HTTP client pulled in by pyHanko |
+| `pywin32` | PSF-2.0 (Windows only) | COM automation (Office → PDF) |
 
 ### Bundled binaries
 

@@ -193,9 +193,12 @@ WinGenius API → http://127.0.0.1:8770   token: LjDNjxEzSl70Pf6npeAX0QdNQx5qpB9
 
 $ curl -H "X-WinGenius-Token: LjDN…" http://127.0.0.1:8770/health
 {"app": "WinGenius", "version": "5.0.0", "status": "ok", "tools": 254, "uptime": 5.8,
- "guard": {"rate_limit": 300, "rate_window": 60.0, "rejected": 0, "max_body": 1048576}}
+ "guard": {"rate_limit": 300, "rate_window": 60.0, "rejected": 0, "max_body": 1048576,
+           "allow_query_token": false}}
 ```
-توکن را در آدرس هم می‌شود داد (`?token=…`)، ولی هدر تمیزتر است.
+توکن فقط در **هدر** `X-WinGenius-Token` پذیرفته می‌شود؛ قرار دادنش در آدرس
+(`?token=…`) به‌صورت پیش‌فرض **رد می‌شود** چون در لاگها و تاریخچهی shell ذخیره می‌شود.
+فایل توکن هم با دسترسی `0600` ساخته می‌شود.
 
 ---
 
