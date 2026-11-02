@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -24,9 +25,11 @@ def run(command: list[str]) -> int:
     return subprocess.call(command)
 
 
-#: Flags that belong to this script, not to PyInstaller — forwarding them made
-#: PyInstaller exit with "unrecognized arguments: --installer".
-OWN_FLAGS = {"--installer"}
+#: Flags that belong to this script, not to PyInstaller. `--installer` made PyInstaller
+#: exit with "unrecognized arguments", and `--onedir` made it exit with "makespec
+#: options not valid when a .spec file is given" — the spec reads it from the
+#: environment instead (WINGENIUS_ONEDIR).
+OWN_FLAGS = {"--installer", "--onedir", "--onefile"}
 
 
 def main(argv: list[str]) -> int:
@@ -36,7 +39,10 @@ def main(argv: list[str]) -> int:
         for folder in (DIST, WORK):
             shutil.rmtree(folder, ignore_errors=True)
 
+    os.environ["WINGENIUS_ONEDIR"] = "1" if "--onedir" in argv else "0"
     pyinstaller_args = [arg for arg in argv if arg not in OWN_FLAGS]
+    if os.environ["WINGENIUS_ONEDIR"] == "1":
+        print("→ one-dir build (dist\\WinGenius\\)")
     if run([sys.executable, "-m", "PyInstaller", "--noconfirm", str(SPEC),
             *pyinstaller_args]) != 0:
         print("PyInstaller failed.")

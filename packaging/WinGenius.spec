@@ -1,5 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 """PyInstaller spec for WinGenius (one-file by default, one-dir with --onedir)."""
+import os
 import sys
 from pathlib import Path
 
@@ -44,7 +45,11 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 version_file = ROOT / "packaging" / "version_info.txt"
 icon_file = ROOT / "app" / "assets" / "icon.ico"
 
-ONEDIR = "--onedir" in sys.argv
+# PyInstaller refuses `--onedir` on the command line once a .spec is given
+# ("makespec options not valid when a .spec file is given"), so build_exe.py hands
+# the choice over in the environment instead. The argv check keeps a manual
+# `pyinstaller WinGenius.spec` working for anyone who edits the spec by hand.
+ONEDIR = os.environ.get("WINGENIUS_ONEDIR") == "1" or "--onedir" in sys.argv
 if ONEDIR:
     exe = EXE(
         pyz, a.scripts, [],
