@@ -1,0 +1,21 @@
+name: پیشنهاد قابلیت
+description: چه چیزی برنامه را بهتر می‌کند؟
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: مشکل واقعی
+      description: الان چه کاری سخت است؟
+    validations: { required: true }
+  - type: textarea
+    id: idea
+    attributes:
+      label: راه‌حل پیشنهادی
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: بررسی‌های لازم
+      options:
+        - label: این قابلیت آفلاین کار می‌کند (برنامه هیچ داده‌ای به بیرون نمی‌فرستد)
+        - label: به وابستگی سنگین تازه نیاز ندارد (یا دلیلش را پایین نوشته‌ام)

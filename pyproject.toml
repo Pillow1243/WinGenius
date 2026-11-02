@@ -1,0 +1,73 @@
+[project]
+name = "wingenius"
+version = "5.0.0"
+description = "WinGenius — a Persian-first, all-in-one Windows toolbox (247 tools, 10 categories)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "AGPL-3.0-or-later" }
+authors = [{ name = "WinGenius" }]
+keywords = ["windows", "toolbox", "pdf", "images", "automation", "persian", "qt"]
+classifiers = [
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: End Users/Desktop",
+    "Natural Language :: Persian",
+    "Natural Language :: English",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Utilities",
+]
+dependencies = [
+    "PySide6-Essentials>=6.6,<7",
+    "pypdf>=4.2",
+    "PyMuPDF>=1.24",
+    "reportlab>=4.0",
+    "Pillow>=10.2",
+    "python-docx>=1.1",
+    "openpyxl>=3.1",
+    "qrcode>=7.4",
+    "cryptography>=42.0",
+    "psutil>=5.9",
+    "requests>=2.31",
+    "markdown>=3.5",
+    "imageio-ffmpeg>=0.4.9",
+    "python-barcode>=0.15",
+    "pyzipper>=0.3.6",
+]
+
+[project.optional-dependencies]
+ocr = ["pytesseract>=0.3.10"]
+dns = ["dnspython>=2.6"]
+build = ["pyinstaller>=6.6"]
+dev = ["ruff>=0.6", "coverage>=7.6"]
+
+[project.scripts]
+wingenius = "app.bootstrap:main"
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+exclude = [".git", "dist", "build", "__pycache__", "docs"]
+
+[tool.ruff.lint]
+# Only rules that catch real bugs. Style churn is not worth a red CI.
+select = ["E9", "F4", "F63", "F7", "F82", "F811"]
+ignore = ["F401"]          # re-exports in package __init__ files are intentional
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["F841"]
+
+[tool.coverage.run]
+source = ["app"]
+branch = false
+omit = ["app/assets/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]

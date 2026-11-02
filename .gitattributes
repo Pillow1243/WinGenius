@@ -1,0 +1,9 @@
+* text=auto eol=lf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+*.png binary
+*.jpg binary
+*.ico binary
+*.pdf binary
+docs/showcase.html linguist-vendored
+docs/screenshots/* linguist-documentation

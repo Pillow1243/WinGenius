@@ -1,0 +1,44 @@
+name: گزارش باگ
+description: چیزی درست کار نمی‌کند
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ممنون که گزارش می‌دهی. اگر ممکن است، خروجی `python main.py --run crash_report --set action=create`
+        را هم پیوست کن — خودش مسیرها و رمزها را حذف می‌کند.
+  - type: dropdown
+    id: os
+    attributes:
+      label: سیستم‌عامل
+      options: [Windows 11, Windows 10, Linux, macOS, WSL]
+    validations: { required: true }
+  - type: input
+    id: version
+    attributes:
+      label: نسخه‌ی WinGenius
+      placeholder: "5.0.0  (خروجی python main.py --version)"
+    validations: { required: true }
+  - type: input
+    id: tool
+    attributes:
+      label: ابزار یا بخش
+      placeholder: "pdf_sign / گاوصندوق / ایندکس / رابط"
+  - type: textarea
+    id: steps
+    attributes:
+      label: گام‌های بازتولید
+      placeholder: |
+        ۱) ...
+        ۲) ...
+        ۳) ...
+    validations: { required: true }
+  - type: textarea
+    id: expected
+    attributes:
+      label: انتظار داشتم چه بشود
+  - type: textarea
+    id: doctor
+    attributes:
+      label: خروجی `python main.py --doctor`
+      render: shell

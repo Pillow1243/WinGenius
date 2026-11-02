@@ -1,0 +1,3 @@
+# ابزارهای ساخت exe — Build tooling
+-r requirements.txt
+pyinstaller>=6.6

@@ -1,0 +1,33 @@
+# ── Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# ── PyInstaller / build artefacts
+build/
+dist/
+*.spec.bak
+packaging/__pycache__/
+
+# ── outputs produced while testing the tools
+report_images/
+drop_images/
+fresh_images/
+drop_page_*.zip
+fresh_page_*.zip
+*.zip.tmp
+
+# ── OS / editors
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.log
+
+# ── local settings (never commit user data)
+*.ini
+!requirements*.txt
