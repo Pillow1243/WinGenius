@@ -190,6 +190,7 @@ $ curl -H "X-WinGenius-Token: LjDN…" http://127.0.0.1:8770/health
 | `401 unauthorised` در API | هدر `X-WinGenius-Token` را از خط شروع سرور بردار و بفرست |
 | OCR کار نمی‌کند | `--doctor` را ببین؛ اگر `tesseract` ✗ بود، Tesseract نصب نیست یا در تنظیمات → OCR مسیرش را بده |
 | JSON/تنظیمات خراب شده و بالا نمی‌آید | تنظیمات را از «تنظیمات → پاک‌سازی» بازنشانی کن؛ پشتیبان خودکار در پوشه‌ی داده می‌ماند |
+| نمی‌خواهی تست/اسکریپت هیچ پنجره‌ای باز کند | `set WINGENIUS_NO_LAUNCH=1` (لینوکس: `export …`) — همه‌ی «باز کن»ها اجرای آزمایشی می‌شوند |
 | لاگ برای بررسی | پوشه‌ی داده: `%APPDATA%\WinGenius\logs` (ویندوز) یا `~/.config/WinGenius/logs` (لینوکس). حتی ساده‌تر: `python main.py --run crash_report --set action=create` یک ZIP تمیز و بی‌خطر می‌سازد |
 
 ---
