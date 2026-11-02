@@ -133,16 +133,19 @@ def _cert_subject(reader_cert) -> str:
     ],
 )
 def pdf_sign(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
-    _pyhanko(ctx)
-    from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
-    from pyhanko.sign import signers
-    from pyhanko.sign.fields import SigFieldSpec, append_signature_field
-
+    # Check the inputs first: "your certificate file is missing" is a more useful
+    # answer than "install pyHanko", and it keeps the message honest when both apply.
     src = first_file(v, "src", ctx)
     cert_path = first_file(v, "cert", ctx)
     password = str(v.get("password") or "")
     if not password:
         raise ToolError(ctx.M("رمز گواهی خالی است.", "The certificate password is empty."))
+
+    _pyhanko(ctx)
+    from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
+    from pyhanko.sign import signers
+    from pyhanko.sign.fields import SigFieldSpec, append_signature_field
+
     signer = _read_p12(cert_path, password, ctx)
 
     import pymupdf

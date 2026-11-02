@@ -64,7 +64,10 @@ jobs:
           python -m pip install -q coverage ruff
 
       - name: Tool registry sanity
-        run: python main.py --version && python main.py --list --json > /dev/null
+        shell: bash                      # `> /dev/null` is not valid PowerShell
+        run: |
+          python main.py --version
+          python main.py --list --json > /dev/null
 
       - name: Smoke suite
         run: python -m coverage run --parallel-mode --source=app tests/smoke_test.py
