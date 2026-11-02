@@ -4,7 +4,7 @@
   <a href="https://github.com/Pillow1243/WinGenius/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Pillow1243/WinGenius/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="tools" src="https://img.shields.io/badge/tools-254-5B8CFF">
   <img alt="checks" src="https://img.shields.io/badge/checks-1%2C829%20passing-2BD9A0">
-  <img alt="python" src="https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776AB">
+  <img alt="python" src="https://img.shields.io/badge/python-3.12%20%7C%203.13-3776AB">
   <img alt="platform" src="https://img.shields.io/badge/platform-Windows%2010%2F11-0078D6">
   <img alt="license" src="https://img.shields.io/badge/license-AGPL--3.0-orange">
   <a href="../../releases/latest"><img alt="release" src="https://img.shields.io/github/v/release/Pillow1243/WinGenius?display_name=tag"></a>
@@ -153,6 +153,8 @@
 ---
 
 ## ۳. اجرای سریع از سورس
+
+> **پیش‌نیاز:** Python **۳.۱۲ یا بالاتر** (۳.۱۱ به‌دلیل کرش CPython/PySide6 پشتیبانی نمی‌شود).
 
 ```bash
 python -m venv .venv
@@ -375,7 +377,7 @@ WinGenius/
 ├─ packaging/                  spec، build_exe، verify_package.py، نسخه، Inno Setup، make_showcase
 ├─ tests/                      smoke_test.py · functional_test.py · output_test.py · ui_test.py
 ├─ docs/                       showcase.html + screenshots + README.en.md + summary_v*_fa.md
-├─ .github/workflows/ci.yml    ruff + کامپایل + هر چهار مجموعه تست (Ubuntu/Windows × py3.11/3.13)
+├─ .github/workflows/ci.yml    ruff + کامپایل + هر چهار مجموعه تست (Ubuntu/Windows × py3.12/3.13)
 ├─ LICENSE (AGPL-3.0) · THIRD-PARTY-NOTICES.md · pyproject.toml
 └─ requirements.txt / requirements-build.txt / README.md
 ```

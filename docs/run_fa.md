@@ -9,6 +9,7 @@
 
 ### قدم ۱: پایتون
 1. برو به <https://www.python.org/downloads/windows/> و **Python 3.12** (یا 3.13) را بگیر.
+   ⚠️ Python 3.11 پشتیبانی نمی‌شود: با PySide6 فعلی در رسم منوی شعاعی کرش می‌کند (در CI ثبت شده).
 2. در پنجره‌ی نصب، **حتماً** تیک **`Add python.exe to PATH`** را بزن، بعد `Install Now`.
 3. بررسی: `Win+R` → بنویس `cmd` → Enter → بنویس:
    ```bat

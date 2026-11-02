@@ -51,7 +51,7 @@ Version 4.1 was the hardening + distribution release, and is included here:
 * **Hardened local API** — 300 requests/minute per IP, 1 MiB body limit with a real `413` reaching
   the client, optional token-in-query, clean shutdown.
 * **Output-correctness tests** — `tests/output_test.py` opens the file that was produced (80 checks).
-* **CI + licensing** — GitHub Actions on Windows and Linux (Python 3.11 & 3.13), `ruff` gate,
+* **CI + licensing** — GitHub Actions on Windows and Linux (Python 3.12 & 3.13), `ruff` gate,
   `packaging/verify_package.py`, `LICENSE` (AGPL-3.0) and `THIRD-PARTY-NOTICES.md`.
 
 ## What it does
@@ -130,7 +130,7 @@ ruff check main.py app tests packaging  # lint gate (real-bug rules only)
 ```
 
 Everything runs headless (`QT_QPA_PLATFORM=offscreen`) on Linux, Windows and macOS,
-in CI (`.github/workflows/ci.yml`) on Python 3.11 and 3.13.
+in CI (`.github/workflows/ci.yml`) on Python 3.12 and 3.13.
 Totals: **154 smoke · 459 functional · 112 output · 1077 UI · 27 packaging = 1,829 checks**.
 
 ## Security notes

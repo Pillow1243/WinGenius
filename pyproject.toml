@@ -1,9 +1,9 @@
 [project]
 name = "wingenius"
 version = "5.0.0"
-description = "WinGenius — a Persian-first, all-in-one Windows toolbox (247 tools, 10 categories)"
+description = "WinGenius — a Persian-first, all-in-one Windows toolbox (254 tools, 10 categories)"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = { text = "AGPL-3.0-or-later" }
 authors = [{ name = "WinGenius" }]
 keywords = ["windows", "toolbox", "pdf", "images", "automation", "persian", "qt"]
@@ -13,7 +13,6 @@ classifiers = [
     "Natural Language :: Persian",
     "Natural Language :: English",
     "Operating System :: Microsoft :: Windows",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Utilities",
