@@ -91,16 +91,21 @@ jobs:
                   raise SystemExit(f"no match for {pattern!r} in {path}")
               file.write_text(text, encoding="utf-8")
 
+          # `re.M` is already passed by rewrite(); an inline (?m) after ^ is a
+          # SyntaxError in Python 3.11+ ("global flags not at the start").
           rewrite("app/core/paths.py", r'^APP_VERSION = "[^"]+"', f'APP_VERSION = "{version}"')
-          rewrite("pyproject.toml", r'^(?m)version = "[^"]+"', f'version = "{version}"')
+          rewrite("pyproject.toml", r'^version = "[^"]+"', f'version = "{version}"')
+          # docs/stats.json is check_docs.py's canonical version, so it MUST move
+          # with the tag or the quality gate below fails on every release build.
+          rewrite("docs/stats.json", r'"version":\s*"[^"]+"', f'"version": "{version}"')
           nums = ", ".join((version.split(".") + ["0"] * 4)[:4])
           rewrite("packaging/version_info.txt", r"filevers=\([^)]*\)", f"filevers=({nums})")
           rewrite("packaging/version_info.txt", r"prodvers=\([^)]*\)", f"prodvers=({nums})")
-          rewrite("packaging/version_info.txt", r"StringStruct\('FileVersion', '5\.0\.0\.0'\)",
+          rewrite("packaging/version_info.txt", r"StringStruct\('FileVersion', '[^']+'\)",
                   f"StringStruct('FileVersion', '{version}.0')")
-          rewrite("packaging/version_info.txt", r"StringStruct\('ProductVersion', '5\.0\.0\.0'\)",
+          rewrite("packaging/version_info.txt", r"StringStruct\('ProductVersion', '[^']+'\)",
                   f"StringStruct('ProductVersion', '{version}.0')")
-          rewrite("packaging/installer.iss", r'^(?m)#define AppVersion "[^"]+"',
+          rewrite("packaging/installer.iss", r'^#define AppVersion "[^"]+"',
                   f'#define AppVersion "{version}"')
 
       - name: Install runtime + build dependencies
@@ -120,6 +125,7 @@ jobs:
         shell: pwsh
         run: |
           python scripts/check_deps.py
+          python scripts/check_release.py
           python scripts/check_docs.py
           python -m compileall -q app tests packaging main.py
           python tests/smoke_test.py

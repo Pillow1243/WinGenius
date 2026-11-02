@@ -12,6 +12,9 @@
   },
   "checks": 1885,
   "coverage": 75,
-  "python": ["3.12", "3.13"],
+  "python": [
+    "3.12",
+    "3.13"
+  ],
   "notes": "Single source of truth for the numbers quoted in README, docs and the showcase. Regenerate with: python scripts/stats.py --run"
 }

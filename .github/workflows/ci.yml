@@ -48,6 +48,8 @@ jobs:
           python scripts/check_docs.py
       - name: Windows build inputs are consistent
         run: python packaging/verify_package.py
+      - name: Tagged release version sync works
+        run: python scripts/check_release.py
 
   tests:
     strategy:
