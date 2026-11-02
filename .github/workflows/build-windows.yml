@@ -94,13 +94,29 @@ jobs:
       - name: Smoke-test the built exe
         shell: pwsh
         run: |
-          $exe = "dist\WinGenius.exe"
+          # The exe is a GUI binary (console=False): stdout is not a pipe of the runner,
+          # so we assert on exit codes and on real files it produces — that is a stronger
+          # proof that the bundle is complete than a captured string would be.
+          $exe = (Resolve-Path "dist\WinGenius.exe").Path
           if (-not (Test-Path $exe)) { throw "WinGenius.exe was not produced" }
-          & $exe --version
-          if ($LASTEXITCODE -ne 0) { throw "exe --version failed with $LASTEXITCODE" }
-          # یک ابزار واقعی را هم روی خروجی اجرا می‌کنیم تا مطمئن شویم بسته کامل است
-          & $exe --doctor | Select-String "Tools registered"
-          if ($LASTEXITCODE -ne 0) { throw "exe --doctor failed with $LASTEXITCODE" }
+
+          $p = Start-Process -FilePath $exe -ArgumentList "--version" -Wait -PassThru
+          Write-Host "exe --version exit code: $($p.ExitCode)"
+          if ($p.ExitCode -ne 0) { throw "exe --version failed with $($p.ExitCode)" }
+
+          $p = Start-Process -FilePath $exe -ArgumentList "--doctor" -Wait -PassThru
+          Write-Host "exe --doctor exit code: $($p.ExitCode)"
+          if ($p.ExitCode -ne 0) { throw "exe --doctor failed with $($p.ExitCode)" }
+
+          # real work: the bundled exe must convert a PDF into PNGs
+          python -c "import pymupdf; d=pymupdf.open(); d.new_page().insert_text((72,100),'bundle check'); d.save('sample.pdf')"
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+          $p = Start-Process -FilePath $exe -ArgumentList '--run','pdf_to_images','--file','sample.pdf','--set','fmt=png','--set','dpi=100','--out','out' -Wait -PassThru
+          Write-Host "exe --run pdf_to_images exit code: $($p.ExitCode)"
+          if ($p.ExitCode -ne 0) { throw "exe --run failed with $($p.ExitCode)" }
+          $pngs = Get-ChildItem out -Filter *.png
+          Write-Host ("pages produced: " + $pngs.Count)
+          if ($pngs.Count -lt 1) { throw "the bundled exe produced no PNG — bundle is incomplete" }
 
       - name: Collect release files
         shell: bash

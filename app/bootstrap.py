@@ -88,12 +88,37 @@ def create_app(argv: List[str] | None = None) -> QApplication:
     return app
 
 
+def _attach_console() -> None:
+    """Give the windowed .exe a voice on the command line.
+
+    PyInstaller builds WinGenius with `console=False`, so on Windows `sys.stdout` is
+    None and `WinGenius.exe --version` used to print *nothing at all* — the CLI worked
+    when run from source but looked broken from the shipped exe. Attaching to the
+    parent console and re-opening CONOUT$/CONIN$ fixes that without a second binary.
+    """
+    if not IS_WINDOWS or sys.stdout is not None:
+        return
+    try:
+        import ctypes
+
+        ATTACH_PARENT_PROCESS = -1
+        kernel32 = ctypes.windll.kernel32
+        if not kernel32.AttachConsole(ATTACH_PARENT_PROCESS):
+            return                                  # started from Explorer: no console
+        sys.stdout = open("CONOUT$", "w", encoding="utf-8", buffering=1, errors="replace")
+        sys.stderr = open("CONOUT$", "w", encoding="utf-8", buffering=1, errors="replace")
+        sys.stdin = open("CONIN$", "r", encoding="utf-8", errors="replace")
+    except Exception:                               # pragma: no cover - never fatal
+        pass
+
+
 def main(argv: List[str] | None = None) -> int:
     # ---------------------------------------------------------- CLI mode
     argv = list(argv if argv is not None else sys.argv)
     from .core.cli import run_cli, wants_cli
 
     if wants_cli(argv) and "--self-test" not in argv:
+        _attach_console()
         return run_cli(argv)
 
     # ------------------------------------------------- single-instance guard
