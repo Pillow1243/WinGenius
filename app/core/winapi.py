@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import ctypes
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -59,10 +58,12 @@ def set_wallpaper(image_path: str) -> None:
 
 
 def open_with_shell(target: str) -> None:
-    """Open applet / URI / exe through the Windows shell."""
+    """Open applet / URI / exe through the Windows shell (in a child process)."""
     if not IS_WINDOWS:
         raise OSError("Windows only")
-    os.startfile(target)  # type: ignore[attr-defined]
+    from .launcher import open_target
+
+    open_target(target)
 
 
 def start_hidden(cmd: str) -> subprocess.Popen:

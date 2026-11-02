@@ -8,10 +8,10 @@ from typing import Any, Dict, List
 
 from ..core.registry import tool
 from ..core.spec import (
-    K_BOOL, K_CHOICE, K_DIR, K_INT, K_TEXT, Field, RunContext, RunResult, ToolError,
+    K_BOOL, K_CHOICE, K_INT, K_TEXT, Field, RunContext, RunResult, ToolError,
 )
 from ..core.utils import human_size
-from ._helpers import need_windows, out_dir, require
+from ._helpers import need_windows
 
 NO_WINDOW = 0x08000000 if sys.platform.startswith("win") else 0
 
@@ -316,10 +316,10 @@ def crash_dumps(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
             total_size += size
             lines.append(f"  {stamp}  {human_size(size):>10}  {path.name}")
     if v.get("open_folder"):
-        try:
-            import os
+        from ..core.launcher import open_folder
 
-            os.startfile(str(Path(r"C:\Windows\Minidump")))  # type: ignore[attr-defined]
+        try:
+            open_folder(Path(r"C:\Windows\Minidump"))
         except Exception:
             pass
     if not lines:

@@ -9,7 +9,7 @@ import subprocess
 import sys
 import unicodedata
 from pathlib import Path
-from typing import Iterable, List, Sequence, Tuple
+from typing import List, Sequence, Tuple
 
 IS_WINDOWS = sys.platform.startswith("win")
 
@@ -83,16 +83,13 @@ def native(path: str | Path) -> str:
 
 
 def open_path(path: str | Path) -> None:
-    """Open a file/folder with the OS default handler."""
+    """Open a file/folder with the OS default handler (never in-process)."""
     p = str(path)
     if not p:
         return
-    if IS_WINDOWS:
-        os.startfile(p)  # type: ignore[attr-defined]
-    elif sys.platform == "darwin":
-        subprocess.Popen(["open", p])
-    else:
-        subprocess.Popen(["xdg-open", p])
+    from .launcher import open_target
+
+    open_target(p)
 
 
 def reveal_path(path: str | Path) -> None:
@@ -101,12 +98,9 @@ def reveal_path(path: str | Path) -> None:
     if not p.exists():
         open_path(p.parent)
         return
-    if IS_WINDOWS:
-        subprocess.Popen(["explorer", "/select,", native(p)], close_fds=True)
-    elif sys.platform == "darwin":
-        subprocess.Popen(["open", "-R", str(p)])
-    else:
-        open_path(p.parent)
+    from .launcher import reveal
+
+    reveal(native(p) if IS_WINDOWS else p)
 
 
 def list_files(folder: str | Path, recursive: bool = False, pattern: str = "*") -> List[Path]:

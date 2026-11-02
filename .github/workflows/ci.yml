@@ -17,6 +17,8 @@ env:
   # A native crash in Qt used to kill the job with no traceback; faulthandler turns
   # that into a readable stack in the log.
   PYTHONFAULTHANDLER: "1"
+  # Launch-only tools (applets, "open folder") must not spawn windows on a runner.
+  WINGENIUS_NO_LAUNCH: "1"
 
 jobs:
   # Fast feedback: syntax/lint/registry sanity before the heavy suites.

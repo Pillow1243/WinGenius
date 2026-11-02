@@ -6,11 +6,12 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict
 
+from ..core import launcher
 from ..core.registry import tool
 from ..core.spec import (
-    K_BOOL, K_CHOICE, K_DIR, K_FILE, K_INT, K_SAVE, K_TEXT, Field, RunContext, RunResult, ToolError,
+    K_CHOICE, K_FILE, K_INT, K_SAVE, K_TEXT, Field, RunContext, RunResult, ToolError,
 )
 from ..core.utils import human_size, run_cmd, unique_path
 from ..core import winapi
@@ -82,13 +83,15 @@ def windows_applets(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
         raise ToolError(ctx.M("ابزار نامعتبر است.", "Unknown tool."))
     _key, fa, en, command = match
     name = en if ctx.lang == "en" else fa
-    try:
-        if command.startswith(("cmd", "powershell")):
-            subprocess.Popen(command, shell=True)
-        else:
-            os.startfile(command)  # type: ignore[attr-defined]
-    except Exception:
-        subprocess.Popen(command, shell=True)
+    # Launched in a child process: os.startfile() here used to abort the whole
+    # interpreter on a session without an interactive desktop (see app/core/launcher.py).
+    if command.startswith(("cmd", "powershell")):
+        outcome = launcher.run_shell(command)
+    else:
+        outcome = launcher.open_target(command)
+    if outcome.startswith("dry-run"):
+        return RunResult(message=ctx.M(f"اجرای آزمایشی: «{name}» باز می‌شد.",
+                                       f"Dry run: {name} would open."))
     return RunResult(message=ctx.M(f"«{name}» باز شد.", f"Opened {name}."))
 
 

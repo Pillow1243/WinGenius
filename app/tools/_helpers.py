@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import importlib
-import os
 import re
 import shutil
 import sys
@@ -199,17 +198,10 @@ def fmt_out_message(ctx: RunContext, count: int, where: str) -> str:
 
 
 def open_folder(path: Path) -> None:
+    from ..core.launcher import open_folder as launch_folder
+
     try:
-        if IS_WINDOWS:
-            os.startfile(str(path))  # type: ignore[attr-defined]
-        elif sys.platform == "darwin":
-            import subprocess
-
-            subprocess.Popen(["open", str(path)])
-        else:
-            import subprocess
-
-            subprocess.Popen(["xdg-open", str(path)])
+        launch_folder(path)
     except Exception:
         pass
 

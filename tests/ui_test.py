@@ -13,6 +13,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+# Never open real windows from a test run: the shell launcher becomes a dry run.
+os.environ.setdefault("WINGENIUS_NO_LAUNCH", "1")
 # keep the developer's real profile clean: tests get their own data folder
 if os.name != "nt":
     import tempfile as _tempfile
