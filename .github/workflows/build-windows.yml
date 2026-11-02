@@ -1,0 +1,133 @@
+name: Build Windows exe
+
+# سه راه برای ساختن exe، همه روی رانر ویندوزی گیت‌هاب (نه روی لپ‌تاپ شما):
+#   1) Actions → Build Windows exe → Run workflow            (دستی، خروجی = artifact)
+#   2) push یک تگ مثل v5.0.1                                  (خروجی = asset همان Release)
+#   3) Release → Draft a new release → Publish                 (همان مسیر تگ)
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "اگر خالی نباشد، فایل‌ها به همین Release چسبانده می‌شوند (مثال: v5.0.0)"
+        required: false
+        default: ""
+      attach_to_release:
+        description: "ساختن/به‌روزرسانی Release برای تگ بالا"
+        type: boolean
+        default: false
+  push:
+    tags: ["v*"]
+  release:
+    types: [published]
+
+permissions:
+  contents: write              # برای چسباندن asset به Release
+
+env:
+  PYTHONIOENCODING: utf-8
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-build.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-build.txt
+
+      # PyInstaller صفرِ خروجی را از روی version_info.txt و installer.iss می‌خواند؛
+      # اگر با تگ اجرا شویم، همان نسخه را داخل فایل‌ها می‌نویسیم.
+      - name: Sync version from the tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          python - "$GITHUB_REF_NAME" <<'PY'
+          import re, sys
+          from pathlib import Path
+
+          version = sys.argv[1].lstrip("v")
+          parts = (version.split(".") + ["0", "0", "0"])[:4]
+          dotted = ".".join(parts)
+
+          def rewrite(name, pattern, replacement):
+              path = Path(name)
+              text = path.read_text(encoding="utf-8")
+              new_text, count = re.subn(pattern, replacement, text)
+              if count == 0:
+                  raise SystemExit(f"pattern not found in {name}: {pattern}")
+              path.write_text(new_text, encoding="utf-8")
+
+          rewrite("app/core/paths.py", r'APP_VERSION = "[^"]+"', f'APP_VERSION = "{version}"')
+          rewrite("packaging/installer.iss", r'#define AppVersion "[^"]+"',
+                  f'#define AppVersion "{version}"')
+          rewrite("packaging/version_info.txt", r"filevers=\([^)]*\)",
+                  f'filevers=({", ".join(parts)})')
+          rewrite("packaging/version_info.txt", r"prodvers=\([^)]*\)",
+                  f'prodvers=({", ".join(parts)})')
+          rewrite("packaging/version_info.txt", r"StringStruct\('FileVersion', '[^']*'\)",
+                  f"StringStruct('FileVersion', '{dotted}')")
+          rewrite("packaging/version_info.txt", r"StringStruct\('ProductVersion', '[^']*'\)",
+                  f"StringStruct('ProductVersion', '{dotted}')")
+          print(f"version synced to {version}")
+          PY
+
+      - name: Build one-file exe
+        run: python packaging\build_exe.py
+
+      - name: Build one-dir bundle
+        run: python packaging\build_exe.py --onedir
+
+      - name: Build installer (Inno Setup)
+        run: python packaging\build_exe.py --installer
+
+      - name: Smoke-test the built exe
+        shell: pwsh
+        run: |
+          $exe = "dist\WinGenius.exe"
+          if (-not (Test-Path $exe)) { throw "WinGenius.exe was not produced" }
+          & $exe --version
+          if ($LASTEXITCODE -ne 0) { throw "exe --version failed with $LASTEXITCODE" }
+          # یک ابزار واقعی را هم روی خروجی اجرا می‌کنیم تا مطمئن شویم بسته کامل است
+          & $exe --doctor | Select-String "Tools registered"
+          if ($LASTEXITCODE -ne 0) { throw "exe --doctor failed with $LASTEXITCODE" }
+
+      - name: Collect release files
+        shell: bash
+        run: |
+          mkdir -p release
+          cp dist/WinGenius.exe release/
+          # نصب‌کننده‌ی نسخه‌دار می‌سازیم؛ نام دقیقش از installer.iss می‌آید
+          setup=$(ls dist/WinGenius-Setup*.exe | head -1)
+          echo "installer: $setup"
+          cp "$setup" release/
+          # نسخه‌ی پرتابل (one-dir) به‌صورت zip
+          (cd dist && 7z a -tzip -mx=9 ../release/WinGenius-portable.zip WinGenius > /dev/null)
+          ls -lh release
+
+      - name: Upload as workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: WinGenius-windows
+          path: release/*
+          if-no-files-found: error
+
+      - name: Attach to the GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'release' || inputs.attach_to_release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
+          files: release/*
+          fail_on_unmatched_files: true
+          overwrite_files: true
+          generate_release_notes: false

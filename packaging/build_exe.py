@@ -24,6 +24,11 @@ def run(command: list[str]) -> int:
     return subprocess.call(command)
 
 
+#: Flags that belong to this script, not to PyInstaller — forwarding them made
+#: PyInstaller exit with "unrecognized arguments: --installer".
+OWN_FLAGS = {"--installer"}
+
+
 def main(argv: list[str]) -> int:
     if sys.platform != "win32":
         print("! This build produces a Windows executable — run it on Windows.")
@@ -31,7 +36,9 @@ def main(argv: list[str]) -> int:
         for folder in (DIST, WORK):
             shutil.rmtree(folder, ignore_errors=True)
 
-    if run([sys.executable, "-m", "PyInstaller", "--noconfirm", str(SPEC), *argv]) != 0:
+    pyinstaller_args = [arg for arg in argv if arg not in OWN_FLAGS]
+    if run([sys.executable, "-m", "PyInstaller", "--noconfirm", str(SPEC),
+            *pyinstaller_args]) != 0:
         print("PyInstaller failed.")
         return 1
 
@@ -51,7 +58,12 @@ def main(argv: list[str]) -> int:
             return 2
         if run([compiler, str(ISS)]) != 0:
             return 1
-        print(f"✓ {DIST / 'WinGenius-Setup.exe'}")
+        setups = sorted(DIST.glob("WinGenius-Setup*.exe"))
+        for setup in setups:
+            print(f"✓ {setup}  ({setup.stat().st_size / (1024 * 1024):.1f} MB)")
+        if not setups:
+            print("! Inno Setup finished but no WinGenius-Setup*.exe appeared in dist/")
+            return 1
     return 0
 
 

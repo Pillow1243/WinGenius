@@ -175,7 +175,13 @@ python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt
 
 ---
 
-## ۴. ساخت exe (ویندوز)
+## ۴. ساخت exe (ویندوز یا گیت‌هاب)
+
+ساده‌ترین راه، **بدون ویندوز**: تب **Actions → Build Windows exe → Run workflow**. رانر ویندوزی
+گیت‌هاب `WinGenius.exe`، نصب‌کننده‌ی `WinGenius-Setup-<version>.exe` و نسخه‌ی پرتابل را می‌سازد،
+دودی‌تست می‌کند و اگر با تگ اجرا شود، به همان **Release** می‌چسباند.
+
+روی ویندوز خودت:
 
 ```bat
 packaging\build.bat                       :: تک‌کلیک: venv + نصب + ساخت
