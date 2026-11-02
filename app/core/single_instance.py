@@ -32,6 +32,28 @@ def _key_for(profile: Optional[str] = None) -> str:
     return f"{KEY_PREFIX}{digest}"
 
 
+def _write_slot(buffer, payload: bytes) -> None:
+    """Write `payload`, NUL-padded, into the shared-memory slot.
+
+    Qt hands us a memoryview whose *format* depends on the platform and binding: on
+    Windows it can come back as a character view, and `view[n:] = b"..."` then raises
+    `ValueError: memoryview assignment: lvalue and rvalue have different structures`.
+    Casting to a flat byte view first makes the write portable, and writing the whole
+    slot in one assignment keeps both sides the same shape.
+    """
+    view = buffer if isinstance(buffer, memoryview) else memoryview(buffer)
+    if view.format != "B" or view.ndim != 1:
+        try:
+            view = view.cast("B")
+        except (TypeError, ValueError):
+            view = memoryview(bytes(view)).cast("B")
+    size = view.nbytes
+    try:
+        view[:] = payload[:size].ljust(size, b"\0")
+    except (TypeError, ValueError):
+        view.cast("B")[:] = payload[:size].ljust(size, b"\0")
+
+
 class InstanceGuard:
     """Try to become the primary instance for this profile."""
 
@@ -69,9 +91,11 @@ class InstanceGuard:
         payload = f"{os.getpid()} {time.time():.0f}".encode()
         memory.lock()
         try:
-            buffer = memory.data()
-            buffer[:len(payload)] = payload
-            buffer[len(payload):] = b"\0" * (64 - len(payload))
+            _write_slot(memory.data(), payload)
+        except Exception:                       # pragma: no cover - exotic bindings
+            # The slot is only an optimisation (other instances read it to tell a live
+            # owner from a stale segment); never let it block startup.
+            pass
         finally:
             memory.unlock()
         self._memory = memory
