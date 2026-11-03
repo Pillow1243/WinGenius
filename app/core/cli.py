@@ -56,6 +56,16 @@ def _print(text: str = "") -> None:
     try:
         sys.stdout.write(text + "\n")
         sys.stdout.flush()
+    except UnicodeEncodeError:
+        # A frozen windowed exe may inherit a cp1252 console instead of UTF-8.
+        # UnicodeEncodeError is a ValueError, so the handler below used to
+        # swallow it and silently discard the whole `--doctor` report.
+        safe = (text + "\n").encode("ascii", "backslashreplace").decode("ascii")
+        try:
+            sys.stdout.write(safe)
+            sys.stdout.flush()
+        except (OSError, ValueError):
+            pass
     except (BrokenPipeError, ValueError):
         try:
             os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())

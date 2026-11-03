@@ -17,6 +17,7 @@ No PyYAML, no network, no Qt: stdlib only, so the lint job can run it.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -101,9 +102,35 @@ def check_exe_paths() -> list[str]:
     return failures
 
 
+def check_frozen_tools() -> list[str]:
+    """A onefile exe once shipped with 0 tools.
+
+    ``collect_submodules("app.tools")`` silently returned [] because the spec
+    ran from <repo>/packaging and ``app`` was not on sys.path. The spec now
+    derives the hidden imports from ``app.tools._MODULES``; keep that link.
+    """
+    failures: list[str] = []
+    init = (ROOT / "app" / "tools" / "__init__.py").read_text(encoding="utf-8")
+    block = re.search(r"_MODULES\s*=\s*\((.*?)\)", init, re.S)
+    names = re.findall(r'"([A-Za-z0-9_]+)"', block.group(1)) if block else []
+    spec = (ROOT / "packaging" / "WinGenius.spec").read_text(encoding="utf-8")
+    pairs = [
+        ("tool module list is readable", len(names) >= 30),
+        ("every tool module exists",
+         all((ROOT / "app" / "tools" / f"{n}.py").is_file() for n in names)),
+        ("spec derives hidden imports from _MODULES", 'f"app.tools.{name}"' in spec),
+        ("spec puts the repo root on sys.path", "sys.path.insert(0, str(ROOT))" in spec),
+    ]
+    for label, ok in pairs:
+        print(f"{'PASS' if ok else 'FAIL'}  {label} ({len(names)} modules)")
+        if not ok:
+            failures.append(label)
+    return failures
+
+
 def main() -> int:
     code = sync_code()
-    failures: list[str] = check_exe_paths()
+    failures: list[str] = check_exe_paths() + check_frozen_tools()
     with tempfile.TemporaryDirectory(prefix="wg-release-") as tmp:
         root = Path(tmp)
         for rel in dict.fromkeys(SYNCED + DOCS):

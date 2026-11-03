@@ -205,7 +205,10 @@ jobs:
               assert "WinGenius" in out or "PySide6" in out, out
 
           out = run("--list", "--json")
-          assert '"tool"' in out or '"id"' in out, out
+          # The exact count catches a bundle that forgot to collect app.tools.*:
+          # it used to print `[]` and still exit 0.
+          ids = out.count('"id"')
+          assert ids >= 250, f"only {ids} tools in the frozen exe: {out[:300]}"
 
           out = run("--describe", "pdf_signature_check")
           assert "pdf" in out.lower(), out

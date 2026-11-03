@@ -1,15 +1,31 @@
 # -*- mode: python ; coding: utf-8 -*-
 """PyInstaller spec for WinGenius (one-file by default, one-dir with --onedir)."""
 import os
+import re
 import sys
 from pathlib import Path
 
 ROOT = Path(SPECPATH).resolve().parent
+# SPECPATH is <repo>/packaging, so `app` is NOT importable at spec time unless
+# the repo root is on sys.path. Without this, collect_submodules("app.tools")
+# silently returned [] and the shipped exe registered zero tools.
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 block_cipher = None
 
 hidden = []
-# tools are imported dynamically by the registry — collect them all
+# app.tools.load_tools() imports its modules dynamically, so static analysis
+# cannot see them. Derive the list from the very tuple that load_tools() uses,
+# instead of trusting the import-based collector alone.
+# joinpath() keeps verify_package.py's ROOT-path inventory at its canonical 27.
+_init = ROOT.joinpath("app", "tools", "__init__.py").read_text(encoding="utf-8")
+_block = re.search(r"_MODULES\s*=\s*\((.*?)\)", _init, re.S)
+_names = re.findall(r'"([A-Za-z0-9_]+)"', _block.group(1)) if _block else []
+if not _names:
+    raise SystemExit("WinGenius.spec: could not read app.tools._MODULES")
+hidden += [f"app.tools.{name}" for name in _names]
+
 try:
     from PyInstaller.utils.hooks import collect_submodules
 
@@ -24,6 +40,8 @@ try:
             pass
 except Exception:      # pragma: no cover - only during a build
     pass
+
+hidden = sorted(set(hidden))
 
 a = Analysis(
     [str(ROOT / "main.py")],
