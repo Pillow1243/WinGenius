@@ -111,6 +111,21 @@ def derive_key_scrypt(password: str, salt: bytes, log_n: int = SCRYPT_LOG_N,
         raise VaultError("vault header asks for an impossible key-derivation cost") from exc
 
 
+def _safe_entry_name(name: str) -> str:
+    """Reduce any user-supplied name to a single, harmless file name.
+
+    Vault entries used to be written straight into ``out_dir / entry["name"]``;
+    a name like ``../../Desktop/payload.exe`` therefore escaped the destination
+    folder on extraction.  Names are stored as data, never as paths.
+    """
+    cleaned = str(name or "").replace("\\", "/").strip().strip("/")
+    cleaned = Path(cleaned).name
+    cleaned = cleaned.strip(" .") or "entry.bin"
+    if ":" in cleaned or "\x00" in cleaned or len(cleaned) > 200:
+        cleaned = cleaned.replace(":", "_").replace("\x00", "")[:200] or "entry.bin"
+    return cleaned
+
+
 def human_size(num: float, isolate: bool = True) -> str:
     """Bytes as "12.3 MB".
 
@@ -354,7 +369,7 @@ class Vault:
 
     def _put(self, name: str, data: bytes, mtime: float) -> str:
         nonce = os.urandom(NONCE_LEN)
-        entry_name = self._unique_name(name)
+        entry_name = self._unique_name(_safe_entry_name(name))
         ciphertext = _aesgcm()(self._key).encrypt(nonce, data, self._entry_aad(entry_name))
         self._entries = [entry for entry in (self._entries or []) if entry["name"] != entry_name]
         self._entries.append({
@@ -406,7 +421,10 @@ class Vault:
                                                      self._entry_aad(entry["name"]))
             except Exception as exc:
                 raise VaultError(f"cannot decrypt {name}") from exc
-            target = out_dir / entry["name"]
+            root = out_dir.resolve()
+            target = (out_dir / _safe_entry_name(entry["name"])).resolve()
+            if target != root and root not in target.parents:
+                raise VaultError(f"unsafe entry name in vault: {entry['name']!r}")
             counter = 2
             while target.exists():
                 target = out_dir / f"{Path(entry['name']).stem}-{counter}{Path(entry['name']).suffix}"

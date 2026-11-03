@@ -6,6 +6,7 @@
     WinGenius.exe --run pdf_to_images --file "C:\\in.pdf" --set fmt=jpg --set dpi=150
     WinGenius.exe --run images_to_pdf --file a.png --file b.png --out "C:\\out\\x.pdf"
     WinGenius.exe --doctor
+    WinGenius.exe --check-update        (opt-in: ask GitHub about the newest release)
     WinGenius.exe --list-workflows
     WinGenius.exe --run-workflow pdf_to_images_zip --file in.pdf
     WinGenius.exe --plan "عکس‌ها را PDF کن" --file a.png --file b.png --run
@@ -39,7 +40,7 @@ log = get_logger("cli")
 CLI_FLAGS = {"--list", "--run", "--describe", "--doctor", "--self-test", "--version",
              "--list-workflows", "--run-workflow", "--plan", "--list-schedules",
              "--run-schedule", "--undo", "--macros", "--run-macro", "--serve", "--port",
-             "--help", "-h", "--install-sendto", "--remove-sendto"}
+             "--help", "-h", "--install-sendto", "--remove-sendto", "--check-update"}
 
 
 def wants_cli(argv: List[str]) -> bool:
@@ -76,6 +77,8 @@ def _parse_args(argv: List[str]) -> Dict[str, Any]:
             options["tool"] = argv[index] if index < len(argv) else ""
         elif arg == "--doctor":
             options["mode"] = "doctor"
+        elif arg == "--check-update":
+            options["mode"] = "check-update"
         elif arg == "--version":
             options["mode"] = "version"
         elif arg == "--list-workflows":
@@ -260,10 +263,31 @@ def run_cli(argv: List[str]) -> int:
         return 0
 
     if mode == "doctor":
-        from .diagnostics import diagnostics_text
+        from .diagnostics import diagnostics_text, doctor_issues
 
         _print(diagnostics_text())
+        issues = doctor_issues()
+        if issues:
+            _print("\nIssues to fix:")
+            for issue in issues:
+                _print(f"  ! {issue}")
         return 0
+
+    if mode == "check-update":
+        # Explicitly opt-in: no background network traffic, ever.
+        from .updates import check_latest
+
+        result = check_latest()
+        if options["json"]:
+            _print(json.dumps(result, ensure_ascii=False, indent=2))
+        elif not result.get("ok"):
+            _print(f"could not check for updates: {result.get('error')}")
+        elif result.get("update_available"):
+            _print(f"a newer release is available: {result['latest']} "
+                   f"(installed: {result['current']})\n{result['url']}")
+        else:
+            _print(f"WinGenius is up to date ({result['current']})")
+        return 0 if result.get("ok") else 1
 
     if mode == "self-test":
         # handled by the GUI bootstrap

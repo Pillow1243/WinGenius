@@ -398,6 +398,7 @@ def process_manager(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
 # ------------------------------------------------------------------- services
 @tool(
     id="services_manager", category="system", name="سرویس‌های ویندوز", name_en="Windows services",
+    danger=True,
     desc="سرویس‌ها را فهرست، اجرا یا متوقف می‌کند.",
     desc_en="List, start or stop Windows services.",
     icon="gear", order=60, admin=True, windows_only=True,

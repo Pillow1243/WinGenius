@@ -81,12 +81,16 @@ def diagnostics_text(full: bool = True) -> str:
         from .plugins import discover
         from .registry import count, load_all
 
-        load_all()
+        failures = load_all()
         plugins = discover()
         lines += ["", _line("Tools registered", str(count())),
                   _line("Plugin files", str(len(plugins)))]
         for path in plugins:
             lines.append(f"  • {path.name}")
+        if failures:
+            lines += ["", _line("Tool modules failed", str(len(failures)))]
+            for name, error in failures:
+                lines.append(f"  ! {name}: {error}")
     except Exception as exc:  # pragma: no cover
         lines.append(f"registry error: {exc}")
     if full:
@@ -111,4 +115,11 @@ def doctor_issues() -> List[str]:
         issues.append("ffmpeg missing → audio/video tools disabled")
     if os.name == "nt" and not is_admin():
         issues.append("not running as administrator → system tools limited")
+    try:
+        from .registry import load_all
+
+        for name, error in load_all():
+            issues.append(f"tool module {name} failed to import: {error}")
+    except Exception:                                   # pragma: no cover
+        pass
     return issues

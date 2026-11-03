@@ -77,8 +77,8 @@ STRINGS: Dict[str, Dict[str, str]] = {
     "st.about": {"fa": "درباره", "en": "About"},
     "st.logs": {"fa": "باز کردن پوشه‌ی لاگ", "en": "Open log folder"},
     "st.about_text": {
-        "fa": "وین‌جنیوس {0} — ساخته‌شده با PySide6. همه‌ی ابزارها به‌صورت محلی روی رایانه‌ی شما اجرا می‌شوند؛ هیچ فایلی به اینترنت فرستاده نمی‌شود.",
-        "en": "WinGenius {0} — built with PySide6. Every tool runs locally on your machine; no file ever leaves your computer.",
+        "fa": "وین‌جنیوس {0} — ساخته‌شده با PySide6. بدون تله‌متری و بدون حساب کاربری؛ پردازش فایلها محلی است. ابزارهای مشخص‌شده‌ی شبکه (دانلود، WHOIS، بررسی نشت رمز، دانلود بسته‌ی زبان و مدل گفتار) فقط با اجرای خودتان به اینترنت وصل می‌شوند.",
+        "en": "WinGenius {0} — built with PySide6. No telemetry, no account, and all file processing is local. Only the explicitly network-enabled tools (download, WHOIS, breach check, OCR language packs and speech models) contact the internet, and only when you run them.",
     },
     "st.close": {"fa": "بستن", "en": "Close"},
     "st.reset": {"fa": "بازنشانی تنظیمات", "en": "Reset settings"},

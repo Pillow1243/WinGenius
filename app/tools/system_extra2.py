@@ -1,6 +1,7 @@
 """Deeper system insight: memory hogs, port owners, startup impact, updates, printers."""
 from __future__ import annotations
 
+import re
 import os
 import platform
 import shutil
@@ -427,20 +428,48 @@ def disk_tree_usage(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
 
 
 # ------------------------------------------------------------- crash reporting
-SENSITIVE_HINTS = ("token", "password", "secret", "cookie", "authorization", "api_key")
+# Both Latin and Persian spellings: a secret does not become less secret when
+# the log line is written in Farsi.
+SENSITIVE_HINTS = (
+    "token", "password", "passwd", "secret", "cookie", "authorization", "auth",
+    "api_key", "apikey", "access_key", "private_key", "bearer", "session",
+    "رمز", "گذرواژه", "کلمه عبور", "توکن", "کلید",
+)
+
+_WIN_USER = re.compile(r"[A-Za-z]:[\\/]+Users[\\/]+\S+", re.IGNORECASE)
+_POSIX_USER = re.compile(r"(/(?:home|Users))/[^/\s]+")
+_EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+_IPV4 = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+_SECRET_VALUE = re.compile(r"(=|:)\s*")
 
 
 def _redact(text: str) -> str:
-    """Strip the paths and tokens a stranger should never receive."""
-    import re
+    """Strip personal paths, credentials and identifiers from a support bundle.
 
+    Deliberately over-redacts (a whole suspicious line becomes ``<redacted>``):
+    a report you can safely email is worth more than a perfectly complete one.
+    """
     home = str(Path.home())
-    text = text.replace(home, "~")
-    text = re.sub(r"[A-Za-z]:\\\\Users\\\\[^\\\\\s]+", r"C:\\Users\\<user>", text)
-    for hint in SENSITIVE_HINTS:
-        text = re.sub(rf"(?im)^(?P<lead>[^\n]*{hint}[^\n]*)$",
-                      lambda m: re.sub(r"(=|:)\s*\S+", r"\1 <redacted>", m.group(0)), text)
-    return text
+    if home:
+        text = text.replace(home, "~")
+    text = _WIN_USER.sub(lambda m: m.group(0)[:2] + r"\Users\<user>\<redacted>", text)
+    text = _POSIX_USER.sub(lambda m: m.group(1) + "/<user>", text)
+
+    lines = []
+    for line in text.splitlines(keepends=True):
+        newline = ""
+        while line.endswith(("\n", "\r")):
+            newline = line[-1] + newline
+            line = line[:-1]
+        lowered = line.lower()
+        if any(hint in lowered for hint in SENSITIVE_HINTS):
+            match = _SECRET_VALUE.search(line)
+            line = (line[:match.end()] + "<redacted>") if match else "<redacted>"
+        else:
+            line = _EMAIL.sub("<redacted>", line)
+            line = _IPV4.sub("<redacted>", line)
+        lines.append(line + newline)
+    return "".join(lines)
 
 
 @tool(

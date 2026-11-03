@@ -20,6 +20,17 @@ from ._helpers import require, validate_host
 
 IS_WINDOWS = sys.platform.startswith("win")
 
+# A hosts-file entry must be a bare domain: no newline (which would inject a
+# second mapping), no spaces, no URL, no wildcard.
+_DOMAIN_RE = re.compile(
+    r"^(?!-)[A-Za-z0-9-]{1,63}(?<!-)(?:\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))*$")
+
+
+def valid_domain(value: str) -> bool:
+    """True only for a syntactically safe, single hostname."""
+    value = str(value or "").strip()
+    return bool(value) and len(value) <= 253 and _DOMAIN_RE.fullmatch(value) is not None
+
 
 @tool(
     id="dns_lookup", category="network", name="جست‌وجوی DNS", name_en="DNS lookup",
@@ -412,9 +423,20 @@ def hosts_file(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     domain = str(v.get("domain") or "").strip()
     if not domain:
         raise ToolError(ctx.M("دامنه را وارد کنید.", "Enter the domain."))
-    backup = hosts.with_suffix(".wingenius.bak")
+    if not valid_domain(domain):
+        raise ToolError(ctx.M(
+            "نام دامنه معتبر نیست: فقط حروف، عدد، خط تیره و نقطه؛ بدون فاصله، "
+            "خط جدید یا آدرس کامل.",
+            "Invalid domain: letters, digits, hyphens and dots only; no whitespace, "
+            "newlines or full URLs."))
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    backup = hosts.with_name(hosts.name + f".wingenius-{stamp}.bak")
     try:
         backup.write_text(text, encoding="utf-8")
+        # keep a short history instead of overwriting the only backup each run
+        old = sorted(hosts.parent.glob(hosts.name + ".wingenius-*.bak"))
+        for stale in old[:-5]:
+            stale.unlink(missing_ok=True)
     except Exception as exc:
         raise ToolError(ctx.M(f"ساخت پشتیبان ممکن نشد (دسترسی مدیر لازم است): {exc}",
                               f"Could not create a backup (admin rights needed): {exc}"))
@@ -426,15 +448,23 @@ def hosts_file(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
         lines.append(marker)
         lines.append(f"0.0.0.0 www.{domain}" if not domain.startswith("www.") else marker)
     else:
-        lines = [line for line in lines if domain not in line]
+        # Only remove exact hostnames, not any line that happens to contain the
+        # substring (e.g. "bank.com" must not delete "notbank.com").
+        lines = [line for line in lines
+                 if not (line.strip() and not line.strip().startswith("#")
+                         and domain.lower() in [token.lower() for token in line.split()[1:]])]
     try:
         hosts.write_text("\n".join(lines) + "\n", encoding="utf-8")
     except Exception as exc:
         raise ToolError(ctx.M(f"نوشتن فایل hosts ممکن نشد (برنامه را با دسترسی مدیر اجرا کنید): {exc}",
                               f"Could not write the hosts file (run as administrator): {exc}"))
     if IS_WINDOWS:
-        subprocess.run(["ipconfig", "/flushdns"], capture_output=True, timeout=20,
-                       creationflags=0x08000000)
+        # `creationflags` is Windows-only and raises ValueError on POSIX.
+        try:
+            subprocess.run(["ipconfig", "/flushdns"], capture_output=True, timeout=20,
+                           creationflags=0x08000000)
+        except OSError:
+            pass
     return RunResult(
         message=ctx.M(f"{'مسدود شد' if action == 'block' else 'مسدودی برداشته شد'}: {domain}\nپشتیبان: {backup}",
                       f"{'Blocked' if action == 'block' else 'Unblocked'}: {domain}\nBackup: {backup}"),

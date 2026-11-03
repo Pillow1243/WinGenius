@@ -52,8 +52,8 @@ python main.py
 > اصطکاک واقعی روی لینوکس است.
 
 **آنچه در یک venv کاملاً تازه تست شد:** نصب همه‌ی `requirements.txt` بدون خطا، سپس
-`python main.py --self-test` با کد خروج `0`، `python main.py --version` → `WinGenius 4.1.0`
-و بارگذاری **۲۴۷ ابزار** (`--list`).
+`python main.py --self-test` با کد خروج `0`، `python main.py --version` → `WinGenius 5.0.0`
+و بارگذاری **۲۵۴ ابزار** (`--list`).
 
 ### اگر فایل اجرایی می‌خواهید ولی نمی‌خواهید بیلد کنید
 

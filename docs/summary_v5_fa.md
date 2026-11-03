@@ -87,9 +87,11 @@
 
 ```bash
 QT_QPA_PLATFORM=offscreen python tests/smoke_test.py       # 154 PASS
-QT_QPA_PLATFORM=offscreen python tests/functional_test.py  # 459 PASS
+QT_QPA_PLATFORM=offscreen python tests/functional_test.py  # 458 PASS
 QT_QPA_PLATFORM=offscreen python tests/output_test.py      # 112 PASS
 QT_QPA_PLATFORM=offscreen python tests/ui_test.py          # 1077 checks, ALL PASSED
+QT_QPA_PLATFORM=offscreen python tests/security_test.py     # 57 PASS
+python -m pytest -q                                        # 44 collected, all green
 python packaging/verify_package.py                         # 27/27
 ruff check main.py app tests packaging                     # All checks passed!
 python main.py --version                                   # WinGenius 5.0.0

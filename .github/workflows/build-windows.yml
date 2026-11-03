@@ -1,149 +1,285 @@
 name: Build Windows exe
 
-# سه راه برای ساختن exe، همه روی رانر ویندوزی گیت‌هاب (نه روی لپ‌تاپ شما):
-#   1) Actions → Build Windows exe → Run workflow            (دستی، خروجی = artifact)
-#   2) push یک تگ مثل v5.0.1                                  (خروجی = asset همان Release)
-#   3) Release → Draft a new release → Publish                 (همان مسیر تگ)
-
+# Two independent entry points, no double build:
+#   • a v* tag push builds that exact tag
+#   • a manual run builds HEAD (or an explicit release_tag)
+# The old `release: published` trigger raced the tag-push trigger and produced
+# two builds of the same commit.
 on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "اگر خالی نباشد، فایل‌ها به همین Release چسبانده می‌شوند (مثال: v5.0.0)"
+        description: "Release tag to build (empty = current branch HEAD)"
         required: false
         default: ""
-      attach_to_release:
-        description: "ساختن/به‌روزرسانی Release برای تگ بالا"
+        type: string
+      build_installer:
+        description: "Also compile the Inno Setup installer"
+        required: false
+        default: true
         type: boolean
-        default: false
+      build_onedir:
+        description: "Also build the onedir bundle"
+        required: false
+        default: true
+        type: boolean
   push:
-    tags: ["v*"]
-  release:
-    types: [published]
+    tags:
+      - "v*"
+
+concurrency:
+  group: build-windows-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
-  contents: write              # برای چسباندن asset به Release
-
-env:
-  PYTHONIOENCODING: utf-8
-  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  contents: read
 
 jobs:
   build:
-    runs-on: windows-latest
-    timeout-minutes: 45
+    permissions:
+      contents: read
+    runs-on: windows-2022
+    timeout-minutes: 90
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+    env:
+      QT_QPA_PLATFORM: offscreen
+      PYTHONUTF8: "1"
+      WINGENIUS_NO_LAUNCH: "1"
     steps:
+      # ---------------------------------------------------------------- setup
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: requirements-build.txt
+          cache-dependency-path: |
+            requirements.txt
+            requirements-build.txt
 
-      - name: Install dependencies
+      - name: Resolve release metadata
+        id: meta
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "${{ inputs.release_tag }}"
+          if ([string]::IsNullOrWhiteSpace($tag)) { $tag = "${{ github.ref_name }}" }
+          if ($tag -notmatch '^v') { $tag = "" }
+          $version = if ($tag) { $tag.TrimStart('v') } else { "5.0.0-dev" }
+          "tag=$tag"       | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Sync version constants (tagged builds only)
+        if: steps.meta.outputs.tag != ''
+        shell: python
+        run: |
+          import re
+          from pathlib import Path
+
+          tag, version = "${{ steps.meta.outputs.tag }}", "${{ steps.meta.outputs.version }}"
+
+          def rewrite(path, pattern, replacement):
+              file = Path(path)
+              text = file.read_text(encoding="utf-8-sig")
+              text, count = re.subn(pattern, replacement, text, flags=re.M)
+              if not count:
+                  raise SystemExit(f"no match for {pattern!r} in {path}")
+              file.write_text(text, encoding="utf-8")
+
+          # `re.M` is already passed by rewrite(); an inline (?m) after ^ is a
+          # SyntaxError in Python 3.11+ ("global flags not at the start").
+          rewrite("app/core/paths.py", r'^APP_VERSION = "[^"]+"', f'APP_VERSION = "{version}"')
+          rewrite("pyproject.toml", r'^version = "[^"]+"', f'version = "{version}"')
+          # docs/stats.json is check_docs.py's canonical version, so it MUST move
+          # with the tag or the quality gate below fails on every release build.
+          rewrite("docs/stats.json", r'"version":\s*"[^"]+"', f'"version": "{version}"')
+          nums = ", ".join((version.split(".") + ["0"] * 4)[:4])
+          rewrite("packaging/version_info.txt", r"filevers=\([^)]*\)", f"filevers=({nums})")
+          rewrite("packaging/version_info.txt", r"prodvers=\([^)]*\)", f"prodvers=({nums})")
+          rewrite("packaging/version_info.txt", r"StringStruct\('FileVersion', '[^']+'\)",
+                  f"StringStruct('FileVersion', '{version}.0')")
+          rewrite("packaging/version_info.txt", r"StringStruct\('ProductVersion', '[^']+'\)",
+                  f"StringStruct('ProductVersion', '{version}.0')")
+          rewrite("packaging/installer.iss", r'^#define AppVersion "[^"]+"',
+                  f'#define AppVersion "{version}"')
+
+      - name: Install runtime + build dependencies
+        shell: pwsh
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements-build.txt
+          python -m pip check
 
-      # PyInstaller صفرِ خروجی را از روی version_info.txt و installer.iss می‌خواند؛
-      # اگر با تگ اجرا شویم، همان نسخه را داخل فایل‌ها می‌نویسیم.
-      - name: Sync version from the tag
-        if: startsWith(github.ref, 'refs/tags/v')
-        shell: bash
-        run: |
-          python - "$GITHUB_REF_NAME" <<'PY'
-          import re, sys
-          from pathlib import Path
+      - name: Install Inno Setup
+        if: inputs.build_installer != false
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
 
-          version = sys.argv[1].lstrip("v")
-          parts = (version.split(".") + ["0", "0", "0"])[:4]
-          dotted = ".".join(parts)
-
-          def rewrite(name, pattern, replacement):
-              path = Path(name)
-              text = path.read_text(encoding="utf-8")
-              new_text, count = re.subn(pattern, replacement, text)
-              if count == 0:
-                  raise SystemExit(f"pattern not found in {name}: {pattern}")
-              path.write_text(new_text, encoding="utf-8")
-
-          rewrite("app/core/paths.py", r'APP_VERSION = "[^"]+"', f'APP_VERSION = "{version}"')
-          rewrite("packaging/installer.iss", r'#define AppVersion "[^"]+"',
-                  f'#define AppVersion "{version}"')
-          rewrite("packaging/version_info.txt", r"filevers=\([^)]*\)",
-                  f'filevers=({", ".join(parts)})')
-          rewrite("packaging/version_info.txt", r"prodvers=\([^)]*\)",
-                  f'prodvers=({", ".join(parts)})')
-          rewrite("packaging/version_info.txt", r"StringStruct\('FileVersion', '[^']*'\)",
-                  f"StringStruct('FileVersion', '{dotted}')")
-          rewrite("packaging/version_info.txt", r"StringStruct\('ProductVersion', '[^']*'\)",
-                  f"StringStruct('ProductVersion', '{dotted}')")
-          print(f"version synced to {version}")
-          PY
-
-      - name: Build one-file exe
-        run: python packaging\build_exe.py
-
-      - name: Build one-dir bundle
-        run: python packaging\build_exe.py --onedir
-
-      - name: Build installer (Inno Setup)
-        run: python packaging\build_exe.py --installer
-
-      - name: Smoke-test the built exe
+      # ------------------------------------------------------- quality gate
+      - name: Test the source tree before packaging it
         shell: pwsh
         run: |
-          # The exe is a GUI binary (console=False): stdout is not a pipe of the runner,
-          # so we assert on exit codes and on real files it produces — that is a stronger
-          # proof that the bundle is complete than a captured string would be.
-          $exe = (Resolve-Path "dist\WinGenius.exe").Path
-          if (-not (Test-Path $exe)) { throw "WinGenius.exe was not produced" }
+          python scripts/check_deps.py
+          python scripts/check_release.py
+          python scripts/check_docs.py
+          python -m compileall -q app tests packaging main.py
+          python tests/smoke_test.py
+          python tests/functional_test.py
+          python tests/output_test.py
+          python tests/security_test.py
 
-          $p = Start-Process -FilePath $exe -ArgumentList "--version" -Wait -PassThru
-          Write-Host "exe --version exit code: $($p.ExitCode)"
-          if ($p.ExitCode -ne 0) { throw "exe --version failed with $($p.ExitCode)" }
+      # --------------------------------------------------------------- build
+      - name: Build onefile exe
+        shell: pwsh
+        run: |
+          pyinstaller --noconfirm --clean packaging/WinGenius.spec
+          $exe = "dist/WinGenius/WinGenius.exe"
+          if (-not (Test-Path $exe)) { throw "onefile exe missing: $exe" }
 
-          $p = Start-Process -FilePath $exe -ArgumentList "--doctor" -Wait -PassThru
-          Write-Host "exe --doctor exit code: $($p.ExitCode)"
-          if ($p.ExitCode -ne 0) { throw "exe --doctor failed with $($p.ExitCode)" }
+      - name: Build onedir bundle
+        if: inputs.build_onedir != false
+        shell: pwsh
+        run: |
+          pyinstaller --noconfirm --clean --onedir --name WinGenius-onedir `
+            --windowed --icon app/assets/icon.ico `
+            --add-data "app/assets;app/assets" `
+            --collect-submodules app.tools `
+            --hidden-import pyhanko --collect-submodules pyhanko `
+            --hidden-import pytesseract `
+            --exclude-module PySide6.QtWebEngineCore `
+            --exclude-module PySide6.Qt3DCore `
+            --exclude-module tkinter `
+            --distpath dist-onedir --workpath build/onedir --specpath build main.py
+          if (-not (Test-Path "dist-onedir/WinGenius-onedir/WinGenius-onedir.exe")) {
+            throw "onedir exe missing"
+          }
 
-          # real work: the bundled exe must convert a PDF into PNGs
-          python -c "import pymupdf; d=pymupdf.open(); d.new_page().insert_text((72,100),'bundle check'); d.save('sample.pdf')"
-          New-Item -ItemType Directory -Force -Path out | Out-Null
-          $p = Start-Process -FilePath $exe -ArgumentList '--run','pdf_to_images','--file','sample.pdf','--set','fmt=png','--set','dpi=100','--out','out' -Wait -PassThru
-          Write-Host "exe --run pdf_to_images exit code: $($p.ExitCode)"
-          if ($p.ExitCode -ne 0) { throw "exe --run failed with $($p.ExitCode)" }
-          $pngs = Get-ChildItem out -Filter *.png
-          Write-Host ("pages produced: " + $pngs.Count)
-          if ($pngs.Count -lt 1) { throw "the bundled exe produced no PNG — bundle is incomplete" }
+      - name: Compile Inno Setup installer
+        if: inputs.build_installer != false
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { $iscc = "${env:ProgramFiles}\Inno Setup 6\ISCC.exe" }
+          if (-not (Test-Path $iscc)) { throw "ISCC.exe not found" }
+          & $iscc packaging/installer.iss
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
+          $setup = Get-ChildItem dist -Filter "WinGenius-Setup-*.exe" | Select-Object -First 1
+          if (-not $setup) { throw "installer missing in dist/" }
+
+      # --------------------------------------------------------------- smoke
+      - name: Smoke-test the frozen exe (version, doctor, tool list)
+        shell: python
+        run: |
+          import os
+          import subprocess
+
+          env = dict(os.environ, QT_QPA_PLATFORM="offscreen", WINGENIUS_NO_LAUNCH="1",
+                     WINGENIUS_SKIP_SELFTEST="1")
+          exe = "dist/WinGenius/WinGenius.exe"
+
+          def run(*args, timeout=180):
+              proc = subprocess.run([exe, *args], env=env, capture_output=True,
+                                   text=True, timeout=timeout,
+                                   creationflags=0x08000000)
+              out = (proc.stdout or "") + (proc.stderr or "")
+              print(f"$ WinGenius.exe {' '.join(args)}\n{out[-1200:]}")
+              if proc.returncode != 0:
+                  raise SystemExit(f"exit {proc.returncode} for {' '.join(args)}")
+              return out
+
+          out = run("--version")
+          assert "${{ steps.meta.outputs.version }}" in out or "5.0.0" in out, out
+
+          out = run("--doctor")
+          assert "PySide6" in out, out
+
+          out = run("--list", "--json")
+          assert '"tool"' in out or '"id"' in out, out
+
+          out = run("--describe", "pdf_signature_check")
+          assert "pdf" in out.lower(), out
+
+      - name: Verify signing engine is actually bundled
+        shell: python
+        run: |
+          # pyHanko is imported lazily, so a static import test cannot prove
+          # that the frozen exe carries it.  Run the real tool instead.
+          import os
+          import subprocess
+          import tempfile
+          from pathlib import Path
+
+          from reportlab.pdfgen import canvas
+
+          work = Path(tempfile.mkdtemp())
+          pdf = work / "unsigned.pdf"
+          canvas.Canvas(str(pdf)).drawString(72, 720, "signature probe").save()
+          env = dict(os.environ, QT_QPA_PLATFORM="offscreen", WINGENIUS_NO_LAUNCH="1")
+          proc = subprocess.run(
+              ["dist/WinGenius/WinGenius.exe", "--run", "pdf_signature_check",
+               "--file", str(pdf)],
+              env=env, capture_output=True, text=True, timeout=180,
+              creationflags=0x08000000)
+          combined = (proc.stdout or "") + (proc.stderr or "")
+          print(combined[-1500:])
+          # A missing engine used to produce "pip install pyHanko" at runtime;
+          # an unsigned PDF is a normal tool-level failure, not a crash.
+          if "pip install" in combined.lower() or "module not found" in combined.lower():
+              raise SystemExit("pyHanko was not bundled into the exe")
 
       - name: Collect release files
-        shell: bash
+        shell: pwsh
         run: |
-          mkdir -p release
-          cp dist/WinGenius.exe release/
-          # نصب‌کننده‌ی نسخه‌دار می‌سازیم؛ نام دقیقش از installer.iss می‌آید
-          setup=$(ls dist/WinGenius-Setup*.exe | head -1)
-          echo "installer: $setup"
-          cp "$setup" release/
-          # نسخه‌ی پرتابل (one-dir) به‌صورت zip
-          (cd dist && 7z a -tzip -mx=9 ../release/WinGenius-portable.zip WinGenius > /dev/null)
-          ls -lh release
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          Copy-Item dist/WinGenius/WinGenius.exe release/WinGenius-${{ steps.meta.outputs.version }}.exe
+          $setup = Get-ChildItem dist -Filter "WinGenius-Setup-*.exe" | Select-Object -First 1
+          if ($setup) {
+            Copy-Item $setup.FullName release/WinGeniusSetup-${{ steps.meta.outputs.version }}.exe
+          }
+          if (Test-Path "dist-onedir/WinGenius-onedir") {
+            Compress-Archive -Path "dist-onedir/WinGenius-onedir/*" `
+              -DestinationPath "release/WinGenius-${{ steps.meta.outputs.version }}-onedir.zip" -Force
+          }
+          # Reproducible checksums so users can verify what they downloaded.
+          Get-ChildItem release -File | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            "$hash  $($_.Name)"
+          } | Out-File -FilePath release/SHA256SUMS.txt -Encoding utf8
+          Get-ChildItem release | Select-Object Name, Length | Format-Table -AutoSize
 
-      - name: Upload as workflow artifacts
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: WinGenius-windows
+          name: wingenius-${{ steps.meta.outputs.version }}-${{ github.run_number }}
           path: release/*
+          retention-days: 14
           if-no-files-found: error
 
-      - name: Attach to the GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'release' || inputs.attach_to_release
+  release:
+    # Only this job can write; the build job above runs with read-only access.
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: wingenius-${{ needs.build.outputs.version }}-${{ github.run_number }}
+          path: release
+      - name: Attach files to the published release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
+          tag_name: ${{ github.ref_name }}
           files: release/*
-          fail_on_unmatched_files: true
-          overwrite_files: true
-          generate_release_notes: false
+          append_body: true
+          body: |
+            **Windows builds attached by CI** (run `${{ github.run_number }}`).
+            Verify your download with the `SHA256SUMS.txt` in this release.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,6 +1,8 @@
 # ──────────────────────────────────────────────────────────────────────────────
 # WinGenius — runtime requirements
+# منبع حقیقت: [project.dependencies] در pyproject.toml
 # نصب:  pip install -r requirements.txt
+# `python scripts/check_deps.py` همخوانی این دو را بررسی میکند.
 # ──────────────────────────────────────────────────────────────────────────────
 
 # رابط کاربری
@@ -34,10 +36,13 @@ pyzipper>=0.3.6
 # خواندن QR از تصویر (OpenCV بدون رابط گرافیکی، سبک‌تر)
 opencv-python-headless>=4.9; platform_system != "Darwin"
 
-# اختیاری: OCR (به موتور Tesseract نیاز دارد — winget install UB-Mannheim.TesseractOCR)
+# امضای دیجیتال PDF (قبلاً اختیاری بود و در exe هرگز کار نمیکرد)
+pyHanko>=0.30,<0.41
+
+# OCR (به موتور Tesseract بیرونی نیاز دارد — winget install UB-Mannheim.TesseractOCR)
 pytesseract>=0.3.10
 
-# اختیاری: رکوردهای MX/NS/TXT در ابزار DNS
+# رکوردهای MX/NS/TXT در ابزار DNS
 dnspython>=2.6
 
 # فقط ویندوز: COM برای تبدیل Word/Excel/PowerPoint به PDF

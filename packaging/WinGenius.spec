@@ -14,6 +14,14 @@ try:
     from PyInstaller.utils.hooks import collect_submodules
 
     hidden += collect_submodules("app.tools")
+    # Imported lazily inside tool functions, so static analysis cannot see
+    # them.  Without this the shipped exe advertised signing/OCR but could
+    # never load their engines.
+    for _optional in ("pyhanko", "pyhanko_certvalidator", "asn1crypto", "pytesseract"):
+        try:
+            hidden += collect_submodules(_optional)
+        except Exception:
+            pass
 except Exception:      # pragma: no cover - only during a build
     pass
 

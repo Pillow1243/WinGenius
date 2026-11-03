@@ -21,13 +21,13 @@ PDF_FILTER = "PDF (*.pdf)"
 P12_FILTER = "گواهی (*.p12 *.pfx *.pem);;همه فایل‌ها (*)"
 
 INSTALL_HINT_FA = (
-    "برای امضای دیجیتال، موتور اختیاری pyHanko لازم است:\n"
+    "موتور امضای دیجیتال pyHanko در دسترس نیست؛ برنامه را دوباره نصب کنید:\n"
     "    pip install pyhanko\n\n"
     "امضا با گواهی PKCS#12 (فایل .p12 یا .pfx) انجام می‌شود؛ گواهی معتبر را از "
     "مرکز صدور گواهی خودتان بگیرید."
 )
 INSTALL_HINT_EN = (
-    "Digital signatures need the optional pyHanko engine:\n"
+    "The pyHanko signing engine is unavailable; reinstall WinGenius:\n"
     "    pip install pyhanko\n\n"
     "Signing uses a PKCS#12 certificate (.p12 or .pfx) issued by your CA."
 )

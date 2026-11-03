@@ -151,6 +151,15 @@ def main(argv: List[str] | None = None) -> int:
 
     window = MainWindow()
     window.show()
+    if failures:
+        # A missing optional dependency used to silently shrink the toolbox;
+        # the user deserves to know that the 254 tools are not all loaded.
+        window._show_toast(
+            (f"{len(failures)} ماژول ابزار بارگذاری نشد؛ جزئیات در لاگ است."
+             if settings.lang == "fa" else
+             f"{len(failures)} tool module(s) failed to load; see the log."),
+            "error",
+        )
     if guard is not None and guard.primary:
         def _surface() -> None:
             window.showNormal()

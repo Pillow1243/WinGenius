@@ -1,0 +1,6 @@
+# Every change gets a review from the maintainer until the project grows.
+*                       @Pillow1243
+/.github/workflows/     @Pillow1243
+/app/core/vault.py      @Pillow1243
+/app/core/api_server.py @Pillow1243
+/packaging/             @Pillow1243

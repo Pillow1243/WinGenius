@@ -68,7 +68,9 @@ class Field:
         return self.label_en or self.label if lang == "en" else (self.label or self.label_en)
 
     def help_for(self, lang: str) -> str:
-        return self.help_en if lang == "en" else (self.help or self.help_en)
+        # Fall back to the other language: a missing translation must never
+        # silently remove the help text from a form.
+        return (self.help_en or self.help) if lang == "en" else (self.help or self.help_en)
 
 
 @dataclass

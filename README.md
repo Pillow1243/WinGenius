@@ -3,13 +3,17 @@
 <p align="center">
   <a href="https://github.com/Pillow1243/WinGenius/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Pillow1243/WinGenius/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="tools" src="https://img.shields.io/badge/tools-254-5B8CFF">
-  <img alt="checks" src="https://img.shields.io/badge/checks-1%2C829%20passing-2BD9A0">
+  <img alt="checks" src="https://img.shields.io/badge/checks-1%2C885%20passing-2BD9A0">
   <img alt="python" src="https://img.shields.io/badge/python-3.12%20%7C%203.13-3776AB">
   <img alt="platform" src="https://img.shields.io/badge/platform-Windows%2010%2F11-0078D6">
   <img alt="license" src="https://img.shields.io/badge/license-AGPL--3.0-orange">
   <a href="../../releases/latest"><img alt="release" src="https://img.shields.io/github/v/release/Pillow1243/WinGenius?display_name=tag"></a>
 </p>
 
+> **بروزرسانی نگهداری:** سخت‌سازی گاوصندوق/API/گزارش خطا، امضای PDF در نسخه‌ی exe،
+> بسته‌بندی واقعی wheel، همگام‌سازی آمار مستندات و ۵۷ تست امنیتی تازه — جزئیات در
+> [`CHANGELOG.md`](CHANGELOG.md).
+>
 > **۲۵۴ ابزار** در ۱۰ دسته · **گاوصندوق رمزدار (AES-256-GCM + scrypt)** · **ژورنال و بازگردانی (Ctrl+Z)** ·
 > **زمان‌بند cron** · **موتور ماکرو شرطی** · **API محلی JSON** · به‌همراه همه‌ی نسخه‌ی ۳:
 > دستیار برنامه‌ریز، گردش‌کارها، خودکارسازی پوشه، ایندکس جست‌وجو، هوش کلیپ‌بورد و داشبورد زنده.
@@ -46,6 +50,11 @@
 > یادداشت نسخه‌ی ۴.۱ در [`docs/summary_v4_1_fa.md`](docs/summary_v4_1_fa.md) ·
 > راهنمای گام‌به‌گام نصب در [`docs/install_fa.md`](docs/install_fa.md) ·
 > English entry point: [`docs/README.en.md`](docs/README.en.md).
+>
+> **برای توسعهدهندگان:** [`ARCHITECTURE.md`](ARCHITECTURE.md) (ساختار کد) ·
+> [`ROADMAP.md`](ROADMAP.md) (اولویتهای بعدی) · [`SUPPORT.md`](SUPPORT.md) (پشتیبانی) ·
+> [`docs/openapi.yaml`](docs/openapi.yaml) (قرارداد API محلی) ·
+> [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) · [`SECURITY.md`](SECURITY.md).
 
 ---
 
@@ -79,12 +88,11 @@
 | **نسخه‌بندی داده + مهاجرت** | پوشه‌ی داده `schema.json` دارد، هر مهاجرت **قبل از اجرا** پشتیبان کامل می‌گیرد، قدم‌ها idempotent‌اند و ژورنال با `PRAGMA user_version` در جا ارتقا می‌یابد. |
 | **تک‌نسخه‌ای** | باز کردن نسخه‌ی دوم، پنجره‌ی نسخه‌ی اول را جلو می‌آورد و خودش خارج می‌شود — دیگر دو نسخه روی یک ژورنال و زمان‌بند نمی‌جنگند. |
 | **API محلی مقاوم** | سقف نرخ (۳۰۰/دقیقه)، سقف بدنه‌ی ۱ مگابایت با پاسخ واقعی `413`، توکن قابل‌غیرفعال‌سازی در query، و بستن درست سوکت هنگام خاموشی. |
-| **تست درستی خروجی** | مجموعه‌ی تازه‌ی `tests/output_test.py` (۸۰ بررسی) خودِ فایل تولیدشده را باز می‌کند و می‌سنجد. |
-| **CI و ابزار کیفیت** | GitHub Actions روی ویندوز+لینوکس و پایتون ۳.۱۱+۳.۱۳، `ruff` با قواعد خطای واقعی، و `packaging/verify_package.py` برای هم‌خوانی فایل‌های ساخت. |
+| **تست درستی خروجی** | مجموعه‌ی تازه‌ی `tests/output_test.py` (۱۱۲ بررسی) خودِ فایل تولیدشده را باز می‌کند و می‌سنجد. |
+| **CI و ابزار کیفیت** | GitHub Actions روی ویندوز+لینوکس و پایتون ۳.۱۲/۳.۱۳، `ruff` با قواعد خطای واقعی، و `packaging/verify_package.py` برای هم‌خوانی فایل‌های ساخت. |
 | **مجوز شفاف** | `LICENSE` (AGPL-3.0)، `THIRD-PARTY-NOTICES.md` با مسیر رسیدن به مجوز سهل‌گیرانه، و صفحه‌ی مجوز در نصب‌کننده. |
 | **باگ‌های واقعی رفع‌شده** | `zip-slip`، `NameError` در پایان برش صدا، `NameError` در اجرای ماکرو، f-string نامعتبر روی پایتون ۳.۱۱، `--dry-run` که در فراخوانی برنامه‌ای واقعاً اجرا می‌کرد، و «فشرده‌سازی» که فایل بزرگ‌تر تحویل می‌داد. |
 
-نسخه‌ی ۴ هم سه چیز را حل کرد که هیچ دستیار ویندوزی یک‌جا ندارد: **امنیت داده**
 نسخه‌ی ۴ سه چیز را حل می‌کند که هیچ دستیار ویندوزی یک‌جا ندارد: **امنیت داده**
 (گاوصندوق رمزدار)، **بازگشت‌پذیری** (هر تغییر فایل قابل برگشت است) و **تکرار خودکار**
 (زمان‌بند cron + ماکروهای شرطی + API محلی برای اتصال به بقیه‌ی برنامه‌ها) — خلاصه‌ی نسخه‌ی ۴:
@@ -123,7 +131,7 @@
 | **تاریخچه‌ی اجراها** | هر اجرا با زمان، مدت، وضعیت و خروجی‌ها ذخیره می‌شود؛ در پالت با بخش «اخیر» دوباره اجرا کنید. |
 | **افزونه‌پذیری** | هر فایل `.py` در پوشه‌ی افزونه‌ها (یا `plugins/` پروژه) با دکوراتور `@tool` یا فهرست `TOOLS` به ابزار واقعی تبدیل می‌شود. |
 | **عیب‌یابی درون‌برنامه** | گزارش وضعیت (ffmpeg، Tesseract، کتابخانه‌ها، فضای دیسک، تعداد ابزار) + هشدارهای عملی؛ داخل تنظیمات و با `--doctor`. |
-| **خط فرمان** | همان ۲۲۵ ابزار از CMD/PowerShell: `--list`، `--describe`، `--run`، `--doctor`، `--json` (مناسب اسکریپت و Task Scheduler). |
+| **خط فرمان** | همان ۲۵۴ ابزار از CMD/PowerShell: `--list`، `--describe`، `--run`، `--doctor`، `--json` (مناسب اسکریپت و Task Scheduler). |
 | **۸۰ ابزار نسخه‌ی ۲** | PDF پیشرفته (۲۴)، تصویر پیشرفته (۱۸)، مدیا (۱۷)، فایل (۱۸)، سیستم (۱۷)، شبکه (۱۴)، امنیت (۱۰)، تبدیل و متن (۲۱)، توسعه‌دهنده (۸)، ویندوز (۱۳). |
 | **زبان‌فهم فارسی** | اصلاح «ي/ك» عربی، نیم‌فاصله، ارقام فارسی/لاتین، تاریخ **شمسی ⇄ میلادی**، مرتب‌سازی الفبای فارسی، اصلاح چیدمان کیبورد (sghl → سلام). |
 | **OCR و کد** | OCR تصویر و PDF اسکن‌شده، ساخت QR/بارکد Code128/EAN13، خواندن QR از عکس. |
@@ -191,7 +199,7 @@ python packaging\build_exe.py --onedir    :: → dist\WinGenius\     (استار
 python packaging\build_exe.py --installer :: → dist\WinGenius-Setup.exe (Inno Setup)
 ```
 
-- هیچ پنجره‌ی کنسولی باز نمی‌شود؛ آیکون و اطلاعات نسخه (4.0.0) داخل exe جاسازی می‌شوند.
+- هیچ پنجره‌ی کنسولی باز نمی‌شود؛ آیکون و اطلاعات نسخه (5.0.0) داخل exe جاسازی می‌شوند.
 - ماژول‌های ابزار داینامیک import می‌شوند؛ `packaging/WinGenius.spec` با `collect_submodules("app.tools")` آن‌ها را جمع می‌کند.
 - نصب‌کننده با [Inno Setup 6](https://jrsoftware.org/isdl.php): میان‌بر Start Menu، آیکون دسکتاپ، اجرای خودکار و حذف‌کننده.
 
@@ -279,6 +287,7 @@ WinGenius.exe --serve --port 8770
 WinGenius.exe --doctor                 :: نسخه‌ی برنامه + نسخه‌ی داده + وضعیت وابستگی‌ها
 WinGenius.exe --run pdf_compress --file big.pdf --dry-run   :: فقط نشان بده، اجرا نکن
 WinGenius.exe --allow-multi            :: اجازه‌ی اجرای چند نسخه (پیش‌فرض: تک‌نسخه‌ای)
+WinGenius.exe --check-update           :: بررسی نسخه‌ی تازه (فقط با درخواست شما، آنلاین)
 ```
 
 سرور محلی فقط روی `127.0.0.1` گوش می‌دهد و هر درخواست باید توکن بفرستد
@@ -561,7 +570,9 @@ python packaging/make_showcase.py                                # docs/showcase
 - «بررسی نشت رمز» با **k-anonymity**: فقط ۵ نویسه‌ی اول هش SHA-1 ارسال می‌شود، نه خود رمز.
 - «اسکن رمز و کلید» فقط روی همان پوشه‌ای کار می‌کند که انتخاب می‌کنید و چیزی ارسال نمی‌کند.
 - رمز گاوصندوق را فراموش کنید، بازیابی ممکن نیست — این ویژگی است، نه نقص.
-- هیچ داده‌ای جمع‌آوری یا ارسال نمی‌شود؛ برنامه آفلاین کار می‌کند.
+- بدون تله‌متری، بدون حساب کاربری و بدون ترافیک پس‌زمینه؛ فقط ابزارهای شبکه‌ای که
+  خودتان اجرا می‌کنید (دانلود، WHOIS، بررسی نشت رمز، بسته‌های زبان و `--check-update`)
+  به اینترنت وصل می‌شوند.
 
 ---
 
@@ -590,13 +601,13 @@ python packaging/make_showcase.py                                # docs/showcase
   ویندوز، آیکون و ارجاع‌های مجوز را بررسی می‌کند (نسخه‌ی نصب‌کننده دیگر نمی‌تواند از برنامه عقب بماند).
 - `LICENSE` (AGPL-3.0) و `THIRD-PARTY-NOTICES.md` کنار exe هم بسته‌بندی می‌شوند و در نصب‌کننده
   به‌عنوان صفحه‌ی مجوز نمایش داده می‌شوند.
-- **CI:** `.github/workflows/ci.yml` روی Ubuntu و Windows، پایتون ۳.۱۱ و ۳.۱۳، هر چهار مجموعه تست
+- **CI:** `.github/workflows/ci.yml` روی Ubuntu و Windows، پایتون ۳.۱۲ و ۳.۱۳، پنج مجموعه تست
   بعلاوه `ruff` (فقط قواعد خطای واقعی) و `verify_package.py` را اجرا می‌کند.
 
 ---
 
 ## English TL;DR
-**WinGenius 4.1** is an offline PySide6 desktop assistant for Windows with **247 tools in 10 categories**,
+**WinGenius 5.0.0** is a local-first PySide6 desktop assistant for Windows with **254 tools in 10 categories**,
 and it does more than run one tool at a time:
 
 - **Encrypted vault** — `.wgv` containers using AES-256-GCM with a **scrypt** key (N=2¹⁵), an
@@ -621,16 +632,19 @@ packaging\build.bat                                        :: dist\WinGenius.exe
 python packaging\build_exe.py --installer                  :: dist\WinGenius-Setup.exe
 WinGenius.exe --plan "compress this PDF" --file C:\in\a.pdf
 WinGenius.exe --list-schedules && WinGenius.exe --serve --port 8770
+WinGenius.exe --check-update        :: opt-in release check (the only background-free network call)
 WinGenius.exe --undo
 python tests\smoke_test.py && python tests\functional_test.py && python tests\output_test.py && python tests\ui_test.py
 ```
 
 Version 5.0 adds real PDF digital signatures with tamper detection, OCR-aware search indexing for
-scanned PDFs, and a redacted crash-report bundle. Test totals: **154 smoke · 459 functional ·
-112 output · 1,077 UI · 27 packaging = 1,829 checks**, all headless, coverage **75%** of `app/`
-(77% excluding the Windows-only modules).
+scanned PDFs, and a redacted crash-report bundle. Test totals: **154 smoke · 458 functional ·
+112 output · 1,077 UI · 57 security · 27 packaging = 1,885 checks**, all headless, coverage
+**75%** of `app/` (enforced by a `fail_under` gate in `pyproject.toml`).
 
-Everything runs locally — no telemetry, no cloud, no account.
+No telemetry, no account, no background network traffic. All file processing is local; only the
+network tools you explicitly run (download, WHOIS, breach check, OCR language packs, speech
+models and `--check-update`) contact the internet.
 
 ## مجوز
 
