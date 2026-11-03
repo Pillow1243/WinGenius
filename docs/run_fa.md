@@ -58,7 +58,7 @@ python main.py
 ```bat
 python main.py --doctor
 ```
-باید ببینی `App : WinGenius 5.0.0`، `Tools registered : 254` و همه‌ی کتابخانه‌ها با ✓.
+باید ببینی `App : WinGenius 5.0.1`، `Tools registered : 254` و همه‌ی کتابخانه‌ها با ✓.
 هر خطی که `✗` داشت، یعنی همان وابستگی نصب نشده — دقیقاً همان را نصب کن.
 
 ### قدم ۷ (اختیاری): قابلیت‌های اضافه
@@ -88,7 +88,7 @@ python main.py --doctor
 
 1. برو به **Actions** → **Build Windows exe** → **Run workflow** (شاخه `main`).
    بعد از ~۱۰ دقیقه، پایین صفحه‌ی همان اجرا، بخش **Artifacts**:
-   `WinGenius-windows` = `WinGenius.exe` + `WinGenius-Setup-5.0.0.exe` + `WinGenius-portable.zip`.
+   `WinGenius-windows` = `WinGenius.exe` + `WinGenius-Setup-5.0.1.exe` + `WinGenius-portable.zip`.
 2. برای اینکه **همه** بتوانند نصب کنند (و در صفحه‌ی Releases بماند)، یا:
    - یک تگ بزن: `git tag v5.0.1 && git push origin v5.0.1` → خودکار ساخته و به همان Release
      چسبانده می‌شود؛ یا
@@ -116,7 +116,7 @@ packaging\build.bat
 |---|---|---|
 | `packaging\build.bat` | `dist\WinGenius.exe` | یک فایل، ساده برای دادن به دیگران، بالا آمدن کندتر |
 | `python packaging\build_exe.py --onedir` | `dist\WinGenius\` | بالا آمدن سریع‌تر، پوشه‌ی چندفایلی |
-| `python packaging\build_exe.py --installer` | `dist\WinGenius-Setup-5.0.0.exe` | نیاز به **Inno Setup 6** نصب‌شده |
+| `python packaging\build_exe.py --installer` | `dist\WinGenius-Setup-5.0.1.exe` | نیاز به **Inno Setup 6** نصب‌شده |
 | `python packaging\build_exe.py --clean` | — | `build/` و `dist/` را اول پاک می‌کند |
 
 exe امضای دیجیتال کد (code signing) **ندارد**، پس SmartScreen ممکن است بار اول هشدار بدهد:
@@ -145,7 +145,7 @@ QT_QPA_PLATFORM=offscreen ./run.sh --list --quiet --category pdf
 
 ```
 $ python main.py --doctor
-App                   : WinGenius 5.0.0
+App                   : WinGenius 5.0.1
 Python                : 3.13.16 (x86_64)
 OS                    : Linux 6.1.158+
 Data folder           : /home/user/.config/WinGenius
@@ -192,7 +192,7 @@ $ python main.py --serve --port 8770
 WinGenius API → http://127.0.0.1:8770   token: LjDNjxEzSl70Pf6npeAX0QdNQx5qpB90
 
 $ curl -H "X-WinGenius-Token: LjDN…" http://127.0.0.1:8770/health
-{"app": "WinGenius", "version": "5.0.0", "status": "ok", "tools": 254, "uptime": 5.8,
+{"app": "WinGenius", "version": "5.0.1", "status": "ok", "tools": 254, "uptime": 5.8,
  "guard": {"rate_limit": 300, "rate_window": 60.0, "rejected": 0, "max_body": 1048576,
            "allow_query_token": false}}
 ```

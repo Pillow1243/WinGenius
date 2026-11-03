@@ -199,7 +199,7 @@ python packaging\build_exe.py --onedir    :: → dist\WinGenius\     (استار
 python packaging\build_exe.py --installer :: → dist\WinGenius-Setup.exe (Inno Setup)
 ```
 
-- هیچ پنجره‌ی کنسولی باز نمی‌شود؛ آیکون و اطلاعات نسخه (5.0.0) داخل exe جاسازی می‌شوند.
+- هیچ پنجره‌ی کنسولی باز نمی‌شود؛ آیکون و اطلاعات نسخه (5.0.1) داخل exe جاسازی می‌شوند.
 - ماژول‌های ابزار داینامیک import می‌شوند؛ `packaging/WinGenius.spec` با `collect_submodules("app.tools")` آن‌ها را جمع می‌کند.
 - نصب‌کننده با [Inno Setup 6](https://jrsoftware.org/isdl.php): میان‌بر Start Menu، آیکون دسکتاپ، اجرای خودکار و حذف‌کننده.
 
@@ -387,7 +387,7 @@ WinGenius/
 │  │  ├─ scheduler_panel.py    شیت زمان‌بند + کتابخانه‌ی ماکرو
 │  │  ├─ tray.py               آیکون سینی + منوی سریع
 │  │  └─ widgets.py, icons.py  (۹۰ آیکون وکتوری + کمک‌تابع متن راست‌به‌چپ)
-│  ├─ tools/                   ۳۲ ماژول (۲۴۷ ابزار)
+│  ├─ tools/                   ۳۴ ماژول (۲۵۴ ابزار)
 │  └─ assets/
 ├─ packaging/                  spec، build_exe، verify_package.py، نسخه، Inno Setup، make_showcase
 ├─ tests/                      smoke_test.py · functional_test.py · output_test.py · ui_test.py
@@ -399,12 +399,12 @@ WinGenius/
 
 ---
 
-## ۱۰. تست‌ها (۱٬۸۲۹ بررسی، ۰ خطا)
+## ۱۰. تست‌ها (۱٬۸۸۵ بررسی، ۰ خطا)
 
 ```bash
 python tests/smoke_test.py                 # ۱۵۴ تست عملکردی روی فایل‌های واقعی
 python tests/smoke_test.py pdf image v3    # فقط چند گروه
-python tests/functional_test.py            # ۴۵۹ تست موتور، ابزارها و اجزای نسخه‌های ۳ تا ۵.۰
+python tests/functional_test.py            # ۴۵۸ تست موتور، ابزارها و اجزای نسخه‌های ۳ تا ۵.۰
 python tests/functional_test.py vault api v42 v50  # فقط گروه‌های تازه
 python tests/functional_test.py scale      # بار سنگین: ۶۰۰ فایل + ایندکس ۲۵۰ سند
 python tests/output_test.py sign          # امضا → بررسی → دستکاری
@@ -417,7 +417,7 @@ python main.py --self-test                 # اجرای دودی بدون کلی
 ```
 
 همه‌ی این‌ها در CI (`.github/workflows/ci.yml`) روی **Ubuntu و Windows** و روی
-**پایتون ۳.۱۱ و ۳.۱۳** اجرا می‌شوند و `coverage` هم گزارش می‌دهد.
+**پایتون ۳.۱۲ و ۳.۱۳** اجرا می‌شوند و `coverage` هم گزارش می‌دهد.
 
 تصاویر مستندات هم از خود برنامه و به‌صورت headless ساخته می‌شوند:
 
@@ -427,12 +427,12 @@ python packaging/make_showcase.py                                # docs/showcase
 ```
 
 آخرین نتیجه (headless، `QT_QPA_PLATFORM=offscreen`): **smoke ۱۵۴/۱۵۴** ·
-**functional ۴۵۹/۴۵۹** · **output ۱۱۲/۱۱۲** · **UI ۱٬۰۷۷ بررسی: ALL CHECKS PASSED** ·
-**packaging ۲۷/۲۷** · **۲۵۴ ابزار، ۰ خطای بارگذاری** — جمعاً **۱٬۸۲۹ بررسی PASS**.
-پوشش تست (coverage) روی `app/` (۱۸٬۷۸۷ خط قابل اجرا): **۷۵٪**؛ با کنار گذاشتن ماژول‌های
+**functional ۴۵۸/۴۵۸** · **output ۱۱۲/۱۱۲** · **UI ۱٬۰۷۷ بررسی: ALL CHECKS PASSED** ·
+**packaging ۲۷/۲۷** · **۲۵۴ ابزار، ۰ خطای بارگذاری** — جمعاً **۱٬۸۸۵ بررسی PASS**.
+پوشش تست (coverage) روی `app/` (۱۸٬۹۸۷ خط قابل اجرا): **۷۵٪**؛ با کنار گذاشتن ماژول‌های
 فقط-ویندوزی (`winapi`, `windows_*`) که روی لینوکس اجرا نمی‌شوند، **۷۷٪**.
 ماژول‌های تازه‌ی ۵.۰: `pdf_sign_tools` ۷۷٪، `indexer` (با OCR) ۷۸٪، `core/tesseract` ۷۵٪.
-سه گروه «شکار باگ» هم اضافه شد: **`schema`** (همه‌ی ۲۴۷ ابزار را از نظر آیکون، دسته، نام/توضیح دوزبانه،
+سه گروه «شکار باگ» هم اضافه شد: **`schema`** (همه‌ی ۲۵۴ ابزار را از نظر آیکون، دسته، نام/توضیح دوزبانه،
 فیلدها، مقادیر پیش‌فرض، جست‌وجو و نیت‌های برنامه‌ریز بازبینی می‌کند)،
 **`stress`** (فایل ۴ مگابایتی و ۵۱ رکورد در گاوصندوق، ۶۰ فایل در یک عملیات و بازگردانی،
 کرون ۲۹ فوریه، فایل زمان‌بندی خراب، ماکروی ۴۰۰ مرحله‌ای، ۲۴ درخواست هم‌زمان HTTP) و
@@ -453,9 +453,9 @@ python packaging/make_showcase.py                                # docs/showcase
 
 | لایه | چه می‌کند | نمونه‌ی چیزی که پیدا شد |
 |---|---|---|
-| `schema` | همه‌ی ۲۴۷ ابزار را بازبینی می‌کند: آیکون موجود، دسته‌ی معتبر، نام/توضیح فارسی و انگلیسی، کلید تکراری، انتخاب‌های خالی، پیش‌فرض خارج از گزینه‌ها، `visible_when` شکسته، پیدا شدن ابزار با نام خودش در جست‌وجو، و این‌که هر ۳۱ نیت برنامه‌ریز به ابزار واقعی و به یک برنامه‌ی قابل‌ساخت برسد | ۲۴ ابزار آیکون ناموجود داشتند و بی‌صدا آیکون «چرخ‌دنده» می‌گرفتند (۲۰ آیکون تازه ساخته شد) |
+| `schema` | همه‌ی ۲۵۴ ابزار را بازبینی می‌کند: آیکون موجود، دسته‌ی معتبر، نام/توضیح فارسی و انگلیسی، کلید تکراری، انتخاب‌های خالی، پیش‌فرض خارج از گزینه‌ها، `visible_when` شکسته، پیدا شدن ابزار با نام خودش در جست‌وجو، و این‌که هر ۳۱ نیت برنامه‌ریز به ابزار واقعی و به یک برنامه‌ی قابل‌ساخت برسد | ۲۴ ابزار آیکون ناموجود داشتند و بی‌صدا آیکون «چرخ‌دنده» می‌گرفتند (۲۰ آیکون تازه ساخته شد) |
 | `stress` | ورودی‌های بزرگ و مخرب: ۴ مگابایت داده‌ی دودویی، ۵۱ رکورد، ۶۰ فایل در یک عملیات، کرون ۲۹ فوریه، فایل زمان‌بندی خراب، ماکروی ۴۰۰ مرحله‌ای، ۲۴ درخواست هم‌زمان، بدنه‌ی JSON ناقص، توکن غلط | گاوصندوق با هدر آسیب‌دیده به‌جای پیام مؤدبانه `ValueError` می‌داد؛ `next_run` برای «۲۹ فوریه» `None` برمی‌گرداند؛ شمارنده‌ی گام‌های ماکرو در اجرای واقعی صفر می‌ماند |
-| `fuzz` | هر ۲۴۷ ابزار را با سه دسته ورودی (پیش‌فرض، خالی، مسیرهای مخرب مثل `../../..`) صدا می‌زند و انتظار دارد فقط `ToolError` ببینید | ۳۰ ابزار با ورودی نامناسب کرش می‌کردند (پوشه به‌جای فایل، دسترسی‌نداشتن، مسیر ریشه‌ی دیسک، میزبان نامعتبر، `IndexError` در رمزگشایی) |
+| `fuzz` | هر ۲۵۴ ابزار را با سه دسته ورودی (پیش‌فرض، خالی، مسیرهای مخرب مثل `../../..`) صدا می‌زند و انتظار دارد فقط `ToolError` ببینید | ۳۰ ابزار با ورودی نامناسب کرش می‌کردند (پوشه به‌جای فایل، دسترسی‌نداشتن، مسیر ریشه‌ی دیسک، میزبان نامعتبر، `IndexError` در رمزگشایی) |
 
 اصلاحات این مرحله:
 
@@ -607,7 +607,7 @@ python packaging/make_showcase.py                                # docs/showcase
 ---
 
 ## English TL;DR
-**WinGenius 5.0.0** is a local-first PySide6 desktop assistant for Windows with **254 tools in 10 categories**,
+**WinGenius 5.0.1** is a local-first PySide6 desktop assistant for Windows with **254 tools in 10 categories**,
 and it does more than run one tool at a time:
 
 - **Encrypted vault** — `.wgv` containers using AES-256-GCM with a **scrypt** key (N=2¹⁵), an
@@ -640,7 +640,7 @@ python tests\smoke_test.py && python tests\functional_test.py && python tests\ou
 Version 5.0 adds real PDF digital signatures with tamper detection, OCR-aware search indexing for
 scanned PDFs, and a redacted crash-report bundle. Test totals: **154 smoke · 458 functional ·
 112 output · 1,077 UI · 57 security · 27 packaging = 1,885 checks**, all headless, coverage
-**75%** of `app/` (enforced by a `fail_under` gate in `pyproject.toml`).
+**75%** of `app/`; `pyproject.toml` enforces a **70%** `fail_under` gate so Windows-only modules cannot break CI.
 
 No telemetry, no account, no background network traffic. All file processing is local; only the
 network tools you explicitly run (download, WHOIS, breach check, OCR language packs, speech

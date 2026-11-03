@@ -7,7 +7,7 @@
 
 ## راه ۱ — نصب‌کننده‌ی آماده (فقط اگر از قبل ساخته شده باشد)
 
-فایل `WinGenius-Setup-5.0.0.exe` را اجرا کنید: نصب در `%LOCALAPPDATA%\Programs\WinGenius`،
+فایل `WinGenius-Setup-5.0.1.exe` را اجرا کنید: نصب در `%LOCALAPPDATA%\Programs\WinGenius`،
 ساخت میان‌بر در Start Menu و دسکتاپ (اختیاری)، و صفحه‌ی مجوز AGPL در همان مرحله.
 
 > در این پروژه فعلاً پوشه‌ی `dist/` وجود ندارد، چون `.exe` فقط **روی ویندوز** ساخته می‌شود و
@@ -52,7 +52,7 @@ python main.py
 > اصطکاک واقعی روی لینوکس است.
 
 **آنچه در یک venv کاملاً تازه تست شد:** نصب همه‌ی `requirements.txt` بدون خطا، سپس
-`python main.py --self-test` با کد خروج `0`، `python main.py --version` → `WinGenius 5.0.0`
+`python main.py --self-test` با کد خروج `0`، `python main.py --version` → `WinGenius 5.0.1`
 و بارگذاری **۲۵۴ ابزار** (`--list`).
 
 ### اگر فایل اجرایی می‌خواهید ولی نمی‌خواهید بیلد کنید
@@ -96,7 +96,7 @@ python packaging\build_exe.py --installer  # + نصب‌کننده (نیاز ب�
 |---|---|
 | برنامه‌ی تک‌فایل | `dist\WinGenius.exe` |
 | حالت پوشه‌ای | `dist\WinGenius\WinGenius.exe` |
-| نصب‌کننده | `dist\WinGenius-Setup-5.0.0.exe` |
+| نصب‌کننده | `dist\WinGenius-Setup-5.0.1.exe` |
 
 Inno Setup 6 را از <https://jrsoftware.org/isdl.php> نصب کنید (یا `winget install JRSoftware.InnoSetup`)
 و مطمئن شوید `iscc.exe` در `PATH` است.

@@ -54,6 +54,13 @@ def main() -> int:
     check("README badge", f"checks-{encoded}%20passing" in readme, formatted)
     check("README tool count", "tools-254-5B8CFF" in readme)
     check("README totals", formatted in readme, formatted)
+    # The ASCII-only guards above cannot see Persian digits: the first pass
+    # shipped a Persian README that still said ۲۴۷ ابزار / ۱٬۸۲۹ بررسی /
+    # ۴۵۹ تست / پایتون ۳.۱۱. Keep watching those too.
+    stale_fa = [r"۲۴۷\s*ابزار", r"۴۵۹", r"۱[٬,]۸۲[۰-۹]",
+                r"۱۸[٬,]۷۸۷", r"پایتون\s*۳\.۱۱\s*و"]
+    hits = [pattern for pattern in stale_fa if re.search(pattern, readme)]
+    check("README has no stale Persian numbers", not hits, ", ".join(hits))
     english = text("docs/README.en.md")
     check("English docs totals", formatted in english, formatted)
     check("English docs suite lines", str(STATS["suites"]["security"]) in english)

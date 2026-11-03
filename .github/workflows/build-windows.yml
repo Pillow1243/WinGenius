@@ -70,7 +70,7 @@ jobs:
           $tag = "${{ inputs.release_tag }}"
           if ([string]::IsNullOrWhiteSpace($tag)) { $tag = "${{ github.ref_name }}" }
           if ($tag -notmatch '^v') { $tag = "" }
-          $version = if ($tag) { $tag.TrimStart('v') } else { "5.0.0-dev" }
+          $version = if ($tag) { $tag.TrimStart('v') } else { "5.0.1-dev" }
           "tag=$tag"       | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
@@ -193,7 +193,7 @@ jobs:
               return out
 
           out = run("--version")
-          assert "${{ steps.meta.outputs.version }}" in out or "5.0.0" in out, out
+          assert "${{ steps.meta.outputs.version }}" in out or "5.0.1" in out, out
 
           out = run("--doctor")
           assert "PySide6" in out, out

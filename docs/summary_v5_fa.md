@@ -56,7 +56,7 @@
 | مجموعه | قبل | حالا | چه چیزی اضافه شد |
 |---|---|---|---|
 | smoke | ۱۵۴ | **۱۵۴** | — |
-| functional | ۴۳۲ | **۴۵۹** | گروه `v50` (۱۸ بررسی) + گروه `scale` (۹ بررسی) + چند بررسی CLI |
+| functional | ۴۳۲ | **۴۵۸** | گروه `v50` (۱۸ بررسی) + گروه `scale` (۹ بررسی) + چند بررسی CLI |
 | output | ۱۰۲ | **۱۱۲** | گروه `sign` (۱۰ بررسی): امضا، بررسی، دستکاری، رمز اشتباه، فایل بدون امضا |
 | ui | ۱٬۰۶۳ | **۱٬۰۷۷** | ۲۵۴ فرم + بررسی دسترس‌پذیری همه‌ی فیلدها |
 | packaging | ۲۷ | **۲۷** | نسخه ۵.۰.۰ |
@@ -94,7 +94,7 @@ QT_QPA_PLATFORM=offscreen python tests/security_test.py     # 57 PASS
 python -m pytest -q                                        # 44 collected, all green
 python packaging/verify_package.py                         # 27/27
 ruff check main.py app tests packaging                     # All checks passed!
-python main.py --version                                   # WinGenius 5.0.0
+python main.py --version                                   # WinGenius 5.0.1
 ```
 
 نمونه‌ی واقعی امضا و بررسی (با گواهی آزمایشی ساخته‌شده در همان تست):

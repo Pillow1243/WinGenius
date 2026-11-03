@@ -1,4 +1,4 @@
-# Third-party notices — WinGenius 5.0.0
+# Third-party notices — WinGenius 5.0.1
 
 WinGenius itself is released under the **GNU Affero General Public License v3.0 or
 later** (see `LICENSE`). That choice is not decorative: the app renders and edits
