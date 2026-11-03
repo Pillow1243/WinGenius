@@ -94,6 +94,11 @@ def check_exe_paths() -> list[str]:
         ("workflow has no stale onedir exe path", "dist/WinGenius/WinGenius.exe" not in workflow),
         ("spec names the exe WinGenius", 'name="WinGenius"' in spec),
         ("installer reads the exe from ..\\dist", '..\\dist\\' in installer),
+        # The onedir command writes its spec into build/, so relative data/icon
+        # paths resolve against build/ and PyInstaller aborts before building.
+        ("onedir resolves assets absolutely", 'Resolve-Path "app/assets"' in workflow),
+        ("onedir uses absolute --add-data source", '"${assets};app/assets"' in workflow),
+        ("onedir keeps the repo root importable", "--paths ." in workflow),
     ]
     for label, ok in pairs:
         print(f"{'PASS' if ok else 'FAIL'}  {label}")

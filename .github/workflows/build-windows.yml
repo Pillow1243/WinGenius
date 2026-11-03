@@ -148,9 +148,14 @@ jobs:
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_onedir }}
         shell: pwsh
         run: |
+          # --specpath build makes PyInstaller resolve relative --add-data/--icon
+          # sources against build/ instead of the repo root, which used to abort
+          # with "Unable to find ...\build\app\assets". Use absolute paths.
+          $assets = (Resolve-Path "app/assets").Path
           pyinstaller --noconfirm --clean --onedir --name WinGenius-onedir `
-            --windowed --icon app/assets/icon.ico `
-            --add-data "app/assets;app/assets" `
+            --windowed --icon "$assets/icon.ico" `
+            --add-data "${assets};app/assets" `
+            --paths . `
             --collect-submodules app.tools `
             --hidden-import pyhanko --collect-submodules pyhanko `
             --hidden-import pytesseract `
