@@ -45,6 +45,16 @@ _MODULES = (
     "undo_tools",
     "vault_tools",
     "auto_tools",
+    "flow_tools",
+    "pdf_extra3",
+    "image_extra3",
+    "security_extra2",
+    "network_extra2",
+    "media_extra2",
+    "dev_extra2",
+    "convert_extra2",
+    "files_extra3",
+    "system_extra3",
 )
 
 _loaded = False
