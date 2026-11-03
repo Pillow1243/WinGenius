@@ -194,6 +194,12 @@ class Dashboard(OverlaySheet):
         done = [entry for entry in today if entry.status == "done"]
         failed = [entry for entry in today if entry.status == "failed"]
         success_rate = (len(done) * 100 // max(1, len(done) + len(failed)))
+        try:
+            from ..core import flowkit
+
+            flow_count = len(flowkit.library())
+        except Exception:                              # noqa: BLE001 - a broken flow file is not fatal
+            flow_count = 0
 
         # ------------------------------------------------------------- tiles
         grid = QGridLayout()
@@ -210,6 +216,8 @@ class Dashboard(OverlaySheet):
             ("میانگین زمان اجرا" if self.lang != "en" else "Avg run",
              f"{(sum(entry.duration for entry in done) / max(1, len(done))):.1f}s",
              ("برای اجراهای موفق" if self.lang != "en" else "for successful runs"), "#4ECDC4"),
+            ("جریان‌های آماده" if self.lang != "en" else "Ready flows", str(flow_count),
+             ("با حلقه و شرط" if self.lang != "en" else "with loops & conditions"), "#00D9A6"),
         ]
         for index, (title, value, hint, color) in enumerate(tiles):
             grid.addWidget(self._stat_tile(title, value, hint, color), index // 2, index % 2)

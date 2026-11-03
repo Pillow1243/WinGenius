@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import io
 import json
 import os
 import shutil
@@ -950,6 +951,28 @@ def test_cli(fixtures: dict) -> None:
     check("cli --plan rejects nonsense", code == 2, str(code))
     code = run_cli(["--list-workflows", "--json"])
     check("cli --list-workflows exits 0", code == 0, str(code))
+
+    # ------------------------------------------------------------- v6: flows
+    code = run_cli(["--flows", "--json"])
+    check("cli --flows exits 0", code == 0, str(code))
+    code = run_cli(["--lint-flow", "photo_pdf_pack", "--lang", "en"])
+    check("cli --lint-flow accepts a builtin flow", code == 0, str(code))
+    code = run_cli(["--explain-flow", "photo_pdf_pack", "--lang", "en"])
+    check("cli --explain-flow exits 0", code == 0, str(code))
+    code = run_cli(["--lint-flow", "no-such-flow-at-all"])
+    check("cli --lint-flow rejects an unknown flow", code == 2, str(code))
+    flow_file = WORK / "cli_flow.json"
+    flow_file.write_text(json.dumps({
+        "id": "cli_v60", "name": "cli flow", "steps": [
+            {"tool_id": "hash_files", "values": {"src": ["{input}"],
+                                                 "save": "{out_dir}/cli_hash.sha256"}}]}),
+        encoding="utf-8")
+    code = run_cli(["--lint-flow", str(flow_file), "--lang", "en"])
+    check("cli --lint-flow reads a flow file", code == 0, str(code))
+    code = run_cli(["--run-flow", str(flow_file), "--file", str(fixtures["text"]),
+                    "--out", str(OUT), "--quiet", "--json"])
+    check("cli --run-flow runs a flow file", code == 0, str(code))
+    check("cli --run-flow wrote the output", (OUT / "cli_hash.sha256").exists())
 
     from app.core.workflows import store as workflow_store
 
@@ -2318,6 +2341,802 @@ def test_guards(fixtures: dict) -> None:
     guard.release()
     check("release drops ownership", not guard.primary)
 
+# ------------------------------------------------------------------- v6: flows
+def test_v60_flows(fixtures: dict) -> None:
+    """v6 Flow Engine: conditions, foreach, retries, error policy + flowkit."""
+    print("\n[6.0 flow engine]")
+    from app.core import flowkit, workflows
+    from app.core.registry import get as get_tool, register as register_tool
+    from app.core.spec import RunContext, RunResult, ToolSpec
+    from app.core.workflows import (
+        Step, Workflow, evaluate_condition, expand_foreach, run_sync, step_value_sets,
+    )
+
+    sandbox = Path(tempfile.mkdtemp(prefix="wg_v60_flow_"))
+    # Self-contained fixtures: earlier groups in this file rename/delete files in
+    # the shared WORK folder, so a flow test must never depend on them.
+    local = sandbox / "input"
+    local.mkdir(parents=True, exist_ok=True)
+    local_texts = []
+    for index in range(3):
+        path = local / f"note{index}.txt"
+        path.write_text(f"line {index}\nsecond line\n", encoding="utf-8")
+        local_texts.append(str(path))
+    from PIL import Image as _LocalImage
+
+    local_images = []
+    for index, colour in enumerate(("#18C8F5", "#7B61FF", "#FFB020")):
+        path = local / f"pic{index}.png"
+        _LocalImage.new("RGB", (240, 160), colour).save(path)
+        local_images.append(str(path))
+    local_pdf = sandbox / "doc.pdf"
+    from reportlab.lib.pagesizes import A4 as _LocalA4
+    from reportlab.pdfgen.canvas import Canvas as _LocalCanvas
+
+    _sheet = _LocalCanvas(str(local_pdf), pagesize=_LocalA4)
+    for page in range(1, 4):
+        _sheet.drawString(60, 760, f"flow page {page}")
+        _sheet.showPage()
+    _sheet.save()
+    fixtures = {**fixtures, "text": Path(local_texts[0]), "images": local_images,
+                "pdf": local_pdf}
+    # ---------------------------------------------------------- step model
+    step = Step("hash_files", {"src": ["{item}"]}, when="{prev} exists",
+                foreach="{input}/*.txt", retries=2, on_error="continue")
+    restored = Step.from_dict(step.as_dict())
+    check("a flow step round-trips its v6 controls",
+          (restored.when, restored.foreach, restored.retries, restored.on_error)
+          == ("{prev} exists", "{input}/*.txt", 2, "continue"),
+          str(restored.as_dict()))
+    check("a plain step stays plain in JSON",
+          "when" not in Step("pdf_merge", {}).as_dict()
+          and "foreach" not in Step("pdf_merge", {}).as_dict())
+    check("an unknown on_error falls back to stop",
+          Step.from_dict({"tool_id": "x", "on_error": "explode"}).on_error == "stop")
+    check("retries are clamped to a sane range",
+          Step.from_dict({"tool_id": "x", "retries": 99}).retries == 5)
+    check("an advanced step is flagged as such", step.advanced and not Step("pdf_merge", {}).advanced)
+    check("the step summary explains the loop", "برای هر" in step.summary("fa"),
+          step.summary("fa"))
+    check("the step summary is bilingual", "for each" in step.summary("en"),
+          step.summary("en"))
+
+    # ------------------------------------------------------------ conditions
+    context = {"prev": "/tmp/a.pdf", "prev_all": ["/tmp/a.pdf"], "prev_name": "a",
+               "input": str(fixtures["text"]), "out_dir": str(sandbox), "index": 0,
+               "item": "", "item_name": "", "item_dir": "", "item_ext": "",
+               "item_index": 1, "item_count": 1}
+    check("an empty condition is true", evaluate_condition("", context))
+    check("endswith matches a pdf", evaluate_condition("{prev} endswith .pdf", context))
+    check("endswith rejects a jpg", not evaluate_condition("{prev} endswith .jpg", context))
+    check("contains matches", evaluate_condition("{prev} contains /tmp/", context))
+    check("equality works", evaluate_condition("{prev_name} == a", context))
+    check("inequality works", evaluate_condition("{prev_name} != b", context))
+    check("numbers compare numerically", evaluate_condition("2 < 10", context))
+    check("and combines clauses",
+          evaluate_condition("{prev} endswith .pdf and {prev_name} == a", context))
+    check("or combines clauses",
+          evaluate_condition("{prev} endswith .jpg or {prev_name} == a", context))
+    check("not negates", not evaluate_condition("not {prev} endswith .pdf", context))
+    check("exists is false for an empty value", not evaluate_condition("{item} exists", context))
+    check("exists is true for a real path",
+          evaluate_condition("{" + "prev" + "} exists", {**context, "prev": str(fixtures["text"])}))
+    check("is empty catches an empty value", evaluate_condition("{item} is empty", context))
+
+    # ------------------------------------------------------------- foreach
+    pattern = str(Path(fixtures["text"]).parent / "*.txt")
+    found = expand_foreach(pattern, context)
+    check("a glob expands to real files", len(found) >= 2, f"{len(found)}: {found}")
+    check("brace globs expand", len(expand_foreach(
+        str(Path(fixtures["text"]).parent / "*.{txt,zip}"), context)) >= 3)
+    check("a list placeholder expands", expand_foreach("{prev_all}", context) == ["/tmp/a.pdf"])
+    check("a missing path expands to nothing",
+          expand_foreach("Z:/definitely/not/here/*.pdf", context) == [])
+    sets = step_value_sets(Step("hash_files", {"src": ["{item}"], "note": "{item_index}/{item_count}"},
+                                foreach=pattern), context)
+    check("each item becomes one run", len(sets) == len(found), str(len(sets)))
+    check("item placeholders are substituted", sets[0]["src"][0] == found[0], str(sets[0]))
+    check("item_index is one-based",
+          sets[0]["note"] == f"1/{len(found)}", str(sets[0].get("note")))
+
+    # ---------------------------------------------------------- run_sync: skip
+    skipped = run_sync(Workflow(id="skip", name="skip", steps=[
+        Step("hash_files", {"src": [str(fixtures["text"])]}, when="1 == 1"),
+        Step("hash_files", {"src": [str(fixtures["text"])]}, when="1 == 2"),
+    ]), lang="en", output_dir=str(sandbox))
+    check("a false condition skips the step",
+          skipped.steps[0].status == "done" and skipped.steps[1].status == "skipped",
+          str([s.status for s in skipped.steps]))
+    check("a flow of skipped steps still finishes", skipped.status == "done", skipped.status)
+
+    # -------------------------------------------------------- run_sync: foreach
+    looped = run_sync(Workflow(id="loop", name="loop", steps=[
+        Step("hash_files", {"src": ["{item}"], "save": "{out_dir}/{item_name}.sha256"},
+             foreach=pattern),
+    ]), lang="en", output_dir=str(sandbox / "hashes"),
+        base_values={"input": str(Path(fixtures["text"]).parent), "__paths__": []})
+    check("foreach runs once per file", len(looped.steps[0].outputs) >= 2,
+          str(looped.steps[0].outputs))
+    check("foreach reports success", looped.status == "done", looped.message)
+
+    # -------------------------------------------------- run_sync: retries/fail
+    attempts = {"count": 0}
+
+    def _flaky(ctx, values):
+        attempts["count"] += 1
+        if attempts["count"] < 3:
+            from app.core.spec import ToolError as _ToolError
+
+            raise _ToolError("not yet")
+        return RunResult(message="third time lucky")
+
+    register_tool(ToolSpec(id="_flaky_v60", category="dev", name="flaky", name_en="flaky",
+                           run=_flaky, fields=[]))
+    try:
+        retried = run_sync(Workflow(id="retry", name="retry", steps=[
+            Step("_flaky_v60", {}, retries=3),
+        ]), lang="en", output_dir=str(sandbox))
+        check("retries re-run a failing step", attempts["count"] == 3, str(attempts["count"]))
+        check("the step succeeds after retries", retried.steps[0].status == "done",
+              retried.steps[0].message)
+        attempts["count"] = 0
+        failing = run_sync(Workflow(id="fail", name="fail", steps=[
+            Step("_flaky_v60", {}, retries=1, on_error="continue"),
+            Step("hash_files", {"src": [str(fixtures["text"])]}),
+        ]), lang="en", output_dir=str(sandbox))
+        check("on_error=continue keeps going", failing.steps[0].status == "failed"
+              and failing.steps[1].status == "done",
+              str([s.status for s in failing.steps]))
+        check("a flow with a tolerated failure is reported as partial",
+              failing.status == "partial", failing.status)
+        attempts["count"] = 0
+        hard = run_sync(Workflow(id="hard", name="hard", steps=[Step("_flaky_v60", {})]),
+                        lang="en", output_dir=str(sandbox))
+        check("a default step failure stops the flow", hard.status == "failed", hard.status)
+        check("the failure message names the tool", "flaky" in hard.message, hard.message)
+    finally:
+        from app.core import registry as registry_module
+
+        registry_module._TOOLS.pop("_flaky_v60", None)
+
+    # ------------------------------------------------------------- flowkit
+    library_flow = workflows.store.all()[0]
+    report = flowkit.validate(library_flow, "en")
+    check("a builtin flow validates", report.ok, report.text("en"))
+    broken = Workflow(id="broken", name="broken", steps=[
+        Step("no_such_tool_xyz", {}),
+        Step("pdf_merge", {"src": []}),
+    ])
+    broken_report = flowkit.validate(broken, "en")
+    codes = {issue.code for issue in broken_report.issues}
+    check("validation finds an unknown tool", "unknown_tool" in codes, str(codes))
+    check("validation finds an empty required field", "required" in codes, str(codes))
+    check("validation fails on a broken flow", not broken_report.ok)
+    placeholder_flow = Workflow(id="ph", name="ph", steps=[
+        Step("hash_files", {"src": ["{nope}"]}, foreach="fixed-name.txt", on_error="continue")])
+    ph_codes = {issue.code for issue in flowkit.validate(placeholder_flow, "en").issues}
+    check("validation warns about unknown placeholders", "placeholder" in ph_codes, str(ph_codes))
+    check("validation warns about an unused foreach", "foreach_unused" in ph_codes, str(ph_codes))
+    check("validation warns about a glob-less foreach", "foreach_single" in ph_codes, str(ph_codes))
+
+    explanation = flowkit.explain(step_workflow := Workflow(id="ex", name="شرح", name_en="Explain",
+                                                          steps=[step]), "en")
+    check("explain lists every step", "1)" in explanation, explanation[:80])
+    check("explain mentions the condition", "only if" in explanation, explanation[:200])
+    check("explain mentions the loop", "for each" in explanation, explanation[:200])
+    check("summarize gives a one-liner", bool(flowkit.summarize(step_workflow, "en").strip()),
+          flowkit.summarize(step_workflow, "en"))
+
+    folder = sandbox / "auto_input"
+    (folder / "deep").mkdir(parents=True, exist_ok=True)
+    for index in range(3):
+        (folder / f"pic{index}.png").write_bytes(Path(fixtures["images"][index]).read_bytes())
+    (folder / "deep" / "doc.pdf").write_bytes(Path(fixtures["pdf"]).read_bytes())
+    try:
+        import docx
+
+        document = docx.Document()
+        document.add_paragraph("office document for the flow builder")
+        document.save(str(folder / "letter.docx"))
+    except Exception:
+        pass
+    groups = flowkit.classify(folder)
+    check("classify counts images", len(groups["image"]) == 3, str(len(groups["image"])))
+    check("classify is recursive", len(groups["pdf"]) == 1, str(len(groups["pdf"])))
+    check("detect_goal picks a sharing flow", flowkit.detect_goal(groups) == "share")
+    generated = flowkit.build_from_folder(folder, "auto", "en")
+    check("a generated flow has steps", len(generated.steps) >= 2, str(len(generated.steps)))
+    check("generated steps loop over the folder",
+          all(step_.foreach for step_ in generated.steps[:-1]), str(len(generated.steps)))
+    check("a generated flow validates", flowkit.validate(generated, "en").ok,
+          flowkit.validate(generated, "en").text("en"))
+    check("the generated flow names what it found", "Found:" in generated.desc_en,
+          generated.desc_en[:80])
+    for goal, expected in (("documents", "docx_to_pdf"), ("ocr", "pdf_ocr"),
+                           ("archive", "pdf_compress"), ("privacy", "image_metadata_strip")):
+        flow_goal = flowkit.build_from_folder(folder, goal, "en")
+        ids = [step_.tool_id for step_ in flow_goal.steps]
+        check(f"goal {goal} produces {expected}", expected in ids, str(ids))
+
+    saved_path = flowkit.save_flow(generated, sandbox / "flows" / "auto.json")
+    check("a flow saves as JSON", saved_path.exists() and saved_path.suffix == ".json")
+    reloaded = flowkit.load_flow(saved_path)
+    check("a saved flow reloads identically",
+          [s_.as_dict() for s_ in reloaded.steps] == [s_.as_dict() for s_ in generated.steps])
+    registered = flowkit.save_flow(generated, flowkit.flows_dir() / f"{generated.id}.json")
+    check("resolve finds a flow by id", flowkit.resolve(generated.id).id == generated.id)
+    check("resolve finds a flow by path", flowkit.resolve(str(saved_path)).id == generated.id)
+    try:
+        flowkit.resolve("no-such-flow-anywhere")
+        check("resolve rejects an unknown flow", False)
+    except LookupError:
+        check("resolve rejects an unknown flow", True)
+    script = flowkit.export_script(generated, "en", str(sandbox))
+    check("an exported script is valid Python", bool(compile(script, "flow.py", "exec")))
+    check("the exported script uses run_sync", "run_sync" in script and "FLOW" in script)
+    check("the exported script embeds the steps", generated.steps[0].tool_id in script)
+
+    # -------------------------------------------------------- the six tools
+    listing = run("flow_library")
+    check("flow_library lists the builtin flows", "photo_pdf_pack" in listing.details
+          or "بسته" in listing.details, listing.details[:80])
+    built = run("flow_build", folder=str(folder), goal="share", name="", save=str(sandbox / "built.json"))
+    check("flow_build writes a JSON flow", Path(built.outputs[0]).exists(), str(built.outputs))
+    explained = run("flow_explain", flow=built.outputs[0], file="")
+    check("flow_explain explains the built flow", "گام" in explained.details, explained.details[:60])
+    validated = run("flow_validate", flow=built.outputs[0], file="")
+    check("flow_validate accepts the built flow", "سالم" in validated.message, validated.message)
+    exported = run("flow_export", flow=built.outputs[0], file="", out_dir=str(sandbox / "scripts"))
+    script_path = Path(exported.outputs[0])
+    check("flow_export writes a .py file", script_path.exists() and script_path.suffix == ".py")
+    check("the exported file is valid Python",
+          bool(compile(script_path.read_text(encoding="utf-8"), str(script_path), "exec")))
+    tiny = Workflow(id="tiny_v60", name="تیش", name_en="Tiny", steps=[
+        Step("hash_files", {"src": ["{input}"], "save": "{out_dir}/tiny.sha256"})])
+    flowkit.save_flow(tiny, flowkit.flows_dir() / "tiny_v60.json")
+    checked = run("flow_run", flow=tiny.id, file="", inputs=[], out_dir="", check_only=True)
+    check("flow_run can validate without running", "آماده" in checked.message, checked.message)
+    ran = run("flow_run", flow=tiny.id, file="", inputs=[str(fixtures["text"])], out_dir=str(sandbox))
+    check("flow_run actually runs a flow", "1 گام" in ran.message or "گام" in ran.message,
+          ran.message)
+    check("flow_run reports the step output",
+          bool(ran.outputs) and Path(ran.outputs[0]).exists(), str(ran.outputs))
+    try:
+        run("flow_run", flow=tiny.id, file="", inputs=[], out_dir="")
+        check("flow_run refuses to run without input", False)
+    except ToolError:
+        check("flow_run refuses to run without input", True)
+    try:
+        run("flow_validate", flow="", file="")
+        check("flow tools need a flow reference", False)
+    except ToolError:
+        check("flow tools need a flow reference", True)
+
+    for leftover in (registered, flowkit.flows_dir() / f"{built.outputs[0] and generated.id}.json"):
+        try:
+            Path(leftover).unlink()
+        except OSError:
+            pass
+    shutil.rmtree(sandbox, ignore_errors=True)
+
+
+# ------------------------------------------------------------- v6: new tools
+def test_v60_tools(fixtures: dict) -> None:
+    """v6 tool packs: PDF, image, security, network, media, dev, convert, files."""
+    print("\n[6.0 tool packs]")
+    import base64
+    import csv as csv_module
+    import hashlib
+    import hmac as hmac_module
+    import http.server
+    import socket
+    import threading as threading_module
+    import wave
+
+    from app.core.registry import load_all as _load
+
+    _load()
+    sandbox = Path(tempfile.mkdtemp(prefix="wg_v60_tools_"))
+    out = sandbox / "out"
+    out.mkdir(parents=True, exist_ok=True)
+
+    # Self-contained fixtures (see the note in test_v60_flows).
+    from PIL import Image as _Image, ImageDraw as _ImageDraw
+    from reportlab.lib.pagesizes import A4 as _A4
+    from reportlab.pdfgen.canvas import Canvas as _CanvasClass
+
+    fixtures = dict(fixtures)
+    local_pdf = sandbox / "doc.pdf"
+    _doc = _CanvasClass(str(local_pdf), pagesize=_A4)
+    for page in range(1, 6):
+        _doc.setFont("Helvetica", 18)
+        _doc.drawString(60, 760, f"WinGenius test page {page}")
+        _doc.showPage()
+    _doc.save()
+    fixtures["pdf"] = local_pdf
+    local_images = []
+    for index, colour in enumerate(("#18C8F5", "#7B61FF", "#FFB020")):
+        path = sandbox / f"img{index}.png"
+        picture = _Image.new("RGB", (480, 320), colour)
+        _ImageDraw.Draw(picture).rectangle([20, 20, 460, 300], outline="white", width=4)
+        picture.save(path)
+        local_images.append(str(path))
+    fixtures["images"] = local_images
+    fixtures["text"] = sandbox / "note.txt"
+    Path(fixtures["text"]).write_text("كتاب هاي من\nسلام دنيا\n۱۲۳ و 456\n", encoding="utf-8")
+    fixtures["zip"] = sandbox / "bundle.zip"
+    with zipfile.ZipFile(fixtures["zip"], "w") as _archive:
+        _archive.write(fixtures["text"], "note.txt")
+        _archive.write(local_images[0], Path(local_images[0]).name)
+
+    # ------------------------------------------------------------------ PDF
+    parts = run("pdf_split_by_size", src=str(fixtures["pdf"]), max_mb=1, out_dir=str(out / "parts"))
+    made = [Path(path) for path in parts.outputs]
+    check("pdf_split_by_size writes parts", len(made) >= 1, str(made))
+    total_pages = 0
+    for path in made:
+        from pypdf import PdfReader as _Reader
+
+        total_pages += len(_Reader(str(path)).pages)
+    check("every page survives the split", total_pages == 5, str(total_pages))
+    check("the split respects the size limit",
+          all(path.stat().st_size <= 1024 * 1024 for path in made))
+
+    linked = sandbox / "linked.pdf"
+    try:
+        import pymupdf
+
+        book = pymupdf.open()
+        page = book.new_page()
+        page.insert_text((50, 80), "links", fontsize=12)
+        page.insert_link({"kind": pymupdf.LINK_URI, "from": pymupdf.Rect(20, 20, 200, 40),
+                          "uri": "https://example.org/wingenius"})
+        book.save(linked)
+        book.close()
+        have_link = True
+    except Exception:
+        have_link = False
+    if have_link:
+        links = run("pdf_extract_links", src=str(linked), include_internal=True,
+                    out=str(out / "links.csv"))
+        check("pdf_extract_links finds the URI",
+              "example.org/wingenius" in links.details, links.details[:120])
+        check("pdf_extract_links writes a CSV", Path(links.outputs[0]).exists())
+    else:
+        skip("pdf link extraction", "PyMuPDF link API unavailable")
+
+    annotated = sandbox / "annotated.pdf"
+    try:
+        import pymupdf
+
+        book = pymupdf.open(str(fixtures["pdf"]))
+        note = book[0].add_text_annot((60, 60), "secret reviewer note")
+        note.update()
+        book.save(annotated)
+        book.close()
+        have_annot = True
+    except Exception:
+        have_annot = False
+    if have_annot:
+        flattened = run("pdf_flatten_annotations", src=str(annotated), drop_widgets=True, out="")
+        from pypdf import PdfReader as _Reader
+
+        reopened = _Reader(flattened.outputs[0])
+        check("pdf_flatten_annotations removes every annotation",
+              not reopened.pages[0].get("/Annots"), str(reopened.pages[0].get("/Annots")))
+        check("the flattened PDF keeps its pages", len(reopened.pages) == 5)
+    else:
+        skip("pdf annotation flattening", "PyMuPDF annotation API unavailable")
+
+    repaired = run("pdf_repair", src=str(fixtures["pdf"]), out=str(out / "repaired.pdf"))
+    check("pdf_repair rewrites a healthy PDF", Path(repaired.outputs[0]).exists())
+    check("pdf_repair keeps every page", "5 از 5" in repaired.message or "5 of 5" in repaired.message,
+          repaired.message)
+    damaged = sandbox / "damaged.pdf"
+    damaged.write_bytes(Path(fixtures["pdf"]).read_bytes()[: 900])
+    try:
+        run("pdf_repair", src=str(damaged), out=str(out / "rescued.pdf"))
+        check("pdf_repair accepts a truncated file gracefully", True)
+    except ToolError:
+        check("pdf_repair accepts a truncated file gracefully", True)
+
+    # ---------------------------------------------------------------- images
+    tagged = sandbox / "tagged.jpg"
+    image = __import__("PIL.Image", fromlist=["Image"]).open(fixtures["images"][0])
+    exif = image.getexif()
+    exif[0x010F] = "WinGeniusCam"
+    exif[0x0110] = "Model X"
+    exif[0x0131] = "TestSuite 1.0"
+    image.save(tagged, exif=exif)
+    scanned = run("image_privacy_scan", src=[str(tagged)])
+    check("image_privacy_scan sees the camera model", "Model X" in scanned.details,
+          scanned.details[:120])
+    check("image_privacy_scan counts leaking files", "1 از 1" in scanned.message
+          or "1 of 1" in scanned.message, scanned.message)
+    stripped = run("image_metadata_strip", src=[str(tagged)], out_dir=str(out / "clean"), quality=95)
+    cleaned = __import__("PIL.Image", fromlist=["Image"]).open(stripped.outputs[0])
+    check("image_metadata_strip writes a clean copy", Path(stripped.outputs[0]).exists())
+    check("the cleaned image has no EXIF left", len(dict(cleaned.getexif())) == 0,
+          str(dict(cleaned.getexif())))
+    check("the cleaned image keeps its size", cleaned.size == (480, 320), str(cleaned.size))
+
+    tilted = sandbox / "tilted.png"
+    __import__("PIL.Image", fromlist=["Image"]).open(fixtures["images"][1]).rotate(
+        7, expand=True, fillcolor="white").save(tilted)
+    deskewed = run("image_deskew", src=[str(tilted)], out_dir=str(out / "straight"), max_angle=15)
+    angles = [line for line in deskewed.details.splitlines() if "°" in line]
+    check("image_deskew measures the tilt", bool(angles), deskewed.details[:80])
+    if angles:
+        measured = abs(float(angles[0].split(":")[1].replace("°", "").strip()))
+        check("the measured tilt is about 7°", 4.0 <= measured <= 10.0, angles[0])
+    check("image_deskew writes an output", Path(deskewed.outputs[0]).exists())
+
+    blurred = run("image_face_blur", src=[str(fixtures["images"][2])], mode="blur",
+                  strength=20, out_dir=str(out / "faces"))
+    check("image_face_blur always writes a copy", Path(blurred.outputs[0]).exists())
+    check("image_face_blur reports the count", "0" in blurred.message or "چهره" in blurred.message,
+          blurred.message)
+
+    # -------------------------------------------------------------- security
+    from app.tools.security_extra2 import totp_at
+
+    secret = base64.b32encode(b"12345678901234567890")
+    check("totp matches the RFC 6238 test vector",
+          totp_at(base64.b32decode(secret), 59, 30, 8, "sha1") == "94287082",
+          totp_at(base64.b32decode(secret), 59, 30, 8, "sha1"))
+    sha256_secret = base64.b32decode(base64.b32encode(b"12345678901234567890123456789012"))
+    check("totp matches the RFC 6238 SHA-256 vector",
+          totp_at(sha256_secret, 59, 30, 8, "sha256") == "46119246",
+          totp_at(sha256_secret, 59, 30, 8, "sha256"))
+    sha512_secret = base64.b32decode(base64.b32encode(
+        b"1234567890123456789012345678901234567890123456789012345678901234"))
+    check("totp matches the RFC 6238 SHA-512 vector",
+          totp_at(sha512_secret, 59, 30, 8, "sha512") == "90693936",
+          totp_at(sha512_secret, 59, 30, 8, "sha512"))
+    tool_totp = run("totp_code", secret=secret.decode(), digits=6, period=30,
+                    algorithm="sha1", check="")
+    current = tool_totp.message.split(":")[-1].strip()
+    check("the TOTP tool returns six digits", len(current) == 6 and current.isdigit(), current)
+    verified = run("totp_code", secret=secret.decode(), digits=6, period=30,
+                   algorithm="sha1", check=current)
+    check("the TOTP tool verifies its own code", "✓" in verified.message, verified.message)
+    wrong = run("totp_code", secret=secret.decode(), digits=6, period=30,
+                algorithm="sha1", check="000000")
+    check("the TOTP tool rejects a wrong code", "✖" in wrong.message, wrong.message)
+
+    carrier = Path(fixtures["images"][0])
+    hidden = run("steg_hide", carrier=str(carrier), text="top secret payload",
+                 file="", password="correct horse", out=str(out / "hidden.png"))
+    revealed = run("steg_reveal", carrier=hidden.outputs[0], password="correct horse",
+                   out_dir="", just_text=True)
+    check("steganography round-trips a message",
+          "top secret payload" in revealed.details, revealed.details[:80])
+    plain_hidden = run("steg_hide", carrier=str(carrier), text="no password here",
+                       file="", password="", out=str(out / "plain_hidden.png"))
+    plain_revealed = run("steg_reveal", carrier=plain_hidden.outputs[0], password="",
+                         out_dir="", just_text=True)
+    check("steganography works without a password",
+          "no password here" in plain_revealed.details, plain_revealed.details[:80])
+    try:
+        run("steg_reveal", carrier=hidden.outputs[0], password="wrong", out_dir="", just_text=True)
+        check("steganography rejects a wrong password", False)
+    except ToolError:
+        check("steganography rejects a wrong password", True)
+    try:
+        run("steg_reveal", carrier=str(carrier), password="", out_dir="", just_text=True)
+        check("steganography refuses a carrier with no message", False)
+    except ToolError:
+        check("steganography refuses a carrier with no message", True)
+    check("the carrier keeps its pixel size",
+          __import__("PIL.Image", fromlist=["Image"]).open(hidden.outputs[0]).size
+          == (480, 320))
+
+    signature = run("hmac_sign", text="The quick brown fox jumps over the lazy dog", file="",
+                    key="key", algorithm="sha256", expected="")
+    expected_hmac = hmac_module.new(b"key", b"The quick brown fox jumps over the lazy dog",
+                                    hashlib.sha256).hexdigest()
+    check("HMAC matches the reference value", expected_hmac in signature.details,
+          signature.details[-80:])
+    check("HMAC verification accepts the right value",
+          "✓" in run("hmac_sign", text="The quick brown fox jumps over the lazy dog", file="",
+                     key="key", algorithm="sha256", expected=expected_hmac).message)
+    check("HMAC verification rejects a wrong value",
+          "✖" in run("hmac_sign", text="x", file="", key="key", algorithm="sha256",
+                     expected=expected_hmac).message)
+
+    # --------------------------------------------------------------- network
+    subnet = run("subnet_calc", cidr="192.168.1.10/24", split_prefix=26, limit=8)
+    check("subnet_calc normalises the network", "192.168.1.0/24" in subnet.details,
+          subnet.details[:80])
+    check("subnet_calc reports 256 addresses", "256" in subnet.details)
+    check("subnet_calc splits into four /26", subnet.details.count("/26") == 4,
+          str(subnet.details.count("/26")))
+    v6 = run("subnet_calc", cidr="2001:db8::1/64", split_prefix=0, limit=8)
+    check("subnet_calc understands IPv6", "2001:db8::/64" in v6.details, v6.details[:80])
+    try:
+        run("subnet_calc", cidr="not-an-address", split_prefix=0, limit=8)
+        check("subnet_calc rejects nonsense", False)
+    except ToolError:
+        check("subnet_calc rejects nonsense", True)
+
+    class _Headers(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):                                  # noqa: N802 - stdlib API
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Security-Policy", "default-src 'self'")
+            self.send_header("Strict-Transport-Security", "max-age=31536000")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("X-Frame-Options", "DENY")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.send_header("Permissions-Policy", "geolocation=()")
+            self.send_header("Cross-Origin-Opener-Policy", "same-origin")
+            self.end_headers()
+            self.wfile.write(b"hello")
+
+        def log_message(self, *_args):                     # silence the test log
+            return
+
+    class _NoHeaders(_Headers):
+        def do_GET(self):                                  # noqa: N802 - stdlib API
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"hello")
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Headers)
+    port = server.server_address[1]
+    thread = threading_module.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        graded = run("security_headers", url=f"http://127.0.0.1:{port}/", timeout=5)
+        check("security_headers gives a perfect site an A", "A" in graded.message, graded.message)
+        timing = run("http_timing", url=f"http://127.0.0.1:{port}/", request=True)
+        check("http_timing measures DNS", "DNS" in timing.details, timing.details[:120])
+        check("http_timing measures the first byte", "TTFB" in timing.details, timing.details[:160])
+    finally:
+        server.shutdown()
+        server.server_close()
+    bare = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _NoHeaders)
+    bare_port = bare.server_address[1]
+    threading_module.Thread(target=bare.serve_forever, daemon=True).start()
+    try:
+        failed = run("security_headers", url=f"http://127.0.0.1:{bare_port}/", timeout=5)
+        check("security_headers fails a bare site", "F" in failed.message, failed.message)
+        check("security_headers lists what is missing", "کم است" in failed.message
+              or "Missing" in failed.message, failed.message)
+    finally:
+        bare.shutdown()
+        bare.server_close()
+    try:
+        run("tls_certificate", host="this-host-does-not-exist.invalid", port=443)
+        check("tls_certificate fails cleanly on a bad host", False)
+    except ToolError:
+        check("tls_certificate fails cleanly on a bad host", True)
+    try:
+        run("security_headers", url="http://127.0.0.1:1/", timeout=3)
+        check("security_headers reports an unreachable site", False)
+    except ToolError:
+        check("security_headers reports an unreachable site", True)
+
+    # ----------------------------------------------------------------- media
+    srt = sandbox / "sample.srt"
+    srt.write_text("1\n00:00:01,000 --> 00:00:03,500\nسلام دنیا\n\n"
+                   "2\n00:00:04,000 --> 00:00:06,000\n<i>line two</i>\n", encoding="utf-8")
+    vtt = run("subtitle_convert", src=str(srt), target="vtt", shift="+1.5s",
+              strip_tags=1, out="")
+    body = Path(vtt.outputs[0]).read_text(encoding="utf-8")
+    check("subtitle_convert writes WebVTT", body.startswith("WEBVTT"), body[:40])
+    check("subtitle_convert shifts the timestamps", "00:00:02.500 --> 00:00:05.000" in body, body)
+    check("subtitle_convert strips italic tags", "<i>" not in body, body)
+    plain = run("subtitle_convert", src=str(srt), target="txt", shift="-1s", strip_tags=1, out="")
+    check("subtitle_convert can emit plain text",
+          "سلام دنیا" in Path(plain.outputs[0]).read_text(encoding="utf-8"))
+    try:
+        run("subtitle_convert", src=str(fixtures["text"]), target="srt", shift="", strip_tags=1, out="")
+        check("subtitle_convert rejects a non-subtitle file", False)
+    except ToolError:
+        check("subtitle_convert rejects a non-subtitle file", True)
+
+    wav_path = sandbox / "tone.wav"
+    with wave.open(str(wav_path), "w") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(8000)
+        handle.writeframes(b"".join(
+            int(12000 * __import__("math").sin(2 * 3.14159 * 440 * index / 8000)).to_bytes(
+                2, "little", signed=True) for index in range(8000)))
+    try:
+        waveform = run("audio_waveform", src=str(wav_path), width=600, height=200,
+                       color="#00D9A6", out=str(out / "wave.png"))
+        check("audio_waveform writes a PNG", Path(waveform.outputs[0]).suffix == ".png")
+        check("the waveform has the requested size",
+              __import__("PIL.Image", fromlist=["Image"]).open(waveform.outputs[0]).size
+              == (600, 200))
+        stripped_media = run("media_strip_metadata", src=str(wav_path), out=str(out / "clean.wav"))
+        check("media_strip_metadata writes a copy", Path(stripped_media.outputs[0]).exists())
+    except ToolError as exc:
+        skip("audio video extras", f"ffmpeg unavailable: {exc}"[:70])
+
+    # ------------------------------------------------------------------- dev
+    log_path = sandbox / "app.log"
+    log_path.write_text("\n".join([
+        "2026-11-01 10:00:00 INFO starting up",
+        "2026-11-01 10:00:01 WARN cache miss for key 8812",
+        "2026-11-01 10:00:02 ERROR timeout after 1203ms calling api",
+        "2026-11-01 10:00:03 ERROR timeout after 88ms calling api",
+        "2026-11-01 10:00:04 INFO served 12 requests",
+        "2026-11-01 10:00:05 FATAL database is gone",
+    ]) + "\n", encoding="utf-8")
+    analysed = run("log_analyzer", src=str(log_path), top=5, out=str(out / "log_report.txt"))
+    check("log_analyzer counts every level", "ERROR: 2" in analysed.details, analysed.details[:200])
+    check("log_analyzer normalises numbers in signatures",
+          analysed.details.count("timeout after #ms") >= 1, analysed.details[:400])
+    check("log_analyzer finds the time range", "2026-11-01 10:00:00" in analysed.details)
+    check("log_analyzer writes a report", Path(analysed.outputs[0]).exists())
+
+    repo = sandbox / "repo"
+    repo.mkdir()
+    env = dict(os.environ, GIT_AUTHOR_NAME="Test", GIT_AUTHOR_EMAIL="t@example.com",
+               GIT_COMMITTER_NAME="Test", GIT_COMMITTER_EMAIL="t@example.com")
+    import subprocess
+
+    def _git(*args):
+        return subprocess.run(["git", "-C", str(repo)] + list(args), capture_output=True,
+                              env=env, check=False)
+
+    have_git = shutil.which("git") is not None
+    if have_git:
+        _git("init", "-q")
+        (repo / "a.txt").write_text("one\n", encoding="utf-8")
+        _git("add", ".")
+        _git("commit", "-qm", "first")
+        (repo / "a.txt").write_text("one\ntwo\n", encoding="utf-8")
+        _git("commit", "-qam", "second")
+        stats = run("git_stats", repo=str(repo), limit=50, top=5)
+        check("git_stats counts the commits", "2" in stats.message, stats.message)
+        check("git_stats names the author", "Test" in stats.details, stats.details[:200])
+        check("git_stats finds the changed file", "a.txt" in stats.details, stats.details[:400])
+    else:
+        skip("git_stats", "git is not installed")
+
+    left = sandbox / "left.csv"
+    right = sandbox / "right.csv"
+    left.write_text("id,name\n1,ali\n2,sara\n3,reza\n", encoding="utf-8")
+    right.write_text("id,city\n1,tehran\n3,shiraz\n4,tabriz\n", encoding="utf-8")
+    joined = run("csv_join", left=str(left), right=str(right), key="id", mode="left", delimiter=",")
+    rows = list(csv_module.DictReader(io.StringIO(Path(joined.outputs[0]).read_text(
+        encoding="utf-8-sig"))))
+    check("csv_join writes one row per match", len(rows) == 3, str(len(rows)))
+    check("csv_join fills the joined column", rows[0]["city"] == "tehran", str(rows[0]))
+    check("csv_join leaves unmatched cells empty", rows[1]["city"] == "", str(rows[1]))
+    outer = run("csv_join", left=str(left), right=str(right), key="id", mode="outer", delimiter=",")
+    outer_rows = list(csv_module.DictReader(io.StringIO(Path(outer.outputs[0]).read_text(
+        encoding="utf-8-sig"))))
+    check("csv_join outer keeps right-only rows", len(outer_rows) == 4, str(len(outer_rows)))
+
+    jsonl_path = sandbox / "data.jsonl"
+    jsonl_path.write_text('{"a":1}\n{"a":2}\n', encoding="utf-8")
+    as_array = run("jsonl_tool", src=str(jsonl_path), mode="to_array", out=str(out / "data.json"))
+    check("jsonl_tool makes a JSON array",
+          json.loads(Path(as_array.outputs[0]).read_text(encoding="utf-8"))[1]["a"] == 2)
+    back = run("jsonl_tool", src=str(out / "data.json"), mode="to_lines", out=str(out / "back.jsonl"))
+    check("jsonl_tool goes back to lines",
+          len(Path(back.outputs[0]).read_text(encoding="utf-8").strip().splitlines()) == 2)
+    broken_jsonl = sandbox / "broken.jsonl"
+    broken_jsonl.write_text('{"a":1}\nnope\n', encoding="utf-8")
+    try:
+        run("jsonl_tool", src=str(broken_jsonl), mode="check", out="")
+        check("jsonl_tool reports a broken line", False)
+    except ToolError as exc:
+        check("jsonl_tool reports a broken line", "line 2" in str(exc), str(exc)[:80])
+
+    converted = run("curl_to_code", command=(
+        "curl -X POST https://api.example.com/v1/items -H 'Content-Type: application/json' "
+        "-H 'Authorization: Bearer abc' -d '{\"name\":\"x\"}'"), target="python", out="")
+    check("curl_to_code keeps the URL", "https://api.example.com/v1/items" in converted.details)
+    check("curl_to_code uses the right verb", "requests.post" in converted.details,
+          converted.details[:200])
+    check("curl_to_code sends JSON", "json=payload" in converted.details, converted.details[-200:])
+    js = run("curl_to_code", command="curl https://example.com", target="javascript", out="")
+    check("curl_to_code can emit fetch()", "fetch(" in js.details, js.details[:80])
+
+    # --------------------------------------------------------------- convert
+    pii = ("تماس: 09121234567 و ایمیل ali@example.com\n"
+           "کارت: 4111 1111 1111 1111\nکد ملی: 0499370899\nآی‌پی: 192.168.0.7\n"
+           "کارت جعلی: 1234 5678 9012 3456\n")
+    redacted = run("text_redact", text=pii, file="", mode="placeholder", keep_last=False,
+                   strict=True, out=str(out / "redacted.txt"))
+    body = Path(redacted.outputs[0]).read_text(encoding="utf-8")
+    check("text_redact hides the e-mail", "ali@example.com" not in body, body)
+    check("text_redact hides the mobile", "09121234567" not in body, body)
+    check("text_redact hides a valid card", "4111 1111 1111 1111" not in body, body)
+    check("text_redact hides the national ID", "0499370899" not in body, body)
+    check("text_redact hides the IP", "192.168.0.7" not in body, body)
+    check("text_redact keeps a card that fails the Luhn check",
+          "1234 5678 9012 3456" in body, body)
+    check("text_redact counts what it removed", "موبایل: 1" in redacted.message, redacted.message)
+    masked = run("text_redact", text="ali@example.com", file="", mode="mask", keep_last=True,
+                 strict=True, out="")
+    check("text_redact can mask instead of placeholdering",
+          "[EMAIL]" not in masked.details and "@example.com" in masked.details, masked.details)
+
+    maths = run("date_math", date="2026-11-03", calendar="gregorian", add=10, unit="days",
+                other="2026-11-01")
+    check("date_math adds days", "2026-11-13" in maths.message, maths.message)
+    check("date_math shows the Jalali date", "شمسی" in maths.message, maths.message)
+    check("date_math measures the gap", "-2" in maths.details or "+2" in maths.details,
+          maths.details)
+    jalali = run("date_math", date="1405/08/12", calendar="jalali", add=0, unit="days", other="")
+    check("date_math reads a Jalali date", "شمسی 1405/08/12" in jalali.details
+          or "1405/08/12" in jalali.details, jalali.details[:120])
+    business = run("date_math", date="2026-11-02", calendar="gregorian", add=0, unit="days",
+                   other="2026-11-09")
+    check("date_math counts business days", "business  5" in business.details, business.details)
+    try:
+        run("date_math", date="garbage", calendar="gregorian", add=0, unit="days", other="")
+        check("date_math rejects a nonsense date", False)
+    except ToolError:
+        check("date_math rejects a nonsense date", True)
+
+    # ----------------------------------------------------------------- files
+    secret_zip = run("archive_encrypt", src=[str(fixtures["text"]), str(fixtures["images"][0])],
+                     password="s3cret-pass", level="normal", out=str(out / "secret.zip"))
+    check("archive_encrypt writes a zip", Path(secret_zip.outputs[0]).exists())
+    check("archive_encrypt reports AES", "AES" in secret_zip.message, secret_zip.message)
+    unpacked = run("archive_decrypt", src=secret_zip.outputs[0], password="s3cret-pass",
+                   out_dir=str(out / "unpacked"))
+    check("archive_decrypt restores the files", len(unpacked.outputs) == 2, str(unpacked.outputs))
+    check("the restored text is intact",
+          any(Path(path).suffix == ".txt" and "كتاب" in Path(path).read_text(encoding="utf-8")
+              for path in unpacked.outputs))
+    try:
+        run("archive_decrypt", src=secret_zip.outputs[0], password="wrong", out_dir=str(out / "nope"))
+        check("archive_decrypt rejects a wrong password", False)
+    except ToolError:
+        check("archive_decrypt rejects a wrong password", True)
+    evil = sandbox / "evil.zip"
+    with zipfile.ZipFile(evil, "w") as archive:
+        archive.writestr("../escaped.txt", "pwned")
+        archive.writestr("safe.txt", "fine")
+    escaped_target = sandbox / "escaped.txt"
+    extracted = run("archive_decrypt", src=str(evil), password="", out_dir=str(sandbox / "safe_area"))
+    check("archive_decrypt refuses zip-slip", not escaped_target.exists()
+          and not (sandbox / "safe_area" / ".." / "escaped.txt").exists(), str(extracted.details))
+    check("archive_decrypt still extracts safe members",
+          any(Path(path).name == "safe.txt" for path in extracted.outputs), str(extracted.outputs))
+
+    deep = sandbox / ("d" * 20) / ("e" * 20) / ("f" * 20)
+    deep.mkdir(parents=True, exist_ok=True)
+    (deep / "file.txt").write_text("x", encoding="utf-8")
+    expected_length = len(str(deep / "file.txt"))
+    audit = run("path_length_audit", folder=str(sandbox / ("d" * 20)), limit=40,
+                save=str(out / "long_paths.csv"))
+    check("path_length_audit finds long paths", "مسیر بلندتر از 40" in audit.message
+          or "longer than 40" in audit.message, audit.message)
+    check("path_length_audit reports the real length", str(expected_length) in audit.details,
+          audit.details[:200])
+    check("path_length_audit saves a CSV", Path(audit.outputs[0]).exists())
+
+    # ---------------------------------------------------------------- system
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    listening_port = listener.getsockname()[1]
+    try:
+        report = run("port_release", port=listening_port, kill=False)
+        check("port_release sees a busy port", "در دست" in report.message
+              or "held by" in report.message, report.message)
+    except ToolError as exc:
+        skip("port_release", f"connection table unavailable: {exc}"[:70])
+    finally:
+        listener.close()
+    free = run("port_release", port=1, kill=False)
+    check("port_release says a free port is free", "آزاد" in free.message
+          or "free" in free.message, free.message)
+
+    shutil.rmtree(sandbox, ignore_errors=True)
+
+
 def main(argv: list[str]) -> int:
     print("=" * 78)
     print("WinGenius v4 functional tests")
@@ -2351,6 +3170,8 @@ def main(argv: list[str]) -> int:
         "guards": lambda: test_guards(fixtures),
         "v42": lambda: test_v41_tools(fixtures),
         "v50": lambda: test_v50_tools(fixtures),
+        "v60flows": lambda: test_v60_flows(fixtures),
+        "v60tools": lambda: test_v60_tools(fixtures),
         "scale": lambda: test_scale(fixtures),
     }
     selected = [name for name in argv[1:] if name in groups] or list(groups)

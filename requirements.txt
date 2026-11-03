@@ -34,7 +34,7 @@ python-barcode>=0.15
 pyzipper>=0.3.6
 
 # خواندن QR از تصویر (OpenCV بدون رابط گرافیکی، سبک‌تر)
-opencv-python-headless>=4.9; platform_system != "Darwin"
+opencv-python-headless>=4.9,<5; platform_system != "Darwin"
 
 # امضای دیجیتال PDF (قبلاً اختیاری بود و در exe هرگز کار نمیکرد)
 pyHanko>=0.30,<0.41

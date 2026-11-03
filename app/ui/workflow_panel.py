@@ -71,19 +71,25 @@ class StepRow(QFrame):
             button.clicked.connect(slot)
             row.addWidget(button)
 
-    @staticmethod
-    def _hint(index: int, spec, lang: str) -> str:
+    def _hint(self, index: int, spec, lang: str) -> str:
         if spec is None:
             return "tool missing"
+        # v6: a step may be conditional, may loop over files and may retry; the
+        # editor says so instead of pretending it is a plain link in a chain.
+        flow_note = self.step_data.summary(lang) if getattr(self.step_data, "advanced", False) else ""
         key, takes_list = input_field(spec)
         if index == 0:
-            return (f"ورودی از فایل‌های انتخابی ({key})" if lang != "en"
+            base = (f"ورودی از فایل‌های انتخابی ({key})" if lang != "en"
                     else f"input from picked files ({key})")
-        return "↳ خروجی مرحله‌ی قبل" if lang != "en" else "↳ previous output"
+        else:
+            base = "↳ خروجی مرحله‌ی قبل" if lang != "en" else "↳ previous output"
+        return f"{base} · {flow_note}" if flow_note else base
 
     def set_status(self, status: str) -> None:
-        colours = {"running": "#18C8F5", "done": "#2BD9A0", "failed": "#FF5A6E", "cancelled": "#FFC24B"}
-        text = {"running": "…", "done": "✓", "failed": "✗", "cancelled": "■"}.get(status, "")
+        colours = {"running": "#18C8F5", "done": "#2BD9A0", "failed": "#FF5A6E",
+                   "cancelled": "#FFC24B", "skipped": "#8899AA"}
+        text = {"running": "…", "done": "✓", "failed": "✗", "cancelled": "■",
+                "skipped": "–"}.get(status, "")
         self.status.setText(text)
         colour = colours.get(status)
         if colour:

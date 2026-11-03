@@ -415,6 +415,53 @@ def main() -> int:
     window._close_overlay()
     spin(150)
 
+    # ------------------------------------------------- v6 flow engine (Qt path)
+    print("[v6 flow runner]")
+    from app.core.registry import get as get_tool
+    from app.core.workflows import Step, Workflow, WorkflowRunner
+
+    flow_dir = tmp / "v6flow"
+    flow_dir.mkdir(exist_ok=True)
+    for index in range(3):
+        (flow_dir / f"note{index}.txt").write_text(f"line {index}\n", encoding="utf-8")
+    advanced = Workflow(id="ui_v60", name="جریان شرطی", name_en="Conditional flow", steps=[
+        Step("hash_files", {"src": ["{item}"], "save": "{out_dir}/{item_name}.sha256"},
+             foreach=f"{flow_dir}/*.txt"),
+        Step("hash_files", {"src": ["{input}"]}, when="1 == 1"),
+        Step("hash_files", {"src": ["{input}"]}, when="1 == 2"),
+    ])
+    finished: list = []
+    runner = WorkflowRunner(advanced, "en", str(tmp / "v6out"),
+                            {"input": str(flow_dir / "note0.txt")})
+    runner.finished.connect(finished.append)
+    runner.start()
+    deadline = time.time() + 40
+    while time.time() < deadline and not finished:
+        spin(120)
+    check(bool(finished), "the v6 flow runner never finished")
+    if finished:
+        states = [step.status for step in finished[0].steps]
+        check(f"the flow runner loops over every file "
+              f"({len(finished[0].steps[0].outputs)} outputs)", len(finished[0].steps[0].outputs) == 3)
+        check(f"the flow runner skips a false condition ({states})", states[2] == "skipped")
+        check(f"the flow runner keeps the true branch ({states})", states[1] == "done")
+    editor.set_paths([str(sample_pdf)])
+    editor.select("pdf_to_images_zip")
+    spin(150)
+    check(all("↳" in row._hint(i, get_tool(row.step_data.tool_id), "fa")
+              for i, row in enumerate(editor._step_rows) if i > 0),
+          "step hints lost the chain marker")
+    conditional_flow = Workflow(id="ui_hint", name="hint", name_en="hint", steps=[
+        Step("hash_files", {"src": ["{item}"]}, foreach="/tmp/*.txt")])
+    from app.ui.workflow_panel import StepRow
+
+    hint_row = StepRow(1, conditional_flow.steps[0], "fa", window.palette_ref)
+    check("the editor shows the v6 loop in the step hint",
+          "برای هر" in hint_row._hint(1, get_tool("hash_files"), "fa"))
+    hint_row.deleteLater()
+    window._close_overlay()
+    spin(150)
+
     print("[automation sheet]")
     window.open_automation()
     spin(250)

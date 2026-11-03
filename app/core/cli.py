@@ -9,6 +9,10 @@
     WinGenius.exe --check-update        (opt-in: ask GitHub about the newest release)
     WinGenius.exe --list-workflows
     WinGenius.exe --run-workflow pdf_to_images_zip --file in.pdf
+    WinGenius.exe --flows                     (built-in + saved flows)
+    WinGenius.exe --run-flow <id|name|file.json> --file in.pdf [--out DIR] [--lang en]
+    WinGenius.exe --lint-flow <id|name|file.json>  (validate without running)
+    WinGenius.exe --explain-flow <id|name|file.json>
     WinGenius.exe --plan "عکس‌ها را PDF کن" --file a.png --file b.png --run
     WinGenius.exe --list-schedules
     WinGenius.exe --run-schedule <id>
@@ -40,7 +44,8 @@ log = get_logger("cli")
 CLI_FLAGS = {"--list", "--run", "--describe", "--doctor", "--self-test", "--version",
              "--list-workflows", "--run-workflow", "--plan", "--list-schedules",
              "--run-schedule", "--undo", "--macros", "--run-macro", "--serve", "--port",
-             "--help", "-h", "--install-sendto", "--remove-sendto", "--check-update"}
+             "--help", "-h", "--install-sendto", "--remove-sendto", "--check-update",
+             "--flows", "--run-flow", "--lint-flow", "--explain-flow"}
 
 
 def wants_cli(argv: List[str]) -> bool:
@@ -93,6 +98,13 @@ def _parse_args(argv: List[str]) -> Dict[str, Any]:
             options["mode"] = "version"
         elif arg == "--list-workflows":
             options["mode"] = "workflows"
+        elif arg == "--flows":
+            options["mode"] = "flows"
+        elif arg in ("--run-flow", "--lint-flow", "--explain-flow"):
+            options["mode"] = {"--run-flow": "run-flow", "--lint-flow": "lint-flow",
+                               "--explain-flow": "explain-flow"}[arg]
+            index += 1
+            options["flow"] = argv[index] if index < len(argv) else ""
         elif arg == "--run-workflow":
             options["mode"] = "run-workflow"
             index += 1
@@ -504,6 +516,60 @@ def run_cli(argv: List[str]) -> int:
         options["workflow"] = workflow.id
         mode = "run-workflow"
         plan_workflow = workflow
+
+    if mode in ("flows", "run-flow", "lint-flow", "explain-flow"):
+        from . import flowkit
+        from .workflows import run_sync
+
+        if mode == "flows":
+            flows = flowkit.library()
+            if options["json"]:
+                _print(json.dumps([{"id": flow.id, "name": flow.name, "name_en": flow.name_en,
+                                    "steps": len(flow.steps), "source": flow.source,
+                                    "advanced": sum(1 for step in flow.steps if step.advanced)}
+                                   for flow in flows], ensure_ascii=False, indent=2))
+            else:
+                _print(flowkit.describe_library(options["lang"]))
+            return 0
+        reference = str(options.get("flow") or "").strip()
+        try:
+            flow = flowkit.resolve(reference)
+        except (LookupError, FileNotFoundError, ValueError) as exc:
+            _print(f"unknown flow: {reference or '—'} ({type(exc).__name__})")
+            return 2
+        report = flowkit.validate(flow, options["lang"])
+        if mode == "lint-flow":
+            _print(report.text(options["lang"]))
+            return 0 if report.ok else 1
+        if mode == "explain-flow":
+            _print(flowkit.explain(flow, options["lang"]))
+            return 0
+        if not report.ok:
+            _print(report.text(options["lang"]))
+            return 2
+        base = {"__paths__": list(options["files"])}
+        for key, raw in options["sets"]:
+            base[key] = raw
+        output_dir = options["out"] or settings.output_dir
+        progress = (lambda index, step: (
+            None if options["quiet"] else sys.stderr.write(
+                f"  [{index + 1}] {step.tool_id}: {step.status}\n") or sys.stderr.flush()))
+        result = run_sync(flow, options["lang"], output_dir, base, on_step=progress)
+        if options["json"]:
+            _print(json.dumps({
+                "flow": flow.id, "status": result.status, "message": result.message,
+                "steps": [{"tool": step.tool_id, "status": step.status, "message": step.message,
+                           "outputs": step.outputs} for step in result.steps],
+                "outputs": result.outputs,
+            }, ensure_ascii=False, indent=2))
+        else:
+            _print(result.message or result.status)
+            for step in result.steps:
+                _print(f"  {step.status:<8} {step.tool_id}"
+                       + (f"  ({step.message[:60]})" if step.message else ""))
+            for output in result.outputs[:20]:
+                _print(f"  → {output}")
+        return 0 if result.status in ("done", "partial") else 1
 
     if mode == "run-workflow":
         from .workflows import run_sync, store as workflow_store

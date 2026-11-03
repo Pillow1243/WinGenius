@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wingenius"
-version = "5.0.1"
-description = "WinGenius — a Persian-first, all-in-one Windows toolbox (254 tools, 10 categories)"
+version = "6.0.0"
+description = "WinGenius — a Persian-first, all-in-one Windows toolbox (290 tools, 11 categories)"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "AGPL-3.0-or-later"
@@ -42,7 +42,7 @@ dependencies = [
     "markdown>=3.5",
     "mss>=9.0",
     "imageio-ffmpeg>=0.4.9",
-    "opencv-python-headless>=4.9; platform_system != 'Darwin'",
+    "opencv-python-headless>=4.9,<5; platform_system != 'Darwin'",
     "pytesseract>=0.3.10",
     "dnspython>=2.6",
     "pywin32>=306; sys_platform == 'win32'",
