@@ -89,6 +89,8 @@ CATEGORIES: List[Category] = [
              "Regex، Diff، JSON، JWT، URL، Cron", "Regex, diff, JSON, JWT, URL, cron"),
     Category("windows", "ویندوز", "Windows", "window", "#18C8F5",
              "ابزارهای داخلی ویندوز و پاور", "Built-in tools & power"),
+    Category("flow", "جریان هوشمند", "Smart Flow", "sparkles", "#00D9A6",
+             "ساخت، بررسی و اجرای زنجیره‌ی ابزارها", "Build, lint and run tool chains"),
 ]
 
 CATEGORY_MAP: Dict[str, Category] = {c.key: c for c in CATEGORIES}

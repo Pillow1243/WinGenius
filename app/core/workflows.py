@@ -16,7 +16,10 @@ loaded from the shipped library of recipes.
 """
 from __future__ import annotations
 
+import glob as _glob
 import json
+import os
+import re
 import threading
 import time
 import uuid
@@ -43,27 +46,97 @@ PLACEHOLDERS = ("{prev}", "{prev_all}", "{prev_dir}", "{prev_name}", "{input}", 
 
 
 # --------------------------------------------------------------------- model
+ON_ERROR_MODES = ("stop", "continue")
+
+# Extra placeholders that only exist inside a `foreach` step.
+ITEM_PLACEHOLDERS = ("{item}", "{item_name}", "{item_dir}", "{item_ext}", "{item_index}", "{item_count}")
+
+ALL_PLACEHOLDERS = PLACEHOLDERS + ITEM_PLACEHOLDERS
+
+
 @dataclass
 class Step:
+    """One tool call inside a flow.
+
+    v6 adds four optional controls that turn a linear chain into a real flow:
+
+    * ``when``     — a condition; the step is skipped when it is false.
+    * ``foreach``  — a glob (or ``{prev_all}`` / ``{input_all}``) expanded into
+      one run per item, with ``{item}``, ``{item_name}``, ``{item_dir}``,
+      ``{item_ext}``, ``{item_index}`` and ``{item_count}`` available.
+    * ``retries``  — retry a failing step N extra times (for flaky I/O).
+    * ``on_error`` — ``stop`` (default) or ``continue`` to keep the flow going.
+    """
+
     tool_id: str
     values: Dict[str, Any] = field(default_factory=dict)
     note: str = ""
+    when: str = ""
+    foreach: str = ""
+    retries: int = 0
+    on_error: str = "stop"
+    label: str = ""
 
     def as_dict(self) -> Dict[str, Any]:
-        return {"tool_id": self.tool_id, "values": sanitize_values(self.tool_id, self.values), "note": self.note}
+        data: Dict[str, Any] = {
+            "tool_id": self.tool_id,
+            "values": sanitize_values(self.tool_id, self.values),
+            "note": self.note,
+            "label": self.label,
+        }
+        if self.when:
+            data["when"] = self.when
+        if self.foreach:
+            data["foreach"] = self.foreach
+        if self.retries:
+            data["retries"] = int(self.retries)
+        if self.on_error and self.on_error != "stop":
+            data["on_error"] = self.on_error
+        return data
 
     @staticmethod
     def from_dict(data: Dict[str, Any]) -> "Step":
+        mode = str(data.get("on_error") or "stop")
+        try:
+            retries = int(data.get("retries") or 0)
+        except (TypeError, ValueError):
+            retries = 0
         return Step(tool_id=str(data.get("tool_id", "")), values=dict(data.get("values") or {}),
-                    note=str(data.get("note") or ""))
+                    note=str(data.get("note") or ""), when=str(data.get("when") or ""),
+                    foreach=str(data.get("foreach") or ""),
+                    retries=max(0, min(5, retries)),
+                    on_error=mode if mode in ON_ERROR_MODES else "stop",
+                    label=str(data.get("label") or ""))
 
     def title(self, lang: str = "fa") -> str:
         spec = get_tool(self.tool_id)
-        return spec.name_for(lang) if spec else self.tool_id
+        base = spec.name_for(lang) if spec else self.tool_id
+        return f"{self.label} · {base}" if self.label else base
 
     def icon(self) -> str:
         spec = get_tool(self.tool_id)
         return spec.icon if spec else "gear"
+
+    # ------------------------------------------------------------------ flow
+    @property
+    def advanced(self) -> bool:
+        """True when the step uses any v6 control (used as a UI badge)."""
+        return bool(self.when or self.foreach or self.retries
+                    or (self.on_error and self.on_error != "stop"))
+
+    def summary(self, lang: str = "fa") -> str:
+        """One-line description of the step's condition/loop/error policy."""
+        parts: List[str] = []
+        if self.when:
+            parts.append(("اگر " if lang != "en" else "if ") + self.when)
+        if self.foreach:
+            parts.append(("برای هر " if lang != "en" else "for each ") + self.foreach)
+        if self.retries:
+            parts.append((f"{self.retries} تلاش دوباره" if lang != "en"
+                          else f"{self.retries} retr" + ("y" if self.retries == 1 else "ies")))
+        if self.on_error == "continue":
+            parts.append("خطا را نادیده بگیر" if lang != "en" else "continue on error")
+        return " · ".join(parts)
 
 
 @dataclass
@@ -187,7 +260,7 @@ def _sub_value(value: Any, context: Dict[str, Any]) -> Any:
             items = context.get("prev_all" if target == "{prev_all}" else "input_all") or []
             return [str(item) for item in items]
         text = value
-        for token in PLACEHOLDERS:
+        for token in ALL_PLACEHOLDERS:
             if token in text:
                 replacement = context.get(token.strip("{}"), "")
                 if value.strip() == token:
@@ -204,6 +277,183 @@ def _sub_value(value: Any, context: Dict[str, Any]) -> Any:
                 out.append(subbed)
         return out
     return value
+
+
+# ------------------------------------------------------------ v6 flow pieces
+_FALSE_WORDS = {"", "0", "0.0", "false", "no", "off", "none", "null", "nil", "{}", "[]"}
+
+# Longest first so `not exists` wins over `exists`.
+_CONDITION_OPS = (
+    "not exists", "not empty", "exists", "is empty", "startswith", "ends with",
+    "starts with", "endswith", "contains", ">=", "<=", "!=", "==", ">", "<", "=",
+)
+
+_ITEM_GLOB_CHARS = ("*", "?", "[")
+
+
+def truthy(value: Any) -> bool:
+    """Lenient truthiness used by conditions (`0`, `false`, `` are false)."""
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, (list, tuple, set, dict)):
+        return len(value) > 0
+    return str(value).strip().lower() not in _FALSE_WORDS
+
+
+def _as_number(text: str) -> Optional[float]:
+    try:
+        return float(str(text).strip().replace(",", ""))
+    except (TypeError, ValueError):
+        return None
+
+
+def _compare(left: str, op: str, right: str) -> bool:
+    low_left, low_right = str(left).strip().lower(), str(right).strip().lower()
+    if op in ("==", "="):
+        left_num, right_num = _as_number(left), _as_number(right)
+        if left_num is not None and right_num is not None:
+            return left_num == right_num
+        return low_left == low_right
+    if op == "!=":
+        return not _compare(left, "==", right)
+    if op in (">", "<", ">=", "<="):
+        left_num, right_num = _as_number(left), _as_number(right)
+        if left_num is None or right_num is None:
+            left_num, right_num = float(len(low_left)), float(len(low_right))
+        return {">": left_num > right_num, "<": left_num < right_num,
+                ">=": left_num >= right_num, "<=": left_num <= right_num}[op]
+    if op == "contains":
+        return low_right in low_left
+    if op in ("startswith", "starts with"):
+        return low_left.startswith(low_right)
+    if op in ("endswith", "ends with"):
+        return low_left.endswith(low_right)
+    if op in ("exists", "not exists"):
+        text = str(left).strip()
+        if not text:
+            return op == "not exists"
+        looks_like_path = os.sep in text or "/" in text or bool(Path(text).suffix)
+        present = os.path.exists(text) if looks_like_path else True
+        return (not present) if op == "not exists" else present
+    if op == "is empty":
+        return not truthy(left)
+    if op == "not empty":
+        return truthy(left)
+    return truthy(left)
+
+
+def _condition_clause(clause: str, context: Dict[str, Any]) -> bool:
+    text = clause.strip()
+    if not text:
+        return True
+    negate = False
+    while text.lower().startswith("not "):
+        negate = not negate
+        text = text[4:].strip()
+    for op in _CONDITION_OPS:
+        needle = f" {op} "
+        index = text.lower().find(needle)
+        if index == -1:
+            if text.lower().endswith(f" {op}"):
+                left = resolve_text(text[: -len(op) - 1], context)
+                verdict = _compare(left, op, "")
+                return (not verdict) if negate else verdict
+            continue
+        left = resolve_text(text[:index], context)
+        right = resolve_text(text[index + len(needle):], context)
+        verdict = _compare(left, op, right)
+        return (not verdict) if negate else verdict
+    return (not truthy(resolve_text(text, context))) if negate else truthy(resolve_text(text, context))
+
+
+def evaluate_condition(expression: str, context: Dict[str, Any]) -> bool:
+    """Evaluate a flow condition without `eval` (safe on user-supplied text).
+
+    Grammar: ``clause (and|or clause)*`` where ``and``/``or`` are left-associative
+    and support ``&&``/``||``.  A clause is ``{placeholder} op value`` with one of
+    ``== != > < >= <= contains startswith endswith exists not exists
+    is empty not empty``; a bare placeholder is true when it is non-empty.
+    """
+    text = (expression or "").strip()
+    if not text:
+        return True
+    parts = re.split(r"\s+(and|or|&&|\|\|)\s+", text, flags=re.I)
+    if not parts:
+        return True
+    verdict = _condition_clause(parts[0], context)
+    # Left-associative on purpose: `a or b and c` is `(a or b) and c`.
+    # Documented in ARCHITECTURE.md so nobody has to guess.
+    for index in range(1, len(parts) - 1, 2):
+        operator = parts[index].strip().lower()
+        right = _condition_clause(parts[index + 1], context)
+        verdict = (verdict or right) if operator in ("or", "||") else (verdict and right)
+    return bool(verdict)
+
+
+def resolve_text(template: Any, context: Dict[str, Any]) -> Any:
+    """Public alias for the placeholder substitution used by flow conditions."""
+    return _sub_value(template, context)
+
+
+def expand_foreach(pattern: Any, context: Dict[str, Any]) -> List[str]:
+    """Expand a `foreach` pattern into concrete paths (sorted naturally).
+
+    Accepts a glob (``{input_dir}/*.pdf``), a list placeholder
+    (``{prev_all}``) or a single existing path.  Brace globs such as
+    ``*.{jpg,png}`` are supported because Windows users write them.
+    """
+    resolved = resolve_text(pattern, context)
+    if isinstance(resolved, (list, tuple)):
+        return [str(item) for item in resolved if str(item).strip()]
+    text = str(resolved or "").strip()
+    if not text:
+        return []
+    text = os.path.expandvars(os.path.expanduser(text))
+    if _glob.has_magic(text) or "{" in text:
+        patterns = [text]
+        if "{" in text and "}" in text:
+            head, _, rest = text.partition("{")
+            options, _, tail = rest.partition("}")
+            patterns = [f"{head}{option.strip()}{tail}" for option in options.split(",")]
+        found: List[str] = []
+        for item in patterns:
+            found.extend(_glob.glob(item, recursive=True))
+        unique: List[str] = []
+        for path in sorted(found, key=lambda p: p.lower()):
+            if path not in unique:
+                unique.append(path)
+        return unique
+    return [text] if os.path.exists(text) else []
+
+
+def item_context(base: Dict[str, Any], item: str, index: int, count: int) -> Dict[str, Any]:
+    context = dict(base)
+    path = Path(str(item))
+    context.update({
+        "item": str(item),
+        "item_name": path.stem,
+        "item_dir": str(path.parent),
+        "item_ext": path.suffix.lower(),
+        "item_index": index + 1,
+        "item_count": count,
+    })
+    return context
+
+
+def step_value_sets(step: Step, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """The one (or N) value dicts a step should run with, placeholders resolved."""
+    if not step.foreach:
+        return [substitute({**step.values}, context)]
+    items = expand_foreach(step.foreach, context)
+    total = len(items)
+    sets: List[Dict[str, Any]] = []
+    for index, item in enumerate(items):
+        sets.append(substitute({**step.values}, item_context(context, item, index, total)))
+    return sets
 
 
 # --------------------------------------------------------------- persistence
@@ -350,7 +600,11 @@ def run_sync(workflow: Workflow, lang: str = "fa", output_dir: str = "",
              base_values: Optional[Dict[str, Any]] = None,
              on_step: Optional[Callable[[int, StepResult], None]] = None,
              cancel_event: Optional[threading.Event] = None) -> WorkflowResult:
-    """Run a workflow on the current thread (used by the CLI and by tests)."""
+    """Run a workflow on the current thread (used by the CLI and by tests).
+
+    v6 semantics: a step may be skipped by `when`, fanned out by `foreach`,
+    retried, and allowed to fail without killing the flow (`on_error`).
+    """
     result = WorkflowResult(workflow_id=workflow.id)
     context = _initial_context({**(base_values or {}), "out_dir": output_dir or ""})
     for index, step in enumerate(workflow.steps):
@@ -360,49 +614,85 @@ def run_sync(workflow: Workflow, lang: str = "fa", output_dir: str = "",
         if spec is None:
             step_result.status = "failed"
             step_result.message = f"unknown tool: {step.tool_id}"
+            if step.on_error == "continue":
+                continue
             result.status = "failed"
             result.message = step_result.message
             return result
+        if step.when and not evaluate_condition(step.when, context):
+            step_result.status = "skipped"
+            step_result.message = ("شرط برقرار نشد" if lang != "en" else "condition not met")
+            continue
+        value_sets = step_value_sets(step, context)
+        if not value_sets:
+            step_result.status = "skipped"
+            step_result.message = ("موردی برای اجرا پیدا نشد" if lang != "en"
+                                   else "nothing to run (empty foreach)")
+            continue
         step_result.status = "running"
         if on_step:
             on_step(index, step_result)
         started = time.time()
-        values = substitute({**step.values}, context)
-        ctx = RunContext(lang=lang, output_dir=output_dir,
-                         cancel_event=cancel_event or threading.Event())
-        try:
-            run_result = spec.run(ctx, values) if spec.run else None
-            if not isinstance(run_result, RunResult):
-                run_result = RunResult(message=str(run_result or ""))
-        except Cancelled:
-            step_result.status = "cancelled"
-            result.status = "cancelled"
-            result.message = "cancelled"
-            return result
-        except ToolError as exc:
-            step_result.status = "failed"
-            step_result.message = str(exc)
-            result.status = "failed"
-            result.message = f"{spec.name_for(lang)}: {exc}"
-            return result
-        except Exception as exc:  # pragma: no cover - defensive
-            step_result.status = "failed"
-            step_result.message = f"{type(exc).__name__}: {exc}"
-            result.status = "failed"
-            result.message = step_result.message
-            return result
-        step_result.status = "done"
-        step_result.message = run_result.message
-        step_result.outputs = list(run_result.outputs or [])
+        aggregated: List[str] = []
+        attempt = 0
+        for values in value_sets:
+            failure = ""
+            while True:
+                ctx = RunContext(lang=lang, output_dir=output_dir,
+                                 cancel_event=cancel_event or threading.Event())
+                try:
+                    run_result = spec.run(ctx, values) if spec.run else None
+                    if not isinstance(run_result, RunResult):
+                        run_result = RunResult(message=str(run_result or ""))
+                except Cancelled:
+                    step_result.status = "cancelled"
+                    result.status = "cancelled"
+                    result.message = "cancelled"
+                    return result
+                except ToolError as exc:
+                    failure = str(exc)
+                    message = f"{spec.name_for(lang)}: {exc}"
+                except Exception as exc:  # pragma: no cover - defensive
+                    failure = f"{type(exc).__name__}: {exc}"
+                    message = failure
+                else:
+                    for path in (run_result.outputs or []):
+                        if path not in aggregated:
+                            aggregated.append(path)
+                    step_result.message = run_result.message
+                    failure = ""
+                    break
+                attempt += 1
+                if attempt > step.retries:
+                    break
+                time.sleep(min(0.05 * attempt, 0.25))
+            if failure:
+                step_result.status = "failed"
+                step_result.message = failure
+                if step.on_error == "continue":
+                    result.message = message
+                    break
+                result.status = "failed"
+                result.message = message
+                return result
+        if step_result.status == "running":
+            step_result.status = "done"
+        step_result.outputs = aggregated
         step_result.duration = time.time() - started
-        context = _context_from_outputs(context, step_result.outputs)
+        context = _context_from_outputs(context, aggregated)
         if on_step:
             on_step(index, step_result)
     outputs = result.outputs
-    result.message = (f"{len(workflow.steps)} گام انجام شد"
-                      if lang != "en" else f"{len(workflow.steps)} steps finished")
+    done = sum(1 for step in result.steps if step.status == "done")
+    skipped = sum(1 for step in result.steps if step.status == "skipped")
+    if lang != "en":
+        result.message = f"{done} گام انجام شد" + (f" · {skipped} رد شد" if skipped else "")
+    else:
+        result.message = f"{done} step(s) finished" + (f" · {skipped} skipped" if skipped else "")
     if outputs:
         result.message += f" · {len(outputs)} " + ("output(s)" if lang == "en" else "خروجی")
+    if result.status == "done" and any(step.status == "failed" for step in result.steps):
+        result.status = "partial"
     return result
 
 
@@ -429,6 +719,11 @@ class WorkflowRunner(QObject):
         self._runner: Optional[ToolRunner] = None
         self._runners: List[ToolRunner] = []
         self._cancelled = False
+        # v6: one step may fan out into many runs (foreach); these carry the queue.
+        self._queue: List[Dict[str, Any]] = []
+        self._queue_pos = 0
+        self._attempts = 0
+        self._aggregated: List[str] = []
 
     # ------------------------------------------------------------------ api
     def start(self) -> None:
@@ -447,33 +742,21 @@ class WorkflowRunner(QObject):
         return self._index
 
     # -------------------------------------------------------------- internals
-    def _run_next(self) -> None:
-        if self._cancelled:
-            self.result.status = "cancelled"
-            self.finished.emit(self.result)
-            return
-        if self._index >= len(self.workflow.steps):
-            self.result.status = "failed" if any(
-                step.status == "failed" for step in self.result.steps) else "done"
-            self.result.message = (
-                f"{len(self.workflow.steps)} " + ("steps finished" if self.lang == "en" else "گام انجام شد"))
-            self.finished.emit(self.result)
-            return
-        index = self._index
-        step = self.workflow.steps[index]
-        spec = get_tool(step.tool_id)
-        step_result = StepResult(tool_id=step.tool_id, status="running")
-        self.result.steps.append(step_result)
-        if spec is None:
-            step_result.status = "failed"
-            step_result.message = f"unknown tool: {step.tool_id}"
-            self.result.status = "failed"
-            self.result.message = step_result.message
-            self.failed.emit(step_result.message)
-            self.finished.emit(self.result)
-            return
-        self.stepStarted.emit(index, step.tool_id, step.title(self.lang))
-        values = substitute({**step.values}, self.context)
+    def _finish(self) -> None:
+        self.result.status = "failed" if any(
+            step.status == "failed" for step in self.result.steps) else "done"
+        done = sum(1 for step in self.result.steps if step.status == "done")
+        skipped = sum(1 for step in self.result.steps if step.status == "skipped")
+        if self.lang == "en":
+            self.result.message = f"{done} step(s) finished" + (f" · {skipped} skipped" if skipped else "")
+        else:
+            self.result.message = f"{done} گام انجام شد" + (f" · {skipped} رد شد" if skipped else "")
+        if any(step.status == "failed" for step in self.result.steps) and done:
+            self.result.status = "partial"
+        self.finished.emit(self.result)
+
+    def _launch(self, index: int, spec, step: Step) -> None:
+        values = self._queue[self._queue_pos]
         runner = ToolRunner(spec, values, self.lang, self.output_dir, self)
         runner.progressed.connect(lambda current, total, message, idx=index:
                                   self.stepProgress.emit(idx, current, total, message))
@@ -484,29 +767,106 @@ class WorkflowRunner(QObject):
         self._runners.append(runner)
         runner.start()
 
+    def _run_next(self) -> None:
+        if self._cancelled:
+            self.result.status = "cancelled"
+            self.finished.emit(self.result)
+            return
+        if self._index >= len(self.workflow.steps):
+            self._finish()
+            return
+        index = self._index
+        step = self.workflow.steps[index]
+        spec = get_tool(step.tool_id)
+        step_result = StepResult(tool_id=step.tool_id, status="running")
+        self.result.steps.append(step_result)
+        if spec is None:
+            step_result.status = "failed"
+            step_result.message = f"unknown tool: {step.tool_id}"
+            self.stepFinished.emit(index, "failed", step_result.message)
+            if step.on_error == "continue":
+                self._advance(index)
+                return
+            self.result.status = "failed"
+            self.result.message = step_result.message
+            self.failed.emit(step_result.message)
+            self.finished.emit(self.result)
+            return
+        if step.when and not evaluate_condition(step.when, self.context):
+            step_result.status = "skipped"
+            step_result.message = ("شرط برقرار نشد" if self.lang != "en" else "condition not met")
+            self.stepFinished.emit(index, "skipped", step_result.message)
+            self._advance(index)
+            return
+        self._queue = step_value_sets(step, self.context)
+        self._queue_pos = 0
+        self._attempts = 0
+        self._aggregated = []
+        if not self._queue:
+            step_result.status = "skipped"
+            step_result.message = ("موردی برای اجرا پیدا نشد" if self.lang != "en"
+                                   else "nothing to run (empty foreach)")
+            self.stepFinished.emit(index, "skipped", step_result.message)
+            self._advance(index)
+            return
+        self.stepStarted.emit(index, step.tool_id, step.title(self.lang))
+        self._launch(index, spec, step)
+
     def _advance(self, index: int) -> None:
         self._runner = None
+        self._queue = []
+        self._queue_pos = 0
+        self._attempts = 0
         self._index = index + 1
         self._run_next()
 
     def _on_step_done(self, index: int, run_result: RunResult) -> None:
-        if index < len(self.result.steps):
-            step_result = self.result.steps[index]
-            step_result.status = "done"
+        for path in (run_result.outputs or []):
+            if path not in self._aggregated:
+                self._aggregated.append(path)
+        step_result = self.result.steps[index] if index < len(self.result.steps) else None
+        if step_result is not None:
+            step_result.status = "running"
             step_result.message = run_result.message
-            step_result.outputs = list(run_result.outputs or [])
-            self.context = _context_from_outputs(self.context, step_result.outputs)
-        self.stepFinished.emit(index, "done", run_result.message)
+        self._queue_pos += 1
+        self._attempts = 0
+        if self._queue_pos < len(self._queue):
+            step = self.workflow.steps[index]
+            spec = get_tool(step.tool_id)
+            if spec is not None:
+                self._launch(index, spec, step)
+                return
+        step = self.workflow.steps[index]
+        if step_result is not None:
+            step_result.status = "done"
+            step_result.outputs = list(self._aggregated)
+        self.context = _context_from_outputs(self.context, self._aggregated)
+        message = run_result.message
+        if step.foreach and len(self._queue) > 1:
+            message = (f"{len(self._queue)} مورد" if self.lang != "en"
+                       else f"{len(self._queue)} items") + (f" · {message}" if message else "")
+        self.stepFinished.emit(index, "done", message)
         self._advance(index)
 
     def _on_step_failed(self, index: int, message: str) -> None:
+        step = self.workflow.steps[index]
+        self._attempts += 1
+        if self._attempts <= step.retries and not self._cancelled:
+            spec = get_tool(step.tool_id)
+            if spec is not None:
+                self._launch(index, spec, step)
+                return
         if index < len(self.result.steps):
             self.result.steps[index].status = "failed"
             self.result.steps[index].message = message
+        self._runner = None
+        if step.on_error == "continue":
+            self.stepFinished.emit(index, "failed", message)
+            self._advance(index)
+            return
         self.result.status = "failed"
         self.result.message = message
         self.stepFinished.emit(index, "failed", message)
-        self._runner = None
         self.failed.emit(message)
         self.finished.emit(self.result)
 
