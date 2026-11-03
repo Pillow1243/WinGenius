@@ -268,7 +268,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: wingenius-${{ needs.build.outputs.version }}-${{ github.run_number }}
           path: release
