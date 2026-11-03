@@ -72,3 +72,8 @@ code structure:
 Until one of those happens, treat the AGPL terms as binding: publish the source
 (including modifications) when you distribute the app, and keep this notice and
 `LICENSE` next to the binary.
+
+### Vazirmatn font
+The bundled Vazirmatn font by Rastikerdar is licensed under the SIL Open Font
+License 1.1. The full license is included in `app/assets/fonts/OFL.txt`.
+Source: https://github.com/rastikerdar/vazirmatn

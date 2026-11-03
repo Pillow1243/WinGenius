@@ -45,7 +45,8 @@ def _open_reader(ctx: RunContext, path: Path):
         ))
     if reader.is_encrypted:
         try:
-            reader.decrypt("")
+            if not reader.decrypt(""):
+                raise ValueError("Password required")
         except Exception:
             raise ToolError(ctx.M(
                 "این PDF با رمز محافظت شده است. ابتدا از ابزار «حذف رمز PDF» استفاده کنید.",
@@ -167,32 +168,58 @@ def pdf_to_docx(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     docx = require("docx", "python-docx", ctx)
     src = first_file(v, "src", ctx)
     reader = _open_reader(ctx, src)
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+    import unicodedata
+
     document = docx.Document()
-    document.add_heading(src.stem, level=1)
     total = len(reader.pages)
     added = 0
+    empty_pages = []
     for i, page in enumerate(reader.pages):
         ctx.progress(i, total, ctx.M(f"صفحه {i + 1} از {total}", f"Page {i + 1} of {total}"))
-        if i and v.get("page_break"):
-            document.add_page_break()
         try:
             text = page.extract_text() or ""
         except Exception:
             text = ""
-        for block in text.split("\n"):
-            if block.strip():
-                document.add_paragraph(block.strip())
-                added += 1
-    dest = save_target(ctx, v.get("out", ""), f"{src.stem}.docx")
-    if added == 0:
-        document.add_paragraph(ctx.M(
-            "(این PDF متن قابل استخراج نداشت.)", "(This PDF had no extractable text.)"
+        if not text.strip():
+            empty_pages.append(i + 1)
+        if i and v.get("page_break", True):
+            document.add_page_break()
+        for block in text.splitlines():
+            if not block.strip():
+                continue
+            paragraph = document.add_paragraph()
+            # Decide direction from the first strong character, not digits or punctuation.
+            direction = next((unicodedata.bidirectional(c) for c in block
+                              if unicodedata.bidirectional(c) in ("L", "R", "AL")), "L")
+            rtl = direction in ("R", "AL")
+            if rtl:
+                bidi = OxmlElement("w:bidi")
+                paragraph._p.get_or_add_pPr().append(bidi)
+            run = paragraph.add_run(block.strip())
+            if rtl:
+                rtl_element = OxmlElement("w:rtl")
+                run._element.get_or_add_rPr().append(rtl_element)
+                fonts = run._element.get_or_add_rPr().get_or_add_rFonts()
+                fonts.set(qn("w:cs"), "Vazirmatn")
+            added += 1
+    if not added:
+        raise ToolError(ctx.M(
+            "هیچ متن قابل استخراجی پیدا نشد. برای PDF تصویری ابتدا از ابزار OCR استفاده کنید؛ بعضی فونت‌های PDF نیز استخراج متن را پشتیبانی نمی‌کنند.",
+            "No extractable text was found. Use OCR for scanned PDFs; some PDF fonts also prevent text extraction.",
         ))
+    dest = save_target(ctx, v.get("out", ""), f"{src.stem}.docx")
     document.save(str(dest))
+    missing = ", ".join(map(str, empty_pages))
+    note = ctx.M(
+        f"\nصفحات بدون متن قابل استخراج: {missing}. ممکن است به OCR نیاز داشته باشند.",
+        f"\nPages without extractable text: {missing}. They may require OCR.",
+    ) if empty_pages else ""
     return RunResult(
         message=ctx.M(
-            f"فایل Word ساخته شد با {added} پاراگراف.\nتوجه: چیدمان و تصاویر PDF منتقل نمی‌شوند (تبدیل متنی).",
-            f"Word file created with {added} paragraphs.\nNote: layout and images are not carried over (text conversion).",
+            f"فایل Word با {added} پاراگراف ساخته شد. چیدمان، جدول‌ها و تصاویر منتقل نمی‌شوند و ترتیب متن به PDF بستگی دارد.{note}",
+            f"Word file created with {added} paragraphs. Layout, tables and images are not preserved; text order depends on the PDF.{note}",
         ),
         outputs=[str(dest)], open_target=str(dest),
     )

@@ -87,6 +87,11 @@ class RadialMenu(QWidget):
                 self._timer.start()
         else:
             self._timer.stop()
+            if self._pending is not None:
+                self._nodes, self._pending = self._pending, None
+            self._fade = 1.0
+            for node in self._nodes:
+                node.appear = 1.0
             self.update()
 
     def set_page_state(self, page: int, pages: int) -> None:
@@ -113,7 +118,7 @@ class RadialMenu(QWidget):
     ) -> None:
         for index, node in enumerate(nodes):
             node.delay_ms = index * 42
-            node.appear = 0.0
+            node.appear = 0.0 if self._animations else 1.0
             node.hover = 0.0
         self._title = title or self._title
         self._subtitle = subtitle
@@ -189,7 +194,7 @@ class RadialMenu(QWidget):
         return min(self.width(), self.height()) * 0.315
 
     def _node_radius(self) -> float:
-        return max(26.0, min(self.width(), self.height()) * 0.062)
+        return max(26.0, min(self.width(), self.height()) * 0.052)
 
     def _node_position(self, index: int, total: int) -> QPointF:
         center = self._center()
@@ -390,14 +395,14 @@ class RadialMenu(QWidget):
         painter.setFont(theme.make_font(9.6 if node.kind == "category" else 9.0,
                                         700 if node.kind == "category" else 600))
         painter.setPen(QColor(theme.alpha(p.text, 1.0 if hover > 0.3 else 0.86)))
-        label_rect = QRectF(center.x() - 78, center.y() + r + 6, 156, 30)
+        label_rect = QRectF(center.x() - 55, center.y() + r + 4, 110, 25)
         metrics = painter.fontMetrics()
-        text = metrics.elidedText(node.label, Qt.TextElideMode.ElideRight, 150)
+        text = metrics.elidedText(node.label, Qt.TextElideMode.ElideRight, 108)
         painter.drawText(label_rect, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop, text)
 
         if node.badge:
             painter.setFont(theme.make_font(7.4, 600))
-            badge_rect = QRectF(center.x() + r - 10, center.y() - r - 6, 34, 16)
+            badge_rect = QRectF(center.x() + r - 13, center.y() - r - 5, 28, 16)
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(theme.alpha(accent.name(), 0.9)))
             painter.drawRoundedRect(badge_rect, 8, 8)

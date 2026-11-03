@@ -8,7 +8,7 @@ import traceback
 from typing import List
 
 from PySide6.QtCore import QCoreApplication, Qt
-from PySide6.QtGui import QFont, QIcon
+from PySide6.QtGui import QFont, QFontDatabase, QIcon
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from .core import theme
@@ -76,6 +76,11 @@ def create_app(argv: List[str] | None = None) -> QApplication:
     icon_png = resource_path("icon.png")
     if icon_png.exists():
         app.setWindowIcon(QIcon(str(icon_png)))
+
+    for font_file in ("Vazirmatn-Regular.ttf", "Vazirmatn-Bold.ttf"):
+        font_path = resource_path("fonts/" + font_file)
+        if font_path.exists():
+            QFontDatabase.addApplicationFont(str(font_path))
 
     palette = theme.build_palette(settings.theme, settings.accent)
     app.setFont(theme.make_font(10))
