@@ -48,12 +48,12 @@ jobs:
       WINGENIUS_NO_LAUNCH: "1"
     steps:
       # ---------------------------------------------------------------- setup
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.release_tag || github.ref }}
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -65,13 +65,36 @@ jobs:
         id: meta
         shell: pwsh
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG_INPUT: ${{ inputs.release_tag }}
         run: |
-          $tag = "${{ inputs.release_tag }}"
-          if ([string]::IsNullOrWhiteSpace($tag)) { $tag = "${{ github.ref_name }}" }
-          if ($tag -notmatch '^v') { $tag = "" }
-          $version = if ($tag) { $tag.TrimStart('v') } else { "5.0.1-dev" }
-          "tag=$tag"       | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          # A manual dispatch can target a branch or a tag. Treat only an
+          # explicit tag input or refs/tags/* as a release; branch names remain HEAD.
+          $tag = ""
+          if ($env:GITHUB_EVENT_NAME -eq "workflow_dispatch") {
+            $requestedTag = $env:RELEASE_TAG_INPUT
+            if (-not [string]::IsNullOrWhiteSpace($requestedTag)) {
+              $tag = $requestedTag.Trim()
+            } elseif ($env:GITHUB_REF -like "refs/tags/*") {
+              $tag = $env:GITHUB_REF_NAME
+            }
+          } else {
+            $tag = $env:GITHUB_REF_NAME
+          }
+          if ($tag -and $tag -notmatch '^v\d+(\.\d+){2,3}$') {
+            throw "Release tag must be a v-prefixed numeric version (for example v6.0.0): $tag"
+          }
+
+          if ($tag) {
+            $version = $tag.Substring(1)
+          } else {
+            # Manual HEAD builds use the checked-out source version instead of a
+            # stale hard-coded version that can disagree with the exe itself.
+            $project = Get-Content pyproject.toml -Raw
+            $versionMatch = [regex]::Match($project, '(?m)^version\s*=\s*"(?<version>[^"]+)"\s*$')
+            if (-not $versionMatch.Success) { throw "Could not resolve [project].version from pyproject.toml" }
+            $version = $versionMatch.Groups['version'].Value
+          }
+          "tag=$tag"        | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       - name: Sync version constants (tagged builds only)
@@ -193,8 +216,9 @@ jobs:
                   raise SystemExit(f"exit {proc.returncode} for {' '.join(args)}")
               return out
 
+          expected_version = "${{ steps.meta.outputs.version }}"
           out = run("--version")
-          assert "${{ steps.meta.outputs.version }}" in out or "5.0.1" in out, out
+          assert f"WinGenius {expected_version}" in out, out
 
           out = run("--doctor")
           # A windowed (runw.exe) binary whose stdout is a pipe cannot always
@@ -271,7 +295,7 @@ jobs:
           Get-ChildItem release | Select-Object Name, Length | Format-Table -AutoSize
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wingenius-${{ steps.meta.outputs.version }}-${{ github.run_number }}
           path: release/*
@@ -286,12 +310,12 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: wingenius-${{ needs.build.outputs.version }}-${{ github.run_number }}
           path: release
       - name: Attach files to the published release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
           files: release/*
@@ -299,5 +323,4 @@ jobs:
           body: |
             **Windows builds attached by CI** (run `${{ github.run_number }}`).
             Verify your download with the `SHA256SUMS.txt` in this release.
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}

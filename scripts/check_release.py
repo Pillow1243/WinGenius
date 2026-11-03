@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 """Regression guard for the tagged Windows release build.
 
-Two real failures used to make *every* ``v*`` build impossible:
+Release-build regressions this script guards against:
 
 1. ``r'^(?m)version = ...'`` — an inline global flag after ``^`` raises
    ``re.PatternError: global flags not at the start of the expression`` on
    Python 3.11+, so the "Sync version constants" step crashed immediately.
-2. The step rewrote ``paths.py``/``pyproject.toml``/``installer.iss`` but not
-   ``docs/stats.json``, which is ``check_docs.py``'s canonical version. The very
-   next quality-gate step therefore failed three version checks.
+2. The tagged sync step must update ``docs/stats.json`` along with the app,
+   project and installer versions, or the quality gate rejects a release.
+3. Manual builds must derive their version from ``pyproject.toml``. The old
+   hard-coded ``5.0.1-dev`` metadata disagreed with the 6.0.0 executable and
+   made the frozen ``--version`` smoke test fail after packaging completed.
+4. Workflow actions must use their Node 24-compatible major versions rather
+   than actions that emit GitHub's Node.js 20 deprecation warning.
 
 This script runs the *exact* Python block from ``build-windows.yml`` against a
 temporary tree with a fake tag, then re-runs ``check_docs.py`` on that tree.
@@ -81,6 +85,73 @@ def sync_code() -> str:
     code = "\n".join(lines)
     return (code.replace("${{ steps.meta.outputs.tag }}", TAG)
                 .replace("${{ steps.meta.outputs.version }}", VERSION))
+
+
+def check_release_metadata() -> list[str]:
+    """Keep branch builds, tag builds and the frozen version check in sync."""
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    meta_start = workflow.index("name: Resolve release metadata")
+    meta_end = workflow.index("name: Sync version constants", meta_start)
+    metadata = workflow[meta_start:meta_end]
+    smoke_start = workflow.index("name: Smoke-test the frozen exe")
+    smoke_end = workflow.index("name: Verify signing engine", smoke_start)
+    smoke = workflow[smoke_start:smoke_end]
+
+    checks = [
+        ("manual builds resolve the source version", "pyproject.toml" in metadata
+         and "Groups['version'].Value" in metadata),
+        ("workflow_dispatch distinguishes branches from release tags",
+         '$env:GITHUB_EVENT_NAME -eq "workflow_dispatch"' in metadata
+         and "RELEASE_TAG_INPUT: ${{ inputs.release_tag }}" in metadata
+         and '$env:GITHUB_REF -like "refs/tags/*"' in metadata),
+        ("frozen version smoke test checks resolved metadata",
+         'expected_version = "${{ steps.meta.outputs.version }}"' in smoke
+         and 'assert f"WinGenius {expected_version}" in out' in smoke),
+        ("no stale 5.0.1 fallback remains", "5.0.1" not in metadata + smoke),
+    ]
+    failures: list[str] = []
+    for label, ok in checks:
+        print(f"{'PASS' if ok else 'FAIL'}  {label}")
+        if not ok:
+            failures.append(label)
+    return failures
+
+
+def check_node24_actions() -> list[str]:
+    """Fail CI if a workflow regresses to an action major that runs Node 20."""
+    expected = {
+        "actions/checkout": "v7",
+        "actions/setup-python": "v7",
+        "actions/upload-artifact": "v7",
+        "actions/download-artifact": "v8",
+        "actions/configure-pages": "v6",
+        "actions/upload-pages-artifact": "v5",
+        "actions/deploy-pages": "v5",
+        "github/codeql-action/init": "v4",
+        "github/codeql-action/autobuild": "v4",
+        "github/codeql-action/analyze": "v4",
+        "softprops/action-gh-release": "v3",
+    }
+    used: set[str] = set()
+    failures: list[str] = []
+    for workflow in sorted((ROOT / ".github" / "workflows").glob("*.yml")):
+        for line_number, line in enumerate(workflow.read_text(encoding="utf-8").splitlines(), 1):
+            match = re.match(r"^\s*(?:-\s*)?uses:\s*([^\s#]+)", line)
+            if not match:
+                continue
+            action, separator, ref = match.group(1).partition("@")
+            if action not in expected:
+                continue
+            used.add(action)
+            ok = bool(separator) and ref == expected[action]
+            label = f"{workflow.name}:{line_number} uses {action}@{expected[action]}"
+            print(f"{'PASS' if ok else 'FAIL'}  {label}")
+            if not ok:
+                failures.append(label)
+    for action in sorted(expected.keys() - used):
+        failures.append(f"no workflow uses expected Node 24 action {action}@{expected[action]}")
+        print(f"FAIL  {failures[-1]}")
+    return failures
 
 
 def check_exe_paths() -> list[str]:
@@ -201,7 +272,8 @@ def check_python_snippets() -> list[str]:
 
 def main() -> int:
     code = sync_code()
-    failures: list[str] = (check_exe_paths() + check_frozen_tools()
+    failures: list[str] = (check_release_metadata() + check_node24_actions()
+                           + check_exe_paths() + check_frozen_tools()
                            + check_python_snippets())
     with tempfile.TemporaryDirectory(prefix="wg-release-") as tmp:
         root = Path(tmp)
