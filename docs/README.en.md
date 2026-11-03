@@ -122,7 +122,7 @@ tokens that arrive in the query string (`allow_query_token=False`).
 
 ```bash
 python tests/smoke_test.py        # 154 real-file checks
-python tests/functional_test.py   # 458 engine/tool checks (schema, stress, fuzz, guards, CLI, v42, v50, scale)
+python tests/functional_test.py   # 459 engine/tool checks (schema, stress, fuzz, guards, CLI, v42, v50, scale)
 python tests/output_test.py       # 112 output-correctness checks (is the file right?)
 python tests/ui_test.py           # 1077 UI checks incl. accessibility, offscreen Qt
 python tests/security_test.py     # 57 security/consistency regression checks
@@ -133,8 +133,8 @@ ruff check main.py app tests packaging  # lint gate (real-bug rules only)
 
 Everything runs headless (`QT_QPA_PLATFORM=offscreen`) on Linux, Windows and macOS,
 in CI (`.github/workflows/ci.yml`) on Python 3.12 and 3.13.
-Totals: **154 smoke · 458 functional · 112 output · 1077 UI · 57 security · 27 packaging
-= 1,885 checks**. Coverage measures 75%; `pyproject.toml` enforces a 70% `fail_under` gate.
+Totals: **154 smoke · 459 functional · 112 output · 1077 UI · 57 security · 39 hardening regressions · 27 packaging
+= 1,925 checks**. Coverage measures 75%; `pyproject.toml` enforces a 70% `fail_under` gate.
 
 ## Security notes
 
@@ -164,3 +164,16 @@ notices file explains how to switch to a permissive renderer if you need one).
 snapshots), `logs/wingenius.log` (rotated), `tessdata/` (language packs fetched by
 “OCR setup”). Run with `--portable` (or set `WINGENIUS_PORTABLE=1`) to keep all of it in
 a `data/` folder next to the exe instead.
+
+## Unreleased security hardening
+
+These source changes are not yet part of the published 5.0.1 Windows binary.
+Credentials are omitted from history, saved recipes, automation payloads and
+copied command lines. Data schema 3 scrubs known legacy profile JSON and local
+migration snapshots. Re-enter credentials when replaying a saved operation.
+External archives, macros and arbitrary prose still require manual review.
+The API fails closed, destructive API tools are disabled by default, foreground
+and background confirmations match, and queued jobs retain their own context.
+Python plugins require explicit approval of their exact file hash; this is not
+a sandbox. Run `python -m pytest tests/hardening_test.py -q` (39 cases).
+See [hardening notes](hardening.md).

@@ -6,6 +6,7 @@ The UI never blocks: every tool run becomes a `Job` handled here.  Up to
 from __future__ import annotations
 
 import time
+from copy import deepcopy
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -33,6 +34,8 @@ class Job:
     tool_id: str
     title: str
     values: Dict[str, Any] = field(default_factory=dict)
+    lang: str = "fa"
+    output_dir: str = ""
     status: str = QUEUED
     progress: int = 0
     total: int = 0
@@ -121,15 +124,17 @@ class JobManager(QObject):
     # ------------------------------------------------------------------ submit
     def submit(self, spec: ToolSpec, values: Dict[str, Any], lang: str = "",
                output_dir: str = "", title: str = "") -> Job:
+        if self._closed:
+            raise RuntimeError("job manager is shut down")
         job = Job(
             id=uuid.uuid4().hex[:12],
             tool_id=spec.id,
             title=title or spec.name_for(lang or self._lang),
-            values=dict(values or {}),
+            values=deepcopy(values or {}),
+            lang=lang or self._lang,
+            output_dir=output_dir or self._output_dir,
         )
         self._jobs[job.id] = job
-        self._lang = lang or self._lang
-        self._output_dir = output_dir or self._output_dir
         self.jobAdded.emit(job)
         self.changed.emit()
         self._pump()
@@ -158,7 +163,7 @@ class JobManager(QObject):
             job.error = f"unknown tool: {job.tool_id}"
             self.jobFinished.emit(job)
             return
-        runner = ToolRunner(spec, job.values, self._lang, self._output_dir, self)
+        runner = ToolRunner(spec, job.values, job.lang, job.output_dir, self)
         job.status = RUNNING
         job.started = time.time()
         job.message = ""

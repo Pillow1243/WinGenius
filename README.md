@@ -3,7 +3,7 @@
 <p align="center">
   <a href="https://github.com/Pillow1243/WinGenius/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Pillow1243/WinGenius/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="tools" src="https://img.shields.io/badge/tools-254-5B8CFF">
-  <img alt="checks" src="https://img.shields.io/badge/checks-1%2C885%20passing-2BD9A0">
+  <img alt="checks" src="https://img.shields.io/badge/checks-1%2C925%20passing-2BD9A0">
   <img alt="python" src="https://img.shields.io/badge/python-3.12%20%7C%203.13-3776AB">
   <img alt="platform" src="https://img.shields.io/badge/platform-Windows%2010%2F11-0078D6">
   <img alt="license" src="https://img.shields.io/badge/license-AGPL--3.0-orange">
@@ -58,6 +58,18 @@
 
 ---
 
+## اصلاحات امنیتی در دست توسعه (Unreleased)
+
+این تغییرها هنوز جایگزین باینری منتشرشدهٔ ۵.۰.۱ نشده‌اند:
+- حذف رمزها و ورودی‌های علامت‌خوردهٔ حساس از تاریخچه، ذخیره/خروجی گردش‌کار، زمان‌بند، قوانین پوشه و فرمان کپی‌شده.
+- مهاجرت دادهٔ نسخهٔ ۳: پاک‌سازی ورودی‌های رمزدار ذخیره‌شده؛ برای اجرای دوباره باید رمز را دوباره وارد کنید.
+- API بدون توکن معتبر راه نمی‌افتد؛ ابزارهای مخرب به‌صورت پیش‌فرض از API ممنوع‌اند.
+- تأیید عملیات خطرناک در اجرای مستقیم و پس‌زمینه یکسان شد؛ تنظیمات هر کار در صف مستقل‌اند.
+- افزونه‌های Python فقط پس از تأیید صریح نسخهٔ دقیق فایل اجرا می‌شوند؛ سندباکس نیستند.
+- ۳۹ تست بازگشت جدید: `python -m pytest tests/hardening_test.py -q`.
+
+[جزئیات و محدودیت‌های این تغییرها](docs/hardening.md)
+
 ## ۱. چه چیزی در نسخه‌ی ۵.۰ اضافه شد؟
 
 | قابلیت | توضیح |
@@ -94,7 +106,7 @@
 | **باگ‌های واقعی رفع‌شده** | `zip-slip`، `NameError` در پایان برش صدا، `NameError` در اجرای ماکرو، f-string نامعتبر روی پایتون ۳.۱۱، `--dry-run` که در فراخوانی برنامه‌ای واقعاً اجرا می‌کرد، و «فشرده‌سازی» که فایل بزرگ‌تر تحویل می‌داد. |
 
 نسخه‌ی ۴ سه چیز را حل می‌کند که هیچ دستیار ویندوزی یک‌جا ندارد: **امنیت داده**
-(گاوصندوق رمزدار)، **بازگشت‌پذیری** (هر تغییر فایل قابل برگشت است) و **تکرار خودکار**
+(گاوصندوق رمزدار)، **بازگشت‌پذیری** (برای عملیات پشتیبانی‌شدهٔ ژورنال) و **تکرار خودکار**
 (زمان‌بند cron + ماکروهای شرطی + API محلی برای اتصال به بقیه‌ی برنامه‌ها) — خلاصه‌ی نسخه‌ی ۴:
 
 | قابلیت | توضیح |
@@ -399,12 +411,12 @@ WinGenius/
 
 ---
 
-## ۱۰. تست‌ها (۱٬۸۸۵ بررسی، ۰ خطا)
+## ۱۰. تست‌ها (۱٬۹۲۵ بررسی، ۰ خطا)
 
 ```bash
 python tests/smoke_test.py                 # ۱۵۴ تست عملکردی روی فایل‌های واقعی
 python tests/smoke_test.py pdf image v3    # فقط چند گروه
-python tests/functional_test.py            # ۴۵۸ تست موتور، ابزارها و اجزای نسخه‌های ۳ تا ۵.۰
+python tests/functional_test.py            # ۴۵۹ تست موتور، ابزارها و اجزای نسخه‌های ۳ تا ۵.۰
 python tests/functional_test.py vault api v42 v50  # فقط گروه‌های تازه
 python tests/functional_test.py scale      # بار سنگین: ۶۰۰ فایل + ایندکس ۲۵۰ سند
 python tests/output_test.py sign          # امضا → بررسی → دستکاری
@@ -427,9 +439,9 @@ python packaging/make_showcase.py                                # docs/showcase
 ```
 
 آخرین نتیجه (headless، `QT_QPA_PLATFORM=offscreen`): **smoke ۱۵۴/۱۵۴** ·
-**functional ۴۵۸/۴۵۸** · **output ۱۱۲/۱۱۲** · **UI ۱٬۰۷۷ بررسی: ALL CHECKS PASSED** ·
-**packaging ۲۷/۲۷** · **۲۵۴ ابزار، ۰ خطای بارگذاری** — جمعاً **۱٬۸۸۵ بررسی PASS**.
-پوشش تست (coverage) روی `app/` (۱۸٬۹۸۷ خط قابل اجرا): **۷۵٪**؛ با کنار گذاشتن ماژول‌های
+**functional ۴۵۹/۴۵۹** · **output ۱۱۲/۱۱۲** · **UI ۱٬۰۷۷ بررسی: ALL CHECKS PASSED** ·
+**hardening ۳۹/۳۹** · **packaging ۲۷/۲۷** · **۲۵۴ ابزار، ۰ خطای بارگذاری** — جمعاً **۱٬۹۲۵ بررسی PASS**.
+پوشش تست (coverage) روی `app/` (اندازه‌گیری خطی؛ نه branch coverage): **۷۵٪**؛ با کنار گذاشتن ماژول‌های
 فقط-ویندوزی (`winapi`, `windows_*`) که روی لینوکس اجرا نمی‌شوند، **۷۷٪**.
 ماژول‌های تازه‌ی ۵.۰: `pdf_sign_tools` ۷۷٪، `indexer` (با OCR) ۷۸٪، `core/tesseract` ۷۵٪.
 سه گروه «شکار باگ» هم اضافه شد: **`schema`** (همه‌ی ۲۵۴ ابزار را از نظر آیکون، دسته، نام/توضیح دوزبانه،
@@ -638,8 +650,8 @@ python tests\smoke_test.py && python tests\functional_test.py && python tests\ou
 ```
 
 Version 5.0 adds real PDF digital signatures with tamper detection, OCR-aware search indexing for
-scanned PDFs, and a redacted crash-report bundle. Test totals: **154 smoke · 458 functional ·
-112 output · 1,077 UI · 57 security · 27 packaging = 1,885 checks**, all headless, coverage
+scanned PDFs, and a redacted crash-report bundle. Test totals: **154 smoke · 459 functional ·
+112 output · 1,077 UI · 57 security · 39 hardening regressions · 27 packaging = 1,925 checks**, all headless, coverage
 **75%** of `app/`; `pyproject.toml` enforces a **70%** `fail_under` gate so Windows-only modules cannot break CI.
 
 No telemetry, no account, no background network traffic. All file processing is local; only the

@@ -65,7 +65,9 @@ def api_token(create: bool = True) -> str:
         except OSError:                                  # Windows ACLs, best effort
             pass
         return token
-    except OSError:
+    except OSError as exc:
+        if create:
+            raise RuntimeError("Cannot access the API credential file; API startup refused") from exc
         return ""
 
 
@@ -116,7 +118,8 @@ class ApiServer:
                  token: Optional[str] = None, lang: str = "fa",
                  output_dir: str = "", jobs: Any = None,
                  rate_limit: int = 300, rate_window: float = 60.0,
-                 allow_query_token: bool = False) -> None:
+                 allow_query_token: bool = False,
+                 allow_dangerous: bool = False, max_parallel: int = 3) -> None:
         self.host = host
         self.port = int(port)
         self.token = token if token is not None else api_token()
@@ -127,6 +130,8 @@ class ApiServer:
         # A token in the URL ends up in logs and shell history, so it is OFF by
         # default.  Enable explicitly only for a throwaway local demo.
         self.allow_query_token = bool(allow_query_token)
+        self.allow_dangerous = bool(allow_dangerous)
+        self._execution_slots = threading.BoundedSemaphore(max(1, int(max_parallel)))
         self.started_at = 0.0
         self._server: Optional[ThreadingHTTPServer] = None
         self._thread: Optional[threading.Thread] = None
@@ -134,6 +139,10 @@ class ApiServer:
     # ----------------------------------------------------------------- control
     def start(self) -> int:
         """Start serving in a daemon thread; returns the real port."""
+        if not isinstance(self.token, str) or not self.token.strip():
+            raise RuntimeError("A non-empty API token is required")
+        if self.host not in {"127.0.0.1", "localhost"}:
+            raise ValueError("The API must bind to IPv4 loopback")
         if self._server is not None:
             return self.port
         server = ThreadingHTTPServer((self.host, self.port), _make_handler(self))
@@ -242,11 +251,17 @@ class ApiServer:
             spec = registry.get(tool_id)
             if spec is None:
                 return 404, {"error": f"unknown tool: {tool_id}"}
+            if spec.danger and not self.allow_dangerous:
+                return 403, {"error": "destructive tools are disabled for this API"}
+            if not self._execution_slots.acquire(blocking=False):
+                return 429, {"error": "too many running tools"}
             ctx = RunContext(lang=self.lang, output_dir=self.output_dir or str(Path.home()))
             try:
                 result = spec.run(ctx, values)
             except Exception as exc:                       # tool error → 200 with ok=false
                 return 200, {"ok": False, "error": str(exc), "tool": tool_id}
+            finally:
+                self._execution_slots.release()
             return 200, {"ok": True, "tool": tool_id,
                          "message": getattr(result, "message", ""),
                          "outputs": getattr(result, "outputs", []) or [],
@@ -270,6 +285,10 @@ def _make_handler(server: ApiServer):
         server_version = "WinGeniusAPI/" + APP_VERSION
         protocol_version = "HTTP/1.1"
 
+        def setup(self) -> None:
+            super().setup()
+            self.connection.settimeout(15)
+
         # ------------------------------------------------------------- helpers
         def _host_ok(self) -> bool:
             """Refuse DNS-rebinding: only our own loopback hostnames are valid."""
@@ -281,8 +300,8 @@ def _make_handler(server: ApiServer):
             return host in {"127.0.0.1", "localhost", "::1"}
 
         def _authorised(self, query: Dict[str, list]) -> bool:
-            if not server.token:
-                return True
+            if not isinstance(server.token, str) or not server.token.strip():
+                return False
             header = self.headers.get("X-WinGenius-Token", "")
             if header and secrets.compare_digest(header, server.token):
                 return True
@@ -372,8 +391,8 @@ def _make_handler(server: ApiServer):
             if body == "too-large":
                 self._reply(413, {"error": "payload too large", "limit": server.max_body})
                 return
-            if body is None:
-                self._reply(400, {"error": "invalid JSON body"})
+            if not isinstance(body, dict):
+                self._reply(400, {"error": "JSON body must be an object"})
                 return
             try:
                 status, payload = server.dispatch("POST", parsed.path, query, body)
@@ -393,7 +412,7 @@ def serve_blocking(port: int = 8770, host: str = "127.0.0.1", lang: str = "fa") 
     """Run the API in the foreground (used by `main.py --serve`)."""
     server = ApiServer(host=host, port=port, lang=lang)
     server.start()
-    print(f"WinGenius API → {server.base_url()}   token: {server.token}")
+    print(f"WinGenius API → {server.base_url()}   credential file: {token_path()}")
     print("press Ctrl+C to stop")
     try:
         while True:

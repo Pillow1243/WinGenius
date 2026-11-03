@@ -29,6 +29,7 @@ from PySide6.QtCore import QObject, Signal
 from .history import history
 from .logger import get_logger
 from .paths import data_dir
+from .privacy import atomic_json_write, sanitize_values, sanitize_document
 from .registry import get as get_tool
 from .registry import all_tools
 from .spec import (
@@ -49,7 +50,7 @@ class Step:
     note: str = ""
 
     def as_dict(self) -> Dict[str, Any]:
-        return {"tool_id": self.tool_id, "values": dict(self.values), "note": self.note}
+        return {"tool_id": self.tool_id, "values": sanitize_values(self.tool_id, self.values), "note": self.note}
 
     @staticmethod
     def from_dict(data: Dict[str, Any]) -> "Step":
@@ -221,7 +222,10 @@ class WorkflowStore:
         self._loaded = True
         try:
             if self._path.exists():
-                raw = json.loads(self._path.read_text(encoding="utf-8"))
+                original = json.loads(self._path.read_text(encoding="utf-8"))
+                raw = sanitize_document(original)
+                if raw != original:
+                    atomic_json_write(self._path, raw)
                 self._user = [Workflow.from_dict(item) for item in raw if item.get("steps")]
         except Exception as exc:  # pragma: no cover - corrupt file must not crash
             log.warning("cannot read workflows: %s", exc)
@@ -229,9 +233,7 @@ class WorkflowStore:
 
     def _save(self) -> None:
         try:
-            self._path.write_text(
-                json.dumps([wf.as_dict() for wf in self._user], ensure_ascii=False, indent=1),
-                encoding="utf-8")
+            atomic_json_write(self._path, [wf.as_dict() for wf in self._user])
         except Exception as exc:  # pragma: no cover
             log.warning("cannot write workflows: %s", exc)
 

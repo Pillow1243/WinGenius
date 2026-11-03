@@ -56,6 +56,7 @@ class Field:
     help: str = ""
     help_en: str = ""
     suffix: str = ""
+    sensitive: bool = False             # never persist or export the input value
     visible_when: Optional[Tuple[str, Any]] = None  # (other_key, value)
 
     def __post_init__(self) -> None:

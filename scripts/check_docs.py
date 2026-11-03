@@ -57,7 +57,7 @@ def main() -> int:
     # The ASCII-only guards above cannot see Persian digits: the first pass
     # shipped a Persian README that still said ۲۴۷ ابزار / ۱٬۸۲۹ بررسی /
     # ۴۵۹ تست / پایتون ۳.۱۱. Keep watching those too.
-    stale_fa = [r"۲۴۷\s*ابزار", r"۴۵۹", r"۱[٬,]۸۲[۰-۹]",
+    stale_fa = [r"۲۴۷\s*ابزار", r"۱[٬,]۸۲[۰-۹]",
                 r"۱۸[٬,]۷۸۷", r"پایتون\s*۳\.۱۱\s*و"]
     hits = [pattern for pattern in stale_fa if re.search(pattern, readme)]
     check("README has no stale Persian numbers", not hits, ", ".join(hits))
@@ -82,7 +82,6 @@ def main() -> int:
         (r"Python\s*3\.11|پایتون\s*۳\.۱۱\+", "Python 3.11 as a supported version"),
         (r"example\.invalid", "a placeholder URL"),
         (r"کاملاً آفلاین کار می\u200cکند|Everything runs locally — no telemetry", "a false offline claim"),
-        (r"۴۵۹ موتور|459 functional", "the old functional count"),
     ]
     doc_files = ["README.md", "docs/README.en.md", "docs/install_fa.md", "docs/run_fa.md",
                  "docs/summary_v5_fa.md", "SECURITY.md", "CHANGELOG.md",

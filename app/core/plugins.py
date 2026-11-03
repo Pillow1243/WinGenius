@@ -18,6 +18,8 @@ A plugin is a normal Python module; it can either use the decorator API:
 from __future__ import annotations
 
 import importlib.util
+import hashlib
+import json
 import sys
 import traceback
 from dataclasses import dataclass
@@ -26,8 +28,27 @@ from typing import List, Optional
 
 from .logger import get_logger
 from .paths import data_dir, project_root
+from .privacy import atomic_json_write
 
 log = get_logger("plugins")
+_LOADED: dict[str, str] = {}
+
+
+def _trusted() -> dict:
+    try:
+        raw = json.loads((data_dir() / "trusted_plugins.json").read_text(encoding="utf-8"))
+        return raw if isinstance(raw, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def trust_plugin(path: Path) -> None:
+    """Explicit approval for these exact bytes. Never called during discovery."""
+    path = Path(path).resolve()
+    approved = _trusted()
+    approved[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
+    atomic_json_write(data_dir() / "trusted_plugins.json", approved)
+
 
 
 @dataclass
@@ -75,16 +96,33 @@ def load_plugins(registry_module=None) -> List[PluginInfo]:
         info = PluginInfo(path=path, name=path.stem)
         before = registry.count()
         try:
+            identity = str(path.resolve())
+            source = path.read_bytes()
+            digest = hashlib.sha256(source).hexdigest()
+            if _trusted().get(identity) != digest:
+                info.error = "approval required: untrusted or changed plugin"
+                results.append(info)
+                continue
+            if _LOADED.get(identity) == digest:
+                results.append(info)
+                continue
+            if identity in _LOADED:
+                info.error = "plugin changed: restart the app to load the approved update"
+                results.append(info)
+                continue
             spec = importlib.util.spec_from_file_location(module_name, path)
             if spec is None or spec.loader is None:
                 raise ImportError("cannot create module spec")
             module = importlib.util.module_from_spec(spec)
             sys.modules[module_name] = module
-            spec.loader.exec_module(module)
-            extra = getattr(module, "TOOLS", None)
-            if extra:
-                for tool_spec in extra:
-                    registry.register(tool_spec)
+            with registry.protected_registration():
+                # Execute the bytes that were approved, not a second file read.
+                exec(compile(source, str(path), "exec"), module.__dict__)
+                extra = getattr(module, "TOOLS", None)
+                if extra:
+                    for tool_spec in extra:
+                        registry.register(tool_spec)
+            _LOADED[identity] = digest
             info.tools = registry.count() - before
             if info.tools == 0:
                 info.error = "no tools registered (missing @tool decorator or TOOLS list)"

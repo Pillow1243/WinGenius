@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from .logger import get_logger
+from .privacy import sanitize_values
 from .paths import data_dir
 
 log = get_logger("watcher")
@@ -59,7 +60,7 @@ class WatchRule:
     def as_dict(self) -> Dict[str, Any]:
         return {
             "id": self.id, "name": self.name, "folder": self.folder, "pattern": self.pattern,
-            "action": self.action, "target_id": self.target_id, "values": self.values,
+            "action": self.action, "target_id": self.target_id, "values": sanitize_values(self.target_id, self.values),
             "enabled": self.enabled, "recursive": self.recursive, "settle": self.settle,
             "created": self.created, "last_run": self.last_run, "runs": self.runs,
             "last_file": self.last_file, "last_status": self.last_status,

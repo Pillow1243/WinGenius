@@ -55,11 +55,12 @@ Consequences worth remembering:
 `app/core/paths.py` is the only place that decides where data lives. Per-user by
 default (`%APPDATA%\WinGenius` or `$XDG_CONFIG_HOME/WinGenius`); `--portable`,
 `WINGENIUS_PORTABLE=1` or a `portable.flag` file switches to `./data`.
-`app/core/upgrade.py` owns `DATA_VERSION = 2`, `schema.json` and idempotent,
+`app/core/upgrade.py` owns `DATA_VERSION = 3`, `schema.json` and idempotent,
 backed-up migrations.
 
 | File | Contents | Sensitivity |
 |---|---|---|
+| `history.json`, `workflows.json` | rerunnable values with sensitive inputs omitted | paths/prose may still be private |
 | `settings.ini` | theme, language, history | **plaintext** — do not put secrets here |
 | `journal.sqlite3` | undo operations, paths | plaintext file paths |
 | `index.sqlite3` | FTS5 full text of indexed files | **plaintext excerpts** — use `index/exclude_folders` |
@@ -79,7 +80,7 @@ backed-up migrations.
 
 ## Verification
 
-`python scripts/stats.py --run` executes all six suites, rewrites
+`python scripts/stats.py --run` executes all seven suites, rewrites
 `docs/stats.json` (the single source of truth for documented numbers) and
 regenerates `docs/showcase.html`. `scripts/check_docs.py` and
 `scripts/check_deps.py` run in CI so documentation and dependency drift fail the
@@ -88,11 +89,19 @@ build. Coverage is gated by `[tool.coverage.report] fail_under` in
 
 ## Known limits (deliberate, not bugs)
 
-* Plugins are arbitrary Python executed with `exec_module`; only load files you
-  trust. There is no signature verification.
+* Plugins are arbitrary Python executed with `approved Python execution`; only load files you
+  trust. Files require explicit SHA-256 approval; changed files are denied until re-approved. There is no sandbox or publisher-signature verification.
 * The scheduler wakes on a `QTimer` and catches up **one** missed run per enabled
   schedule — it is not a Windows Service / Task Scheduler replacement.
 * The FTS5 index stores plaintext excerpts; encrypting it would require a
   different storage design.
 * The Windows build is unsigned (no code-signing certificate); SmartScreen may
   warn on first run.
+
+## Post-audit execution fixes (Unreleased)
+
+Each queued Job snapshots its language, output directory and deep-copied inputs.
+The API refuses startup without a credential and denies destructive tools unless
+explicitly enabled by its Python caller. GUI run/queue buttons share a safety gate.
+`core/privacy.py` sanitises persistence/exports without changing runtime inputs;
+replay requires credential re-entry. See `docs/hardening.md` for remaining limits.

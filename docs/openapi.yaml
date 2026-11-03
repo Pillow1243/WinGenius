@@ -159,11 +159,13 @@ paths:
   /run:
     post:
       tags: [execution]
-      summary: Run any registered tool
+      summary: Run a registered tool permitted by the API policy
       description: >
         Tool errors are returned as HTTP 200 with `ok: false`; a 404 means the
-        tool id is unknown. Dangerous tools are NOT blocked here — the API
-        assumes the token holder is trusted.
+        tool id is unknown. Dangerous tools are blocked by default (HTTP 403).
+        A Python integrator must explicitly set allow_dangerous=true to enable
+        them. Concurrent executions are bounded; an exhausted execution budget
+        returns HTTP 429. Startup requires a non-empty credential.
       requestBody:
         required: true
         content:
@@ -180,7 +182,9 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RunResult" }
-        "400": { description: Malformed JSON or `values` is not an object }
+        "400": { description: Malformed JSON, non-object body, or non-object values }
+        "403": { description: Destructive tool disabled by API policy }
+        "429": { description: Rate or concurrent execution limit exceeded }
         "404": { $ref: "#/components/responses/NotFound" }
         "413": { description: Body larger than 1 MiB }
         "500": { description: Internal error (details are logged, never returned) }

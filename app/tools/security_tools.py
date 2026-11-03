@@ -287,7 +287,7 @@ def file_decrypt(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     fields=[
         Field("mode", K_CHOICE, "عملیات", "Operation", default="encrypt",
               choices=[("encrypt", "رمزگذاری", "Encrypt"), ("decrypt", "رمزگشایی", "Decrypt")]),
-        Field("text", K_TEXT, "متن", "Text", required=True),
+        Field("text", K_TEXT, "متن", "Text", required=True, sensitive=True),
         Field("password", K_PASSWORD, "رمز", "Password", required=True),
     ],
 )

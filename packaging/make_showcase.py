@@ -299,7 +299,7 @@ curl -H "X-WinGenius-Token: &lt;token&gt;" -X POST http://127.0.0.1:8770/run -d 
         <code>no such table</code> نمی‌شکند: شِما همان‌جا بازسازی می‌شود.</p></div>
       <div class="card" style="--accent:#18C8F5"><h3>{fa(checks)} بررسی</h3>
         <p class="en">{checks:,} automated checks, all green</p>
-        <p>{fa(suites["smoke"])} دودی · {fa(suites["functional"])} موتور · {fa(suites["output"])} خروجی · {fa(suites["ui"])} رابط · {fa(suites["security"])} امنیت · {fa(suites["packaging"])} بسته‌بندی — همه بدون دخالت دست اجرا شده‌اند.</p></div>
+        <p>{fa(suites["smoke"])} دودی · {fa(suites["functional"])} موتور · {fa(suites["output"])} خروجی · {fa(suites["ui"])} رابط · {fa(suites["security"])} امنیت · {fa(suites.get("hardening", 0))} رگرسیون سخت‌سازی · {fa(suites["packaging"])} بسته‌بندی — همه بدون دخالت دست اجرا شده‌اند.</p></div>
 
     </div>
   </section>
@@ -433,7 +433,7 @@ app/ui      radial.py · main_window.py · tool_panel.py · quick_search.py
 app/tools   ماژول‌های اعلانی در {categories} دسته (+ افزونه‌های کاربر)
 tests       smoke_test.py ({fa(suites["smoke"])}) · functional_test.py ({fa(suites["functional"])}، شامل schema/stress/fuzz/guards) ·
             output_test.py ({fa(suites["output"])} بررسی درستی خروجی) · security_test.py ({fa(suites["security"])} بررسی امنیتی) ·
-            ui_test.py ({fa(suites["ui"])} رابط + دسترس‌پذیری) · verify_package.py ({fa(suites["packaging"])}) → جمع {fa(checks)} بررسی PASS</code></pre>
+            ui_test.py ({fa(suites["ui"])} رابط + دسترس‌پذیری) · hardening_test.py ({fa(suites.get("hardening", 0))} رگرسیون امنیتی) · verify_package.py ({fa(suites["packaging"])}) → جمع {fa(checks)} بررسی PASS</code></pre>
     <p class="note">افزودن ابزار جدید = یک تابع با دکوراتور <code>@tool(...)</code>؛ فرم، اجرا در ترد،
     پیشرفت، لغو، نتیجه، جست‌وجوی دستیار و آیکون به‌صورت خودکار ساخته می‌شوند.</p>
   </section>
