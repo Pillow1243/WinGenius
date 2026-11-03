@@ -138,7 +138,7 @@ jobs:
         shell: pwsh
         run: |
           pyinstaller --noconfirm --clean packaging/WinGenius.spec
-          $exe = "dist/WinGenius/WinGenius.exe"
+          $exe = "dist/WinGenius.exe"
           if (-not (Test-Path $exe)) { throw "onefile exe missing: $exe" }
 
       - name: Build onedir bundle
@@ -180,7 +180,7 @@ jobs:
 
           env = dict(os.environ, QT_QPA_PLATFORM="offscreen", WINGENIUS_NO_LAUNCH="1",
                      WINGENIUS_SKIP_SELFTEST="1")
-          exe = "dist/WinGenius/WinGenius.exe"
+          exe = "dist/WinGenius.exe"
 
           def run(*args, timeout=180):
               proc = subprocess.run([exe, *args], env=env, capture_output=True,
@@ -221,7 +221,7 @@ jobs:
           canvas.Canvas(str(pdf)).drawString(72, 720, "signature probe").save()
           env = dict(os.environ, QT_QPA_PLATFORM="offscreen", WINGENIUS_NO_LAUNCH="1")
           proc = subprocess.run(
-              ["dist/WinGenius/WinGenius.exe", "--run", "pdf_signature_check",
+              ["dist/WinGenius.exe", "--run", "pdf_signature_check",
                "--file", str(pdf)],
               env=env, capture_output=True, text=True, timeout=180,
               creationflags=0x08000000)
@@ -236,7 +236,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path release | Out-Null
-          Copy-Item dist/WinGenius/WinGenius.exe release/WinGenius-${{ steps.meta.outputs.version }}.exe
+          Copy-Item dist/WinGenius.exe release/WinGenius-${{ steps.meta.outputs.version }}.exe
           $setup = Get-ChildItem dist -Filter "WinGenius-Setup-*.exe" | Select-Object -First 1
           if ($setup) {
             Copy-Item $setup.FullName release/WinGeniusSetup-${{ steps.meta.outputs.version }}.exe

@@ -78,9 +78,32 @@ def sync_code() -> str:
                 .replace("${{ steps.meta.outputs.version }}", VERSION))
 
 
+def check_exe_paths() -> list[str]:
+    """The onefile spec emits dist/WinGenius.exe, not dist/WinGenius/WinGenius.exe.
+
+    A previous workflow expected the onedir layout and threw
+    ``onefile exe missing`` *after* PyInstaller had already built the exe.
+    """
+    failures: list[str] = []
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    spec = (ROOT / "packaging" / "WinGenius.spec").read_text(encoding="utf-8")
+    installer = (ROOT / "packaging" / "installer.iss").read_text(encoding="utf-8")
+    pairs = [
+        ("workflow points at the onefile exe", "dist/WinGenius.exe" in workflow),
+        ("workflow has no stale onedir exe path", "dist/WinGenius/WinGenius.exe" not in workflow),
+        ("spec names the exe WinGenius", 'name="WinGenius"' in spec),
+        ("installer reads the exe from ..\\dist", '..\\dist\\' in installer),
+    ]
+    for label, ok in pairs:
+        print(f"{'PASS' if ok else 'FAIL'}  {label}")
+        if not ok:
+            failures.append(label)
+    return failures
+
+
 def main() -> int:
     code = sync_code()
-    failures: list[str] = []
+    failures: list[str] = check_exe_paths()
     with tempfile.TemporaryDirectory(prefix="wg-release-") as tmp:
         root = Path(tmp)
         for rel in dict.fromkeys(SYNCED + DOCS):
