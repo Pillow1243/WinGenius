@@ -266,10 +266,15 @@ jobs:
               -DestinationPath "release/WinGenius-${{ steps.meta.outputs.version }}-onedir.zip" -Force
           }
           # Reproducible checksums so users can verify what they downloaded.
-          Get-ChildItem release -File | ForEach-Object {
-            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
-            "$hash  $($_.Name)"
-          } | Out-File -FilePath release/SHA256SUMS.txt -Encoding utf8
+          # Do NOT pipe Get-FileHash straight into Out-File: Out-File opens the
+          # destination while the pipeline is still enumerating release/, so
+          # Get-FileHash hits its own open output file ("used by another process").
+          $sums = foreach ($f in (Get-ChildItem release -File |
+                                  Where-Object { $_.Name -ne 'SHA256SUMS.txt' })) {
+            $hash = (Get-FileHash $f.FullName -Algorithm SHA256).Hash.ToLower()
+            "$hash  $($f.Name)"
+          }
+          $sums | Set-Content -Path release/SHA256SUMS.txt -Encoding utf8
           Get-ChildItem release | Select-Object Name, Length | Format-Table -AutoSize
 
       - name: Upload build artifacts

@@ -99,6 +99,14 @@ def check_exe_paths() -> list[str]:
         ("onedir resolves assets absolutely", 'Resolve-Path "app/assets"' in workflow),
         ("onedir uses absolute --add-data source", '"${assets};app/assets"' in workflow),
         ("onedir keeps the repo root importable", "--paths ." in workflow),
+        # Piping Get-FileHash straight into Out-File opens SHA256SUMS.txt while
+        # Get-ChildItem is still enumerating release/, so the hasher tries to
+        # read its own open output file on Windows.
+        ("checksums are buffered before writing", "$sums | Set-Content" in workflow),
+        ("checksum output is excluded from itself",
+         "Where-Object { $_.Name -ne 'SHA256SUMS.txt' }" in workflow),
+        ("no direct hash-to-Out-File pipeline",
+         "} | Out-File -FilePath release/SHA256SUMS.txt" not in workflow),
     ]
     for label, ok in pairs:
         print(f"{'PASS' if ok else 'FAIL'}  {label}")
