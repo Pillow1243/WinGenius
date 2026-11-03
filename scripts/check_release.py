@@ -128,9 +128,64 @@ def check_frozen_tools() -> list[str]:
     return failures
 
 
+def check_python_snippets() -> list[str]:
+    """Lint every inline ``shell: python`` step in the workflows.
+
+    ``canvas.Canvas(...).drawString(...).save()`` passed YAML parsing, passed
+    ``compile()`` and passed every static path check — then crashed on the
+    Windows runner with ``AttributeError: 'NoneType' object has no attribute
+    'save'`` because ``drawString`` returns ``None``.  Parsing the snippet with
+    ``ast`` catches a call chained onto the result of another call.
+    """
+    import ast
+
+    failures: list[str] = []
+    for wf in sorted((ROOT / ".github" / "workflows").glob("*.yml")):
+        lines = wf.read_text(encoding="utf-8").splitlines()
+        for i, line in enumerate(lines):
+            if line.strip() != "shell: python":
+                continue
+            j = i + 1
+            while j < len(lines) and lines[j].strip() != "run: |":
+                if lines[j].strip().startswith("- name:") or (
+                        lines[j].strip() and not lines[j].startswith(" ")):
+                    break
+                j += 1
+            if j >= len(lines) or lines[j].strip() != "run: |":
+                continue
+            base = len(lines[j]) - len(lines[j].lstrip(" "))
+            snippet: list[str] = []
+            for k in range(j + 1, len(lines)):
+                raw = lines[k]
+                if not raw.strip():
+                    snippet.append("")
+                    continue
+                if len(raw) - len(raw.lstrip(" ")) <= base:
+                    break
+                snippet.append(raw[base + 2:])
+            code = re.sub(r"\$\{\{.*?\}\}", "'GH_EXPR'", "\n".join(snippet))
+            label = f"{wf.name}:{i + 1}"
+            try:
+                tree = ast.parse(code, filename=label)
+            except SyntaxError as exc:
+                failures.append(f"{label}: python snippet does not parse ({exc.msg})")
+                continue
+            for node in ast.walk(tree):
+                if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                        and node.func.attr == "save"
+                        and isinstance(node.func.value, ast.Call)):
+                    failures.append(
+                        f"{label}: .save() is chained onto a call result "
+                        "(that method returns None)")
+    print(f"{'FAIL' if failures else 'PASS'}  inline python snippets are safe "
+          f"({len(failures)} problem(s))")
+    return failures
+
+
 def main() -> int:
     code = sync_code()
-    failures: list[str] = check_exe_paths() + check_frozen_tools()
+    failures: list[str] = (check_exe_paths() + check_frozen_tools()
+                           + check_python_snippets())
     with tempfile.TemporaryDirectory(prefix="wg-release-") as tmp:
         root = Path(tmp)
         for rel in dict.fromkeys(SYNCED + DOCS):
