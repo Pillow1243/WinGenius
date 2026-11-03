@@ -7,6 +7,69 @@
 
 ## [Unreleased]
 
+_(فعلاً خالی — کار نسخه‌ی ۶.۱ از این‌جا شروع می‌شود.)_
+
+---
+
+## [6.0.0] — 2026-11-03
+
+**«موتور جریان»: ابزارها به خط تولید تبدیل شدند.**
+
+### موتور جریان (Flow Engine v2) — `app/core/workflows.py` + `app/core/flowkit.py`
+- `Step` حالا چهار کنترل تازه دارد: `foreach` (اجرا روی **هر فایل** یک الگو، با `{item}`،
+  `{item_name}`، `{item_dir}`، `{item_ext}`، `{item_index}`، `{item_count}`)،
+  `when` (شرط بدون `eval`)، `retries` (تلاش مجدد) و `on_error` (`stop` / `continue`).
+- زبان شرط: `==`، `!=`، `<`، `>`، `<=`، `>=`، `contains`، `startswith`/`endswith`،
+  `exists`/`not exists`، `is empty`/`not empty`، `not`، و ترکیب `and`/`or` که **از چپ به
+  راست** ارزیابی می‌شود (مستند و تست‌شده؛ نه رفتار تصادفی).
+- `{prev_all}`/`{input_all}` وقتی مقدار یک فیلد **دقیقاً** همین باشد به فهرست مسیرها تبدیل
+  می‌شوند؛ glob آکولادی (`*.{jpg,png}`) و بازگشتی (`**`) هم پشتیبانی می‌شود.
+- وضعیت گام‌ها: `done` / `failed` / `skipped` / `partial`؛ `WorkflowRunner` همین‌ها را به‌صورت
+  سیگنال Qt هم منتشر می‌کند، پس UI و CLI یک منبع حقیقت دارند.
+- `flowkit`: `library()`، `resolve()`، `validate()` (خطا/هشدار با پیام دوزبانه)، `explain()`
+  (برنامه‌ی شماره‌دار)، `build_from_folder()` (ساخت خودکار جریان از محتوای پوشه)،
+  `export_script()` (جریان ⇒ اسکریپت پایتون مستقل) و `save_flow()`.
+
+### ۳۶ ابزار تازه (۲۵۴ ⇒ ۲۹۰)
+- **جریان (دسته‌ی یازدهم، ۶ ابزار):** `flow_run`، `flow_build`، `flow_validate`،
+  `flow_explain`، `flow_export`، `flow_library`.
+- **PDF (۴):** `pdf_split_by_size`، `pdf_extract_links`، `pdf_flatten_annotations`،
+  `pdf_repair` (ترمیم فایل با xref خراب و بازیابی صفحه‌های قابل خواندن).
+- **تصویر (۴):** `image_metadata_strip` (EXIF/GPS)، `image_privacy_scan` (گزارش ریسک)،
+  `image_deskew` (راست‌کردن اسکن با زاویه‌ی خطوط Hough)، `image_face_blur` (مات‌کردن چهره‌ها).
+- **امنیت (۴):** `totp_code` (RFC 6238، SHA-1/256/512)، `steg_hide`/`steg_reveal`، `hmac_sign`.
+- **شبکه (۴):** `subnet_calc` (CIDR/VLSM)، `tls_certificate` (زنجیره/انقضا/SNI)،
+  `security_headers`، `http_timing` (DNS/TCP/TLS/TTFB).
+- **فایل‌ها (۳):** `archive_encrypt`/`archive_decrypt` (**AES-256** با pyzipper، با
+  بازگشت به zipfile اگر نبود)، `path_length_audit` (سقف ۲۶۰ کاراکتر ویندوز).
+- **توسعه‌دهنده (۵):** `log_analyzer`، `git_stats`، `csv_join`، `jsonl_tool`، `curl_to_code`.
+- **تبدیل و متن (۲):** `text_redact` (پاک‌سازی ایمیل/کارت/شماره/توکن)، `date_math`.
+- **مدیا (۳):** `subtitle_convert` (SRT/VTT/ASS)، `audio_waveform` (PNG موج صدا)،
+  `media_strip_metadata`.
+- **سیستم (۱):** `port_release` (پیدا کردن و آزادسازی صاحب پورت — با تأیید خطر).
+
+### خط فرمان، رابط و داشبورد
+- `--flows`، `--run-flow <id|name|file.json>`، `--lint-flow`، `--explain-flow`؛ همه با
+  `--json`، `--file`، `--set`، `--out`، `--lang` و کد خروج درست (`0`/`1`/`2`).
+- منوی رادیالی و جست‌وجوی سریع، دسته‌ی «جریان هوشمند» را نشان می‌دهند؛ داشبورد کاشی تازه‌ی
+  «جریان‌های آماده» گرفت؛ گام‌های شرطی/حلقه‌دار در شیت گردش‌کار با نشان «برای هر … / اگر …»
+  و خلاصه‌ی وضعیت (`–` برای `skipped`) دیده می‌شوند.
+
+### تست‌ها و مستندات
+- `tests/functional_test.py`: گروه‌های `v60flows` (۷۸ بررسی) و `v60tools` (۹۸ بررسی) با
+  فیکسچرهای **مستقل** (چون گروه‌های قبلی فایل‌های مشترک را جابه‌جا می‌کنند).
+- `tests/ui_test.py`: بخش «[v6 flow runner]» با `WorkflowRunner` واقعی و سیگنال‌های Qt.
+- `scripts/stats.py` حالا `category_counts` را از رجیستری زنده می‌سازد؛ `scripts/check_docs.py`
+  دیگر عدد ابزار/دسته را دستی نگه نمی‌دارد و هم‌خوانی README/English/showcase را با
+  `stats.json` می‌سنجد. اعداد رسمی: **۲۹۰ ابزار، ۱۱ دسته، ۲٬۲۶۳ بررسی**.
+- `docs/v6_flow_fa.md`: راهنمای کامل موتور جریان (جای‌نگهدارها، شرط‌ها، دستور پخت‌ها، عیب‌یابی).
+
+### رفع باگ‌هایی که خودِ تست‌های تازه پیدا کردند
+- `flow_run` بدون `check_only` ورودی لازم را الکی مطالبه می‌کرد.
+- `image_deskew` با `minAreaRect` همیشه ۰° می‌داد؛ با زاویه‌ی خطوط Hough بازنویسی شد.
+- `archive_encrypt` پیام «N٪ کوچک‌تر» با عدد منفی می‌داد؛ حالا صادق است.
+- `opencv-python-headless` ۵٫۰ پوشه‌ی `data` (کاسکادهای چهره) را ندارد ⇒ سقف `<5` پین شد.
+
 ### امنیت و پایداری
 - حذف فیلدهای password، secret/token و فیلدهای sensitive از history، workflow، schedule، watcher، backup و فرمان کپی‌شده؛ ورودی runtime دست‌نخورده می‌ماند.
 - مهاجرت دادهٔ نسخهٔ ۳: پاک‌سازی JSONهای پروفایل و snapshotهای محلی؛ snapshot جدید credential API را کپی نمی‌کند.
@@ -16,7 +79,7 @@
 - محدودیت ترکیبی حافظه/هزینهٔ scrypt پیش از تخصیص؛ نوشتن خصوصی و atomic فایل‌های history/workflow.
 - گیت انتشار fail-fast و پوشش تست واقعی؛ ۳۹ تست رگرسیون جدید و اصلاح نگهبان مستندات که عدد معتبر ۴۵۹ را اشتباهاً قدیمی می‌دانست.
 - رفع کرش اجرای ترکیبی pytest: ساخت QApplication با fixture سراسری پیش از QCoreApplication تست‌های قدیمی؛ ۸۳ تست در اجرای یک‌جا پاس شدند.
-- این تغییرها در سورس هستند؛ باینری جدید ویندوز هنوز ساخته و منتشر نشده است.
+- این تغییرها در نسخه‌ی ۶.۰.۰ منتشر شده‌اند (باینری ویندوز با همین نسخه ساخته می‌شود).
 
 ---
 

@@ -1,7 +1,7 @@
-# WinGenius 5.0 — an all-in-one Windows toolbox
+# WinGenius 6.0 — an all-in-one Windows toolbox
 
-> **254 tools · 10 categories · encrypted vault · undo journal · cron scheduler ·
-> macro engine · local JSON API.** Persian-first UI with a complete English mode
+> **290 tools · 11 categories · a real flow engine · encrypted vault · undo journal ·
+> cron scheduler · macro engine · local JSON API.** Persian-first UI with a complete English mode
 > (`EN` button, top right — every label, message and tool description is translated).
 >
 > The full documentation is in Persian in [`../README.md`](../README.md); this page is
@@ -11,6 +11,34 @@
   <img src="screenshots/home_fa.png" width="46%" alt="Home — the radial category map" />
   <img src="screenshots/scheduler_en.png" width="46%" alt="Scheduler & macros (English UI)" />
 </p>
+
+## What's new in 6.0 — the flow engine
+
+Tools stopped being one-shot actions. A *flow* is a JSON list of steps, and every step can:
+
+| Control | What it does |
+|---|---|
+| `foreach` | Run the step once **per file** matched by a pattern (`{input}/**/*.pdf`). `{item}`, `{item_name}`, `{item_ext}`, `{item_index}` and `{item_count}` are available inside. |
+| `when` | Skip the step unless a guard holds: `{prev} endswith .pdf`, `{prev_all} not empty`, `2 < 10`. No `eval` — a tiny tokeniser compares numbers numerically and folds `and`/`or` chains left to right. |
+| `retries` | Re-run a failed step N extra times. |
+| `on_error` | `stop` (default) or `continue`; `continue` turns the run status into `partial` instead of failing it. |
+
+Round that off with 36 new tools (flow runner/builder/linter/explainer/exporter/library,
+PDF split-by-size + repair + link extraction, image metadata strip/privacy scan/deskew/face
+blur, TOTP, AES-encrypted ZIPs, subnet calculator, TLS certificate and security-header
+inspectors, log/Git/CSV/JSONL analysers, `curl → code`, text redaction, date maths, port
+release) and a new eleventh category in the radial menu.
+
+From the command line, no GUI required:
+
+```bash
+WinGenius.exe --flows                                  # list built-in + saved flows
+WinGenius.exe --explain-flow photo_pdf_pack --lang en   # numbered plan
+WinGenius.exe --lint-flow my_flow.json                  # errors/warnings, exit 1 if broken
+WinGenius.exe --run-flow my_flow.json --file C:\photos --out C:\out --json
+```
+
+Full guide (Persian): [`v6_flow_fa.md`](v6_flow_fa.md).
 
 ## What's new in 5.0
 
@@ -122,9 +150,9 @@ tokens that arrive in the query string (`allow_query_token=False`).
 
 ```bash
 python tests/smoke_test.py        # 154 real-file checks
-python tests/functional_test.py   # 459 engine/tool checks (schema, stress, fuzz, guards, CLI, v42, v50, scale)
+python tests/functional_test.py   # 637 engine/tool checks (schema, stress, fuzz, guards, CLI, v50, v60flows, v60tools, scale)
 python tests/output_test.py       # 112 output-correctness checks (is the file right?)
-python tests/ui_test.py           # 1077 UI checks incl. accessibility, offscreen Qt
+python tests/ui_test.py           # 1238 UI checks incl. accessibility, offscreen Qt
 python tests/security_test.py     # 57 security/consistency regression checks
 python -m pytest -q               # 44 collected tests (pytest entry point now works)
 python packaging/verify_package.py  # 27 build-input checks
@@ -133,8 +161,8 @@ ruff check main.py app tests packaging  # lint gate (real-bug rules only)
 
 Everything runs headless (`QT_QPA_PLATFORM=offscreen`) on Linux, Windows and macOS,
 in CI (`.github/workflows/ci.yml`) on Python 3.12 and 3.13.
-Totals: **154 smoke · 459 functional · 112 output · 1077 UI · 57 security · 39 hardening regressions · 27 packaging
-= 1,925 checks**. Coverage measures 75%; `pyproject.toml` enforces a 70% `fail_under` gate.
+Totals: **154 smoke · 637 functional · 112 output · 1238 UI · 57 security · 39 hardening regressions · 27 packaging
+= 2,263 checks** across **290 tools in 11 categories**. Coverage measures 75%; `pyproject.toml` enforces a 70% `fail_under` gate.
 
 ## Security notes
 

@@ -84,6 +84,18 @@ def live_tool_count() -> int:
     return len(all_tools())
 
 
+def category_counts() -> dict[str, int]:
+    """Per-category tool counts, measured from the live registry (not guessed)."""
+    sys.path.insert(0, str(ROOT))
+    from collections import Counter
+
+    from app.core.registry import all_tools, load_all
+
+    load_all()
+    counts = Counter(spec.category for spec in all_tools())
+    return dict(sorted(counts.items(), key=lambda item: (-item[1], item[0])))
+
+
 def run() -> int:
     counts = collect()
     declared = static_tool_count()
@@ -91,10 +103,12 @@ def run() -> int:
     if declared != live:
         raise SystemExit(f"tool count drift: {declared} declared, {live} registered")
 
+    by_category = category_counts()
     stats = {
         "version": app_version(),
         "tools": live,
-        "categories": 10,
+        "categories": len(by_category),
+        "category_counts": by_category,
         "suites": counts,
         "checks": sum(counts.values()),
         "coverage": 75,
@@ -125,6 +139,12 @@ def check() -> int:
     declared = static_tool_count()
     if stats["tools"] != declared:
         errors.append(f"tools {stats['tools']} != {declared} declared @tool decorators")
+    by_category = stats.get("category_counts") or {}
+    if sum(by_category.values()) != stats["tools"]:
+        errors.append(f"category counts sum to {sum(by_category.values())} "
+                      f"but there are {stats['tools']} tools")
+    if stats.get("categories") != len(by_category):
+        errors.append(f"categories {stats.get('categories')} != {len(by_category)} in the map")
 
     if errors:
         for error in errors:

@@ -34,11 +34,20 @@ def text(rel: str) -> str:
     return (ROOT / rel).read_text(encoding="utf-8")
 
 
+CATEGORIES = re.findall(
+    r'Category\("([a-z]+)",\s*"([^"]+)",\s*"([^"]+)"',
+    (Path(__file__).resolve().parents[1] / "app" / "core" / "registry.py").read_text(encoding="utf-8"))
+PER_CATEGORY = STATS.get("category_counts") or {}
+
+
 def main() -> int:
     version = STATS["version"]
     total = STATS["checks"]
+    tools = STATS["tools"]
     formatted = f"{total:,}"
     encoded = formatted.replace(",", "%2C")
+    persian_total = f"{total:,}".translate(str.maketrans("0123456789,", "۰۱۲۳۴۵۶۷۸۹٬"))
+    persian_tools = f"{tools:,}".translate(str.maketrans("0123456789,", "۰۱۲۳۴۵۶۷۸۹٬"))
 
     # ---------------------------------------------------------- version sync
     paths = text("app/core/paths.py")
@@ -52,8 +61,20 @@ def main() -> int:
     # ----------------------------------------------------------- numbers
     readme = text("README.md")
     check("README badge", f"checks-{encoded}%20passing" in readme, formatted)
-    check("README tool count", "tools-254-5B8CFF" in readme)
+    # The tool badge used to be hard-coded to 254; it now follows stats.json, so
+    # adding tools can never leave the README quoting a number that is not real.
+    check("README tool count", f"tools-{tools}-5B8CFF" in readme, str(tools))
     check("README totals", formatted in readme, formatted)
+    check("README Persian totals", persian_total in readme, persian_total)
+    check("README Persian tool count", persian_tools in readme, persian_tools)
+    categories_fa = f"{STATS['categories']}".translate(
+        str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")) + " دسته"
+    check("README quotes the category count",
+          categories_fa in readme or f"{STATS['categories']} دسته" in readme, categories_fa)
+    missing_categories = [name for key, name, _en in CATEGORIES if key != "home" and name not in readme]
+    check("README lists every category", not missing_categories, ", ".join(missing_categories))
+    check("category counts add up", sum(PER_CATEGORY.values()) == tools,
+          f"{sum(PER_CATEGORY.values())} != {tools}")
     # The ASCII-only guards above cannot see Persian digits: the first pass
     # shipped a Persian README that still said ۲۴۷ ابزار / ۱٬۸۲۹ بررسی /
     # ۴۵۹ تست / پایتون ۳.۱۱. Keep watching those too.
@@ -67,10 +88,15 @@ def main() -> int:
     showcase = text("docs/showcase.html")
     showcase_prose = re.sub(r"data:image/png;base64,[A-Za-z0-9+/=]+", "[IMG]", showcase)
     check("showcase totals", formatted in showcase_prose, formatted)
-    check("showcase Persian totals", f"{total:,}".translate(
-        str.maketrans("0123456789,", "۰۱۲۳۴۵۶۷۸۹٬")) in showcase_prose)
-    check("showcase PDF count", "PDF category — 37 tools" in showcase_prose)
-    check("showcase no stale 34", "34 tools" not in showcase_prose)
+    check("showcase Persian totals", persian_total in showcase_prose)
+    check("showcase headline tool count", f"همه‌ی ابزارها ({tools})" in showcase_prose, str(tools))
+    pdf_count = PER_CATEGORY.get("pdf")
+    if pdf_count:
+        check("showcase PDF count", f"PDF category — {pdf_count} tools" in showcase_prose,
+              str(pdf_count))
+    missing_showcase = [name for key, name, _en in CATEGORIES
+                        if key != "home" and name not in showcase_prose]
+    check("showcase lists every category", not missing_showcase, ", ".join(missing_showcase))
     check("showcase no stale checks",
           "1,829" not in showcase_prose and "1829" not in showcase_prose)
 
@@ -115,6 +141,11 @@ def main() -> int:
           "?token=…" not in text("docs/run_fa.md") or
           "پیش\u200cفرض **رد می\u200cشود**" in text("docs/run_fa.md"))
     check("notices mention pyHanko", "`pyHanko`" in text("THIRD-PARTY-NOTICES.md"))
+    check("CHANGELOG has a 6.0.0 entry", "## [6.0.0]" in text("CHANGELOG.md"))
+    check("README documents the flow engine", "--run-flow" in readme)
+    check("README links to the flow guide", "docs/v6_flow_fa.md" in readme)
+    check("ARCHITECTURE documents flow conditions", "foreach" in text("ARCHITECTURE.md"))
+    check("the flow guide exists", (ROOT / "docs" / "v6_flow_fa.md").is_file())
     check("stats.json is valid", isinstance(STATS["suites"], dict) and total > 0)
 
     print(f"\n  {checks - len(errors)}/{checks} documentation checks passed")

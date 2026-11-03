@@ -1,6 +1,6 @@
 ; Inno Setup 6 script — produces dist\WinGenius-Setup.exe
 #define AppName "WinGenius"
-#define AppVersion "5.0.1"
+#define AppVersion "6.0.0"
 #define AppExe "WinGenius.exe"
 
 [Setup]

@@ -19,7 +19,7 @@ RELEASES_URL = "https://api.github.com/repos/Pillow1243/WinGenius/releases/lates
 
 
 def version_key(value: str) -> Tuple[int, ...]:
-    """Turn ``v5.0.1`` into ``(5, 0, 1)`` so versions compare numerically."""
+    """Turn ``v6.0.0`` into ``(5, 0, 1)`` so versions compare numerically."""
     parts: list[int] = []
     for chunk in str(value or "").strip().lstrip("vV").split("."):
         digits = "".join(ch for ch in chunk if ch.isdigit())

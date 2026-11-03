@@ -9,7 +9,7 @@ its `ToolSpec`.
 main.py
   └─ app/bootstrap.py ── QApplication, theme, logging, single instance
        ├─ app/core/cli.py         headless flags (--run / --list / --doctor / --serve …)
-       │    └─ app/core/registry.py   load_all() → 32 tool modules / 254 ToolSpecs
+       │    └─ app/core/registry.py   load_all() → 42 tool modules / 290 ToolSpecs / 11 categories
        │         └─ app/core/spec.py    ToolSpec, Field, RunContext, RunResult, ToolError
        │              └─ _guarded():  language, logging, exception → ToolError
        └─ app/ui/main_window.py   shell + panels (Qt Widgets, offscreen-testable)
@@ -20,6 +20,8 @@ main.py
             ├─ app/core/indexer.py    SQLite FTS5 full-text index
             ├─ app/core/scheduler.py  cron expressions, QTimer + single catch-up run
             ├─ app/core/macro.py      small conditional DSL
+            ├─ app/core/workflows.py  flow engine: steps, {prev}, when/foreach/retries
+            ├─ app/core/flowkit.py    flow lint/explain/build/export (no Qt needed)
             ├─ app/core/api_server.py loopback JSON API (token + rate limiter)
             └─ app/core/plugins.py    user .py files loaded with importlib
 ```
@@ -39,7 +41,7 @@ Consequences worth remembering:
 * **Tools never see a widget.** They receive a plain `dict` of values and a
   `RunContext(lang, output_dir, progress, cancel, log)`. Everything is testable
   headless with `QT_QPA_PLATFORM=offscreen`.
-* **Dynamic imports.** `registry.load_all()` imports the 32 modules listed in
+* **Dynamic imports.** `registry.load_all()` imports the 42 modules listed in
   `app/tools/__init__.py`, guarded so a missing optional library degrades one
   module instead of crashing startup. Import failures are now reported in
   `--doctor`, in the GUI toast and as a doctor issue (previously silent).
@@ -49,6 +51,30 @@ Consequences worth remembering:
 * **Undo, not deletion.** Destructive tools journal their file operations;
   `vault_remove`, `pdf_delete_pages`, `trash_cleanup` and `services_manager` are
   additionally marked `danger=True` and ask for confirmation in the UI.
+
+## Flow engine (v6)
+
+A *flow* is a `Workflow` with `Step`s; nothing about it is UI-specific, so the
+same object runs from the GUI, the CLI (`--run-flow`), the API and an exported
+Python script.
+
+| Control | Semantics |
+|---|---|
+| `foreach` | The step runs once per match of a path pattern resolved from the inputs. Inside the body, `{item}`, `{item_name}`, `{item_dir}`, `{item_ext}`, `{item_index}` and `{item_count}` are substituted. Brace patterns (`*.{jpg,png}`) and `**` recursion are supported. |
+| `when` | A step-level guard. `{prev} endswith .pdf`, `{prev_all} not empty`, `2 < 10`. No `eval`: the expression is tokenised, both sides are substituted, numbers compare numerically, and `and`/`or` chains evaluate **left to right** (`a or b and c` is `(a or b) and c`). |
+| `retries` | Re-runs a failed step N extra times. |
+| `on_error` | `stop` (default) or `continue`, which marks the run `partial` instead of aborting. |
+
+Step statuses are `done`, `failed`, `skipped` and the run status is `done`,
+`partial` or `failed`; `WorkflowRunner` re-emits them as Qt signals so the panel
+and the CLI report the same truth. `app/core/flowkit.py` is the stateless layer:
+`validate()` (bilingual errors/warnings), `explain()`, `build_from_folder()`,
+`export_script()`, `library()` (10 built-ins).
+
+Two rules keep flows honest: a field whose value is *exactly* `{prev_all}` or
+`{input_all}` becomes a list, not a string; and a flow never stores secrets —
+password/secret fields are dropped when a flow is saved, so the user re-enters
+them (see `core/privacy.py`).
 
 ## Data locations
 
@@ -98,7 +124,7 @@ build. Coverage is gated by `[tool.coverage.report] fail_under` in
 * The Windows build is unsigned (no code-signing certificate); SmartScreen may
   warn on first run.
 
-## Post-audit execution fixes (Unreleased)
+## Post-audit execution fixes (now shipped in 6.0.0)
 
 Each queued Job snapshots its language, output directory and deep-copied inputs.
 The API refuses startup without a credential and denies destructive tools unless

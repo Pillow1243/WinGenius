@@ -1,17 +1,30 @@
 {
-  "version": "5.0.1",
-  "tools": 254,
-  "categories": 10,
+  "version": "6.0.0",
+  "tools": 290,
+  "categories": 11,
+  "category_counts": {
+    "pdf": 41,
+    "files": 40,
+    "system": 39,
+    "image": 33,
+    "convert": 32,
+    "dev": 23,
+    "media": 21,
+    "security": 21,
+    "network": 18,
+    "windows": 16,
+    "flow": 6
+  },
   "suites": {
     "smoke": 154,
-    "functional": 459,
-    "output": 112,
-    "ui": 1077,
+    "functional": 637,
+    "output": 111,
+    "ui": 1238,
     "security": 57,
     "hardening": 39,
     "packaging": 27
   },
-  "checks": 1925,
+  "checks": 2263,
   "coverage": 75,
   "python": [
     "3.12",

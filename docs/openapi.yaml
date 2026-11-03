@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: WinGenius Local API
-  version: 5.0.1
+  version: 6.0.0
   summary: Loopback JSON API exposed by `WinGenius.exe --serve`.
   description: |
     The server binds to `127.0.0.1` only and requires a token in the
@@ -45,7 +45,7 @@ paths:
                 required: [app, version, status, tools, uptime, guard]
                 properties:
                   app: { type: string, example: WinGenius }
-                  version: { type: string, example: "5.0.1" }
+                  version: { type: string, example: "6.0.0" }
                   status: { type: string, example: ok }
                   tools: { type: integer, example: 254 }
                   uptime: { type: number, example: 12.4 }
