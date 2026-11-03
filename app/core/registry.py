@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import functools
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Callable, Dict, Iterable, List, Optional, Sequence
 
@@ -92,6 +94,27 @@ CATEGORIES: List[Category] = [
 CATEGORY_MAP: Dict[str, Category] = {c.key: c for c in CATEGORIES}
 
 _TOOLS: Dict[str, ToolSpec] = {}
+_PROTECT_EXISTING: ContextVar[bool] = ContextVar("protect_existing_tools", default=False)
+
+
+@contextmanager
+def protected_registration():
+    """Plugins cannot replace registered tools; failed imports roll back atomically.
+
+    This prevents accidental registry corruption, not malicious Python execution.
+    Trusted Python plugins retain the user's process privileges.
+    """
+    snapshot = dict(_TOOLS)
+    token = _PROTECT_EXISTING.set(True)
+    try:
+        yield
+    except BaseException:
+        _TOOLS.clear()
+        _TOOLS.update(snapshot)
+        raise
+    finally:
+        _PROTECT_EXISTING.reset(token)
+
 
 
 def category(key: str) -> Category:
@@ -100,6 +123,8 @@ def category(key: str) -> Category:
 
 def register(spec: ToolSpec) -> ToolSpec:
     """Register a tool (idempotent: last definition wins)."""
+    if _PROTECT_EXISTING.get() and spec.id in _TOOLS:
+        raise ValueError(f"plugin cannot replace an existing tool: {spec.id}")
     if not spec.id:
         raise ValueError("tool id must not be empty")
     if spec.run is not None:

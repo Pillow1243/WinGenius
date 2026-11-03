@@ -24,6 +24,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
+from .privacy import sanitize_values
 from .paths import data_dir
 
 # --------------------------------------------------------------------- parsing
@@ -255,7 +256,7 @@ class Schedule:
     def as_dict(self) -> Dict[str, Any]:
         return {
             "id": self.id, "name": self.name, "cron": self.cron, "kind": self.kind,
-            "target_id": self.target_id, "payload": self.payload, "enabled": self.enabled,
+            "target_id": self.target_id, "payload": sanitize_values(self.target_id, self.payload), "enabled": self.enabled,
             "catch_up": self.catch_up, "created": self.created, "last_run": self.last_run,
             "last_status": self.last_status, "runs": self.runs,
         }

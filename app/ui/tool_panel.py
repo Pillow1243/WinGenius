@@ -18,6 +18,7 @@ from ..core.i18n import t
 from ..core.logger import get_logger
 from ..core.registry import ToolSpec
 from ..core.settings import settings
+from ..core.privacy import sanitize_values
 from ..core.spec import (
     K_BOOL, K_CHOICE, K_COLOR, K_DIR, K_FILE, K_FILES, K_FLOAT, K_INT, K_MULTILINE,
     K_PASSWORD, K_SAVE, K_TEXT, Field, RunResult,
@@ -312,7 +313,7 @@ class ToolPanel(QWidget):
         """A ready-to-paste command line that reproduces the current form."""
         if not self.spec:
             return ""
-        values = self._collect()
+        values = sanitize_values(self.spec.id, self._collect())
         parts = [f'WinGenius.exe --run {self.spec.id}']
         for key, value in values.items():
             if value in (None, "", [], False):
@@ -338,6 +339,8 @@ class ToolPanel(QWidget):
             return
         if self._jobs is None:
             self._run()
+            return
+        if not self._confirm_execution():
             return
         job = self._jobs.submit(self.spec, values, self.lang, settings.output_dir)
         self.toastRequested.emit(t("tp.queued"), "success")
@@ -576,6 +579,18 @@ class ToolPanel(QWidget):
                         return t("tp.not_found", str(item))
         return None
 
+    def _confirm_execution(self) -> bool:
+        """The foreground and queue buttons must enforce the same safety gate."""
+        if self.spec and self.spec.danger and settings.get("ui/confirm_danger"):
+            from PySide6.QtWidgets import QMessageBox
+            answer = QMessageBox.question(
+                self, t("err.title"), t("tp.confirm_danger"),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            return answer == QMessageBox.StandardButton.Yes
+        return True
+
     def _run(self) -> None:
         if not self.spec or self._runner is not None:
             return
@@ -585,13 +600,8 @@ class ToolPanel(QWidget):
             self.toastRequested.emit(problem, "error")
             self._status.setText(problem)
             return
-        if self.spec.danger and settings.get("ui/confirm_danger"):
-            from PySide6.QtWidgets import QMessageBox
-
-            answer = QMessageBox.question(self, t("err.title"), t("tp.confirm_danger"),
-                                          QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-            if answer != QMessageBox.StandardButton.Yes:
-                return
+        if not self._confirm_execution():
+            return
         self._result_card.setVisible(False)
         self._progress.setVisible(True)
         self._progress.setRange(0, 0)

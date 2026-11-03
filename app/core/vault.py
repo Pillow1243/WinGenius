@@ -59,6 +59,8 @@ SCRYPT_P = 1
 MIN_LOG_N = 12                    # refuse cheap headers (a hostile file could ask for N=2)
 MAX_LOG_N = 20                    # ...and refuse ones that would freeze the machine
 MAX_R, MAX_P = 16, 4
+MAX_SCRYPT_MEMORY = 128 * 1024 * 1024
+MAX_SCRYPT_WORK = (1 << 17) * 8 * 4
 
 SALT_LEN = 16
 NONCE_LEN = 12
@@ -104,7 +106,11 @@ def derive_key_scrypt(password: str, salt: bytes, log_n: int = SCRYPT_LOG_N,
         from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
     except Exception as exc:                              # pragma: no cover
         raise VaultError("cryptography is not installed — pip install cryptography") from exc
+    if not (MIN_LOG_N <= int(log_n) <= MAX_LOG_N and 1 <= r <= MAX_R and 1 <= p <= MAX_P):
+        raise VaultError("vault header is damaged")
     n = 1 << int(log_n)
+    if 128 * n * r > MAX_SCRYPT_MEMORY or n * r * p > MAX_SCRYPT_WORK:
+        raise VaultError("vault key-derivation cost exceeds the safe memory/time budget")
     try:
         return Scrypt(salt=salt, length=32, n=n, r=r, p=p).derive(password.encode("utf-8"))
     except (ValueError, MemoryError) as exc:

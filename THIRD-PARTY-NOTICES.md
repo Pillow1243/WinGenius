@@ -42,8 +42,10 @@ the bottom — it is a real, small piece of work, not a hand-wave.
 ### Bundled binaries
 
 * **ffmpeg** — via `imageio-ffmpeg`. ffmpeg is LGPL/GPL depending on the build
-  options; the wheel shipped by `imageio-ffmpeg` is an LGPL build. If you compile
-  your own with `--enable-gpl`, the whole distribution becomes GPL.
+  options; do not assume every wheel is LGPL-only. Record the exact bundled binary
+  configuration (`ffmpeg -version` and `ffmpeg -L`) for each platform/release.
+  A GPL-enabled build adds GPL distribution obligations for that component;
+  inventory its corresponding source and notices before distributing it.
 * **Tesseract** (optional, installed by the user) — Apache-2.0.
 * **Qt 6** — LGPL-3.0; PyInstaller builds must therefore stay dynamically linked
   and must keep the LGPL notice reachable. `packaging/WinGenius.spec` does not
@@ -63,7 +65,7 @@ code structure:
 1. **Swap the renderer.** Replace the `fitz` (PyMuPDF) calls in
    `app/tools/pdf_tools.py` with `pypdfium2` (Apache-2.0 / BSD-3-Clause, also
    pip-installable, same “render a page to a bitmap” API). Text extraction and
-   page surgery can move to `pypdf`. Roughly 200 lines change.
+   page surgery can move to `pypdf`. Audit every `fitz`/`pymupdf` call across the PDF modules; this is not a guaranteed small swap.
 2. **Buy a PyMuPDF commercial licence** from Artifex and keep everything else as
    it is.
 

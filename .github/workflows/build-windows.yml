@@ -113,6 +113,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements-build.txt
+          python -m pip install pytest coverage
           python -m pip check
 
       - name: Install Inno Setup
@@ -126,15 +127,7 @@ jobs:
       - name: Test the source tree before packaging it
         shell: pwsh
         run: |
-          python scripts/check_deps.py
-          python scripts/check_release.py
-          python scripts/check_docs.py
-          python main.py --doctor
-          python -m compileall -q app tests packaging main.py
-          python tests/smoke_test.py
-          python tests/functional_test.py
-          python tests/output_test.py
-          python tests/security_test.py
+          python scripts/quality_gate.py
 
       # --------------------------------------------------------------- build
       - name: Build onefile exe

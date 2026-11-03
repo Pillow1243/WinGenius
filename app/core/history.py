@@ -9,6 +9,7 @@ from typing import Any, Dict, List
 
 from .logger import get_logger
 from .paths import data_dir
+from .privacy import atomic_json_write, sanitize_document, sanitize_values, redact_known, secret_strings
 
 log = get_logger("history")
 MAX_ENTRIES = 150
@@ -35,7 +36,8 @@ class HistoryEntry:
                 clean[key] = value
             elif isinstance(value, (list, tuple)):
                 clean[key] = [str(item) for item in value][:50]
-        data["values"] = clean
+        data["values"] = sanitize_values(self.tool_id, clean)
+        data["message"] = redact_known(data["message"], secret_strings(self.tool_id, self.values))
         return data
 
 
@@ -50,7 +52,10 @@ class History:
         try:
             if not self._path.exists():
                 return
-            raw = json.loads(self._path.read_text(encoding="utf-8"))
+            original = json.loads(self._path.read_text(encoding="utf-8"))
+            raw = sanitize_document(original)
+            if raw != original:
+                atomic_json_write(self._path, raw)
             for item in raw:
                 self._entries.append(HistoryEntry(
                     tool_id=item.get("tool_id", ""),
@@ -69,7 +74,7 @@ class History:
     def _save(self) -> None:
         try:
             payload = [entry.as_dict() for entry in self._entries[:MAX_ENTRIES]]
-            self._path.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
+            atomic_json_write(self._path, payload)
         except Exception as exc:  # pragma: no cover
             log.warning("cannot write history: %s", exc)
 
@@ -85,6 +90,8 @@ class History:
             message=(getattr(job, "message", "") or getattr(job, "error", ""))[:400],
             values=dict(getattr(job, "values", {}) or {}),
         )
+        entry.message = redact_known(entry.message, secret_strings(entry.tool_id, entry.values))
+        entry.values = sanitize_values(entry.tool_id, entry.values)
         self._entries.insert(0, entry)
         del self._entries[MAX_ENTRIES:]
         self._save()

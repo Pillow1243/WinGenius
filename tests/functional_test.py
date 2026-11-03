@@ -229,6 +229,7 @@ def test_core_engine(fixtures: dict) -> None:
         "def unit_plugin_tool(ctx, values):\n"
         "    return RunResult(message='plugin says ' + str(values.get('text')))\n",
         encoding="utf-8")
+    plugins_mod.trust_plugin(plugin_file)
     loaded = plugins_mod.load_plugins()
     check("plugin file loaded", any(info.path.name == "unit_plugin.py" for info in loaded),
           str([(i.name, i.error) for i in loaded]))
@@ -2200,7 +2201,7 @@ def test_guards(fixtures: dict) -> None:
           str(upgrade_module.current_version(profile)))
     check("a legacy profile needs upgrading", upgrade_module.needs_upgrade(profile))
     report = upgrade_module.migrate(profile)
-    check("migration reports its steps", report["steps"] == ["0→1", "1→2"], str(report["steps"]))
+    check("migration reports its steps", report["steps"] == ["0→1", "1→2", "2→3"], str(report["steps"]))
     check("migration takes a backup first", bool(report["backup"]) and Path(report["backup"]).is_dir(),
           report["backup"])
     check("migration repairs a broken history file",

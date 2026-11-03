@@ -4,13 +4,14 @@
   "categories": 10,
   "suites": {
     "smoke": 154,
-    "functional": 458,
+    "functional": 459,
     "output": 112,
     "ui": 1077,
     "security": 57,
+    "hardening": 39,
     "packaging": 27
   },
-  "checks": 1885,
+  "checks": 1925,
   "coverage": 75,
   "python": [
     "3.12",

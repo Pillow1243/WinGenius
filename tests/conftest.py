@@ -68,3 +68,18 @@ def ctx_factory(f):
         return RunContext(lang="en", output_dir=str(f["out"]))
 
     return factory
+
+
+@pytest.fixture(scope="session", autouse=True)
+def qapplication():
+    """Create QApplication before legacy tests can create QCoreApplication.
+
+    Qt cannot upgrade an existing QCoreApplication to QApplication. Running
+    headless queue tests before widget regressions used to abort the process.
+    Keep the Python wrapper alive for the entire test session as well.
+    """
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance() or QApplication([])
+    assert isinstance(app, QApplication), "QApplication must be created before core-only tests"
+    yield app

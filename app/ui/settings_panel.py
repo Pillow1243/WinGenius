@@ -402,7 +402,30 @@ class SettingsPanel(QWidget):
     def _reload_plugins(self) -> None:
         from ..core.registry import load_all
 
+        from PySide6.QtWidgets import QMessageBox
+        from ..core import plugins
+
+        paths = plugins.discover()
+        if not paths:
+            return
+        warning = (
+            "افزونه‌های Python با دسترسی کامل حساب شما اجرا می‌شوند؛ سندباکس ندارند.\n"
+            "فقط اگر فایل‌های زیر را می‌شناسید تأیید کنید:\n"
+            if self.lang == "fa" else
+            "Python plugins run with your account privileges, without a sandbox.\n"
+            "Approve only files you have reviewed:\n"
+        )
+        answer = QMessageBox.warning(
+            self, t("st.plugins"), warning + "\n".join(str(p.resolve()) for p in paths),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        for path in paths:
+            plugins.trust_plugin(path)
         load_all()
+        plugins.load_plugins()
         self.pluginsChanged.emit()
         self._build()
 

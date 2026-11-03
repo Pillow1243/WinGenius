@@ -84,7 +84,7 @@ def vault_create(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
         Field("files", K_FILES, "فایل‌ها", "Files"),
         Field("note_name", K_TEXT, "نام یادداشت", "Note name", default="",
               placeholder="note.txt"),
-        Field("note_text", K_MULTILINE, "متن یادداشت", "Note text", default=""),
+        Field("note_text", K_MULTILINE, "متن یادداشت", "Note text", default="", sensitive=True),
     ],
 )
 def vault_add(ctx: RunContext, v: Dict[str, Any]) -> RunResult:

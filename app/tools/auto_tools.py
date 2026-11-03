@@ -354,7 +354,13 @@ def backup_appdata(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
         for name in wanted:
             path = base / name
             if path.is_file():
-                bundle.write(path, arcname=name)
+                if name in {"history.json", "workflows.json", "schedules.json", "watch_rules.json"}:
+                    from ..core.privacy import sanitize_document
+                    import json
+                    clean = sanitize_document(json.loads(path.read_text(encoding="utf-8")))
+                    bundle.writestr(name, json.dumps(clean, ensure_ascii=False))
+                else:
+                    bundle.write(path, arcname=name)
                 added += 1
             elif path.is_dir():
                 for item in walk_files(path):

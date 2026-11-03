@@ -23,8 +23,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .paths import data_dir
+from .privacy import PROFILE_JSON, atomic_json_write, sanitize_document, scrub_profile_file
 
-DATA_VERSION = 2
+DATA_VERSION = 3
 
 STAMP_NAME = "schema.json"
 BACKUP_DIR = "backups"
@@ -81,10 +82,17 @@ def backup_data_dir(root: Optional[Path] = None, reason: str = "upgrade") -> Opt
     try:
         target.mkdir(parents=True, exist_ok=False)
         for item in base.iterdir():
-            if item.name == BACKUP_DIR:
+            if item.name in {BACKUP_DIR, "api_token.txt"}:
                 continue
             if item.is_dir():
                 shutil.copytree(item, target / item.name, dirs_exist_ok=True)
+            elif item.name in PROFILE_JSON:
+                # Do not create a fresh plaintext-secret copy before scrubbing.
+                try:
+                    raw = json.loads(item.read_text(encoding="utf-8"))
+                except ValueError:
+                    raw = []  # malformed input cannot be safely exported
+                atomic_json_write(target / item.name, sanitize_document(raw))
             else:
                 shutil.copy2(item, target / item.name)
     except OSError:
@@ -145,7 +153,26 @@ def _v1_to_v2(root: Path, report: Dict[str, Any]) -> None:
                 report["problems"].append("could not repair history.json")
 
 
-MIGRATIONS = {0: _v0_to_v1, 1: _v1_to_v2}
+def _v2_to_v3(root: Path, report: Dict[str, Any]) -> None:
+    """Remove saved credentials without keeping a new unsanitised backup."""
+    for name in PROFILE_JSON:
+        path = root / name
+        if path.is_file() and scrub_profile_file(path):
+            report["notes"].append(f"removed sensitive inputs from {name}; re-enter at runtime")
+    # Previous local migration snapshots may also contain the old profile JSON.
+    folder = root / BACKUP_DIR
+    if folder.is_dir():
+        for path in folder.rglob("*.json"):
+            if path.name not in PROFILE_JSON or path.is_symlink():
+                continue
+            try:
+                scrub_profile_file(path)
+            except (OSError, ValueError):
+                report["notes"].append(f"review an unreadable old backup manually: {path.name}")
+    report["notes"].append("External backups, macros and arbitrary text are not scrubbed; review them manually")
+
+
+MIGRATIONS = {0: _v0_to_v1, 1: _v1_to_v2, 2: _v2_to_v3}
 
 
 def write_stamp(root: Optional[Path] = None, history: Optional[List[Dict[str, Any]]] = None) -> None:
