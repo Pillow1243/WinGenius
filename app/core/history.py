@@ -162,3 +162,6 @@ def history_security_status() -> Dict[str, Any]:
         "access_control": "threading.RLock",
         "privacy_docs": "documented in P0.6 audit"
     }
+
+# Global history instance for compatibility with existing imports
+history = History()

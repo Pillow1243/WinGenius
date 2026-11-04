@@ -384,7 +384,8 @@ class Scheduler(QObject):
     def __init__(self, store_ref: Optional[ScheduleStore] = None, interval_ms: int = 20_000,
                  parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
-        self.store = store_ref or store
+        # P0.2: Secure Scheduler Authorization - store_ref or default ScheduleStore
+        self.store = store_ref or ScheduleStore()
         self.interval_ms = max(5_000, int(interval_ms))
         self._timer = QTimer(self)
         self._timer.setInterval(self.interval_ms)
