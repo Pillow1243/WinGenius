@@ -107,6 +107,9 @@ jobs:
       - name: Security & consistency regressions
         run: python -X faulthandler -m coverage run --parallel-mode --source=app tests/security_test.py
 
+      - name: Persian / RTL PDF engine suite
+        run: python -X faulthandler -m coverage run --parallel-mode --source=app -m pytest -q tests/persian_pdf_test.py tests/hardening_test.py
+
       - name: pytest entry point (the legacy suites now have fixtures)
         run: python -m pytest -q
 

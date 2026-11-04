@@ -1,6 +1,6 @@
-# WinGenius 6.0 — an all-in-one Windows toolbox
+# WinGenius 7.0 — an all-in-one Windows toolbox
 
-> **290 tools · 11 categories · a real flow engine · encrypted vault · undo journal ·
+> **292 tools · 11 categories · a Persian-correct PDF engine · a real flow engine · encrypted vault · undo journal ·
 > cron scheduler · macro engine · local JSON API.** Persian-first UI with a complete English mode
 > (`EN` button, top right — every label, message and tool description is translated).
 >
@@ -12,7 +12,27 @@
   <img src="screenshots/scheduler_en.png" width="46%" alt="Scheduler & macros (English UI)" />
 </p>
 
-## What's new in 6.0 — the flow engine
+## What's new in 7.0 — Persian PDFs done right
+
+Persian text in PDFs used to break in three places, and 7.0 fixes all of them at the root
+with one engine, `app/core/persian_pdf.py`:
+
+| Problem | Root cause | Fix |
+|---|---|---|
+| Extracted text full of `ѫ ѱ ӳ` or presentation forms, words reversed | Modern fonts (Vazirmatn, IRANSans, Dana…) shape medial/stretched letters into glyphs that never make it into `/ToUnicode`; legacy generators write pre-shaped glyphs in visual order | Glyph text is recovered from the font's own `post`/`cmap`/`GSUB` tables, the CMap is repaired in place, lines are rebuilt in logical order from glyph geometry, and half-spaces (ZWNJ) are recovered from glyph overlap. Every PDF text tool (`pdf_to_text`, `pdf_to_html`, `pdf_to_markdown`, `pdf_find_text`, `pdf_compare`, the search index) runs on it. |
+| `pdf_to_docx` produced one left-to-right paragraph per visual line | pypdf extraction + no bidi metadata in Word | Real paragraphs (gap/size/alignment heuristics), `Heading 1..3`, tables (`bidiVisual`), images, bold/italic/colour, and `<w:bidi/>`, `<w:rtl/>`, `rFonts cs="Vazirmatn"` on every Persian paragraph. |
+| Watermarks, page numbers, OCR text layers and the built-in Word→PDF fallback rendered tofu | ReportLab's Helvetica cannot shape Arabic script | All stamping goes through MuPDF's HarfBuzz HTML engine with the **bundled Vazirmatn** family (OFL), then the CMap repair — so the output is also copy-and-searchable. |
+
+Two new tools: **`pdf_fix_persian`** (repairs an existing PDF's Persian text layer, shows a
+before/after preview) and **`text_to_pdf`** (text or Markdown → PDF with headings, lists,
+tables and page numbers, RTL and LTR mixed). `persian_fix`, `persian_sort`, `text_cleanup`
+(«Persian quotes») and `date_math` (Jalali month/year arithmetic) got sharper too.
+
+The UI now ships Vazirmatn for every label, has a single typographic scale, vector
+check/chevron/radio glyphs, themed menus/sliders/tabs, new icons and a new application
+icon rendered from code (`scripts/make_icon.py`).
+
+## What was new in 6.0 — the flow engine
 
 Tools stopped being one-shot actions. A *flow* is a JSON list of steps, and every step can:
 
@@ -150,19 +170,20 @@ tokens that arrive in the query string (`allow_query_token=False`).
 
 ```bash
 python tests/smoke_test.py        # 154 real-file checks
-python tests/functional_test.py   # 637 engine/tool checks (schema, stress, fuzz, guards, CLI, v50, v60flows, v60tools, scale)
-python tests/output_test.py       # 112 output-correctness checks (is the file right?)
-python tests/ui_test.py           # 1238 UI checks incl. accessibility, offscreen Qt
+python tests/functional_test.py   # 638 engine/tool checks (schema, stress, fuzz, guards, CLI, v50, v60flows, v60tools, scale)
+python tests/output_test.py       # 111 output-correctness checks (is the file right?)
+python -m pytest tests/persian_pdf_test.py -q   # 28 Persian/RTL PDF engine checks
+python tests/ui_test.py           # 1259 UI checks incl. accessibility, offscreen Qt
 python tests/security_test.py     # 57 security/consistency regression checks
-python -m pytest -q               # 44 collected tests (pytest entry point now works)
+python -m pytest -q               # all suites through pytest (incl. the 28 persian_pdf tests)
 python packaging/verify_package.py  # 27 build-input checks
 ruff check main.py app tests packaging  # lint gate (real-bug rules only)
 ```
 
 Everything runs headless (`QT_QPA_PLATFORM=offscreen`) on Linux, Windows and macOS,
 in CI (`.github/workflows/ci.yml`) on Python 3.12 and 3.13.
-Totals: **154 smoke · 637 functional · 112 output · 1238 UI · 57 security · 39 hardening regressions · 27 packaging
-= 2,263 checks** across **290 tools in 11 categories**. Coverage measures 75%; `pyproject.toml` enforces a 70% `fail_under` gate.
+Totals: **154 smoke · 638 functional · 111 output · 1259 UI · 57 security · 39 hardening regressions · 28 persian · 27 packaging
+= 2,313 checks** across **292 tools in 11 categories**. Coverage measures 75%; `pyproject.toml` enforces a 70% `fail_under` gate.
 
 ## Security notes
 

@@ -33,6 +33,7 @@ SUITES = [
     ("ui", "tests/ui_test.py", re.compile(r"(\d+)\s+UI checks executed")),
     ("security", "tests/security_test.py", re.compile(r"SECURITY CHECK\s+PASS\s+(\d+)")),
     ("hardening", "tests/hardening_test.py", re.compile(r"(\d+) passed")),
+    ("persian", "tests/persian_pdf_test.py", re.compile(r"(\d+) passed")),
     ("packaging", "packaging/verify_package.py", re.compile(r"(\d+)\s*/\s*\d+[^\n]*checks passed")),
 ]
 
@@ -51,7 +52,7 @@ def collect() -> dict:
     counts: dict[str, int] = {}
     for key, script, pattern in SUITES:
         command = ([sys.executable, "-m", "pytest", "-o", "addopts=", "-q", script]
-                   if key == "hardening" else [sys.executable, script])
+                   if key in ("hardening", "persian") else [sys.executable, script])
         proc = subprocess.run(command, cwd=ROOT, env=environment(),
                               capture_output=True, text=True, timeout=1200)
         output = (proc.stdout or "") + (proc.stderr or "")

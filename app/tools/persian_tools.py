@@ -6,6 +6,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
+from ..core import persian_pdf
 from ..core.registry import tool
 from ..core.spec import (
     K_BOOL, K_CHOICE, K_FILE, K_INT, K_MULTILINE, K_SAVE, K_TEXT,
@@ -63,7 +64,7 @@ def _emit(ctx: RunContext, v: Dict[str, Any], text: str, suffix: str = "_fixed")
     id="persian_fix", category="convert", name="اصلاح متن فارسی", name_en="Fix Persian text",
     desc="«ي/ك» عربی را به «ی/ک» تبدیل، نیم‌فاصله را مرتب و فاصله‌های اضافی و نویسه‌های پنهان را پاک می‌کند.",
     desc_en="Fix Arabic ي/ك to Persian ی/ک, clean zero-width characters, spacing and hidden marks.",
-    icon="text", order=200,
+    icon="persian", order=200,
     keywords=("فارسی", "اصلاح متن", "نیم فاصله", "persian fix", "arabic letters", "ی ك"),
     fields=[
         Field("source", K_CHOICE, "ورودی", "Input", default="text",
@@ -83,23 +84,22 @@ def persian_fix(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     text = _read_text(ctx, v)
     if not text:
         raise ToolError(ctx.M("متنی وارد نشده.", "No text provided."))
-    for arabic, persian in ARABIC_TO_PERSIAN.items():
-        text = text.replace(arabic, persian)
-    if v.get("zero_width", True):
-        text = text.replace("\u200B", "").replace("\uFEFF", "")
-        text = re.sub(r"[\u200C]{2,}", "\u200C", text)
-        text = re.sub(r"[ \t]{2,}", " ", text)
-        text = re.sub(r" +([،؛:!؟?.])", r"\1", text)
-        # common word + suffix pairs get a proper half-space
-        for word, suffix in (("می", "شود"), ("می", "کند"), ("می", "دهد"), ("نمی", "شود"),
-                             ("ها", "ی"), ("کتاب", "ها"), ("خانه", "ها")):
-            text = text.replace(f"{word} {suffix}", f"{word}\u200C{suffix}")
+    before = text
     digits = str(v.get("numbers") or "keep")
-    if digits == "fa":
-        text = text.translate(str.maketrans(LATIN_DIGITS, PERSIAN_DIGITS))
-    elif digits == "en":
-        text = text.translate(str.maketrans(PERSIAN_DIGITS + ARABIC_DIGITS, LATIN_DIGITS + LATIN_DIGITS))
-    return _emit(ctx, v, text)
+    # presentation forms, reversed legacy lines, Arabic letters, mirrored brackets, spacing
+    text = persian_pdf.normalize_persian(text, digits=digits if digits in ("fa", "en") else None,
+                                         zwnj=bool(v.get("zero_width", True)))
+    text = text.replace("\u06C0", "\u0647\u0654") if "\u06C0" in before and "\u06C0" in text else text
+    if v.get("zero_width", True):
+        text = re.sub(r"[\u200B\u200D\uFEFF\u2060]", "", text)
+    changed = sum(1 for a, b in zip(before, text) if a != b) + abs(len(before) - len(text))
+    half_spaces = text.count("\u200C") - before.count("\u200C")
+    result = _emit(ctx, v, text)
+    if half_spaces > 0:
+        result.message += ctx.M(f"\n{half_spaces} نیم‌فاصله اضافه شد.", f"\n{half_spaces} half-space(s) added.")
+    if changed == 0:
+        result.message += ctx.M("\nمتن از قبل درست بود.", "\nThe text was already clean.")
+    return result
 
 
 @tool(
@@ -279,18 +279,9 @@ def persian_sort(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     text = _read_text(ctx, v)
     if not text.strip():
         raise ToolError(ctx.M("متنی وارد نشده.", "No text provided."))
-    alphabet = "آابپتثجچحخدذرزژسشصضطظعغفقکگلمنوهی"
-    order = {char: index for index, char in enumerate(alphabet)}
-
-    def key(line: str):
-        normalised = line.strip().translate(str.maketrans(PERSIAN_DIGITS + ARABIC_DIGITS,
-                                                          LATIN_DIGITS + LATIN_DIGITS))
-        chars = tuple(order.get(char, 100 + ord(char)) for char in normalised)
-        number = re.search(r"(\d+)", normalised)
-        return (chars, int(number.group(1)) if number else 0)
-
     lines = [line for line in text.splitlines() if line.strip()]
-    lines.sort(key=key, reverse=bool(v.get("descending")))
+    # Persian collation: آ/ا together, ي/ك folded, diacritics and ZWNJ ignored, numbers numeric
+    lines.sort(key=persian_pdf.persian_sort_key, reverse=bool(v.get("descending")))
     return _emit(ctx, v, "\n".join(lines), "_sorted")
 
 

@@ -149,6 +149,12 @@ def extract_text_with_meta(path: Path) -> tuple:
 
 def _pdf_reader(path: Path) -> str:
     try:
+        from . import persian_pdf  # repaired font maps + logical-order Persian text
+
+        return persian_pdf.pdf_text(path)
+    except Exception:
+        pass
+    try:
         import fitz  # PyMuPDF
 
         with fitz.open(str(path)) as doc:

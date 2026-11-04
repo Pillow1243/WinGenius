@@ -46,6 +46,11 @@ the bottom — it is a real, small piece of work, not a hand-wave.
   configuration (`ffmpeg -version` and `ffmpeg -L`) for each platform/release.
   A GPL-enabled build adds GPL distribution obligations for that component;
   inventory its corresponding source and notices before distributing it.
+* **Vazirmatn** (`app/assets/fonts/Vazirmatn-*.ttf`, v33.0.3 by Saber Rastikerdar) —
+  SIL Open Font License 1.1 (`app/assets/fonts/OFL.txt`). Bundled for the UI and for
+  every PDF the app writes (watermarks, page numbers, OCR text layers, text → PDF).
+  The OFL permits bundling and redistribution with the software; the font files
+  themselves may not be sold on their own and the licence text must stay with them.
 * **Tesseract** (optional, installed by the user) — Apache-2.0.
 * **Qt 6** — LGPL-3.0; PyInstaller builds must therefore stay dynamically linked
   and must keep the LGPL notice reachable. `packaging/WinGenius.spec` does not

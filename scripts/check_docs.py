@@ -142,6 +142,8 @@ def main() -> int:
           "پیش\u200cفرض **رد می\u200cشود**" in text("docs/run_fa.md"))
     check("notices mention pyHanko", "`pyHanko`" in text("THIRD-PARTY-NOTICES.md"))
     check("CHANGELOG has a 6.0.0 entry", "## [6.0.0]" in text("CHANGELOG.md"))
+    check("CHANGELOG has a 7.0.0 entry", "## [7.0.0]" in text("CHANGELOG.md"))
+    check("ARCHITECTURE documents the Persian PDF engine", "persian_pdf" in text("ARCHITECTURE.md"))
     check("README documents the flow engine", "--run-flow" in readme)
     check("README links to the flow guide", "docs/v6_flow_fa.md" in readme)
     check("ARCHITECTURE documents flow conditions", "foreach" in text("ARCHITECTURE.md"))

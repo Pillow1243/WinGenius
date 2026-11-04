@@ -44,7 +44,7 @@ def main() -> int:
                          f"tests/{suite}_test.py"])
     commands.extend([
         [python, "-m", "coverage", "run", "--parallel-mode", "--source=app", "-m", "pytest",
-         "tests/hardening_test.py", "-q"],
+         "tests/hardening_test.py", "tests/persian_pdf_test.py", "-q"],
         [python, "-m", "coverage", "combine"],
         [python, "-m", "coverage", "report", "--skip-covered", "--skip-empty"],
     ])

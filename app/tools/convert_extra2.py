@@ -254,6 +254,26 @@ def _parse_date(raw: str, calendar: str) -> date:
     return date(year, month, day)
 
 
+def _looks_jalali(raw: str) -> bool:
+    text = to_ascii_digits(raw).strip()
+    match = re.match(r"(\d{4})", text)
+    return bool(match) and 1200 <= int(match.group(1)) <= 1600
+
+
+def _jalali_is_leap(jy: int) -> bool:
+    """A Jalali year is leap when Esfand has 30 days (derived from the conversion)."""
+    gy, gm, gd = _jalali_to_gregorian(jy, 12, 30)
+    return _gregorian_to_jalali(gy, gm, gd) == (jy, 12, 30)
+
+
+def _jalali_month_length(jy: int, jm: int) -> int:
+    if jm <= 6:
+        return 31
+    if jm <= 11:
+        return 30
+    return 30 if _jalali_is_leap(jy) else 29
+
+
 def _business_days(start: date, end: date) -> int:
     if start > end:
         start, end = end, start
@@ -312,10 +332,21 @@ def date_math(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
                               "Cannot read the base date; try 2026-11-03 or 1405/08/12"))
     unit = str(v.get("unit") or "days")
     amount = int(v.get("add") or 0)
+    jalali_input = calendar == "jalali" or (calendar == "auto" and _looks_jalali(str(v.get("date") or "")))
     if unit == "weeks":
         target = base + timedelta(weeks=amount)
     elif unit == "hours":
         target = base + timedelta(hours=amount)
+    elif unit in ("months", "years") and jalali_input:
+        # a Jalali date moves by Jalali months/years (1405/06/31 + 1 month → 1405/07/30)
+        jy, jm, jd = _gregorian_to_jalali(base.year, base.month, base.day)
+        if unit == "months":
+            month_index = jm - 1 + amount
+            jy, jm = jy + month_index // 12, month_index % 12 + 1
+        else:
+            jy += amount
+        jd = min(jd, _jalali_month_length(jy, jm))
+        target = date(*_jalali_to_gregorian(jy, jm, jd))
     elif unit == "months":
         month_index = base.month - 1 + amount
         year = base.year + month_index // 12
@@ -325,11 +356,9 @@ def date_math(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
         target = date(year, month, day)
     elif unit == "years":
         year = base.year + amount
-        day = min(base.day, 29 if (year % 4 == 0 and year % 100 != 0) or year % 400 == 0
-                  and base.month == 2 else base.day)
         try:
-            target = base.replace(year=year, day=day)
-        except ValueError:
+            target = base.replace(year=year)
+        except ValueError:  # 29 Feb → 28 Feb
             target = base.replace(year=year, day=28)
     else:
         target = base + timedelta(days=amount)

@@ -5,6 +5,7 @@ import io
 from pathlib import Path
 from typing import Any, Dict, List
 
+from ..core import persian_pdf
 from ..core.registry import tool
 from ..core.spec import (
     K_BOOL, K_CHOICE, K_DIR, K_FILE, K_FILES, K_FLOAT, K_INT, K_SAVE, K_TEXT,
@@ -12,7 +13,7 @@ from ..core.spec import (
 )
 from ..core.utils import human_size, parse_ranges, unique_path
 from ._helpers import ensure_dir, first_file, fmt_out_message, out_dir, require, save_target
-from .pdf_tools import PDF_FILTER, _fitz, _open_reader, _pypdf
+from .pdf_tools import PDF_FILTER, _fitz, _open_doc, _open_reader, _pypdf
 
 
 def _writer(ctx: RunContext, src: Path, values: Dict[str, Any], suffix: str) -> Path:
@@ -214,26 +215,71 @@ def pdf_to_html(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     import html as html_mod
 
     src = first_file(v, "src", ctx)
-    fitz = _fitz(ctx)
-    doc = fitz.open(str(src))
+    doc = _open_doc(ctx, src)
+    esc = html_mod.escape
     try:
         parts: List[str] = []
         total = doc.page_count
+        rtl_pages = 0
         for index in range(total):
             ctx.progress(index, total, ctx.M(f"صفحه {index + 1} از {total}", f"Page {index + 1} of {total}"))
-            text = doc.load_page(index).get_text("text")
-            parts.append(f'<section class="page"><h2>'
-                         f'{ctx.M("صفحه", "Page")} {index + 1}</h2><pre>{html_mod.escape(text)}</pre></section>')
-        title = html_mod.escape(src.stem)
+            content = persian_pdf.extract_page(doc, index, tables=True, images=False)
+            if content.rtl:
+                rtl_pages += 1
+            body: List[str] = []
+            for item in content.items:
+                if isinstance(item, persian_pdf.Paragraph):
+                    if not item.text.strip():
+                        continue
+                    direction = "rtl" if item.rtl else "ltr"
+                    align = {"center": "center", "end": "left" if item.rtl else "right"}.get(
+                        item.align, "right" if item.rtl else "left")
+                    runs = []
+                    for span in item.spans:
+                        chunk = esc(span.text)
+                        if span.bold:
+                            chunk = f"<b>{chunk}</b>"
+                        if span.italic:
+                            chunk = f"<i>{chunk}</i>"
+                        runs.append(chunk)
+                    inner = "".join(runs)
+                    if item.heading:
+                        tag = f"h{min(4, item.heading + 1)}"
+                        body.append(f'<{tag} dir="{direction}" style="text-align:{align}">{inner}</{tag}>')
+                    elif item.bullet:
+                        body.append(f'<ul dir="{direction}"><li style="text-align:{align}">{inner}</li></ul>')
+                    else:
+                        body.append(f'<p dir="{direction}" style="text-align:{align}">{inner}</p>')
+                elif isinstance(item, persian_pdf.Table):
+                    rows = []
+                    for r_index, row in enumerate(item.rows):
+                        tag = "th" if r_index == 0 else "td"
+                        rows.append("<tr>" + "".join(
+                            f'<{tag} dir="{"rtl" if persian_pdf.is_rtl(cell) else "ltr"}">{esc(cell)}</{tag}>'
+                            for cell in row) + "</tr>")
+                    body.append(f'<table dir="{"rtl" if item.rtl else "ltr"}">{"".join(rows)}</table>')
+            if not body:
+                body.append(f'<p class="empty">{esc(ctx.M("(بدون متن قابل استخراج)", "(no extractable text)"))}</p>')
+            separator = ' class="page"' if v.get("page_break", True) else ' class="page flat"'
+            parts.append(f'<section{separator}><h2 class="pagenum">'
+                         f'{esc(ctx.M("صفحه", "Page"))} {index + 1}</h2>{"".join(body)}</section>')
+        title = esc(src.stem)
+        lang = "fa" if rtl_pages * 2 >= total and total else "en"
         document = f"""<!DOCTYPE html>
-<html lang="fa" dir="auto"><head><meta charset="utf-8">
+<html lang="{lang}" dir="{"rtl" if lang == "fa" else "ltr"}"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title>
 <style>
-  body {{ font-family: "Segoe UI", Tahoma, sans-serif; max-width: 900px; margin: 32px auto;
+  body {{ font-family: Vazirmatn, "Segoe UI", Tahoma, sans-serif; max-width: 900px; margin: 32px auto;
          padding: 0 20px; background: #0f1420; color: #e6ecf5; line-height: 1.9; }}
-  h1 {{ color: #18c8f5; }} h2 {{ color: #7b61ff; font-size: 14px; margin-top: 34px; }}
+  h1 {{ color: #18c8f5; }} h2.pagenum {{ color: #7b61ff; font-size: 13px; margin-top: 34px; letter-spacing: .04em; }}
+  h2, h3, h4 {{ line-height: 1.5; }}
   .page {{ border-bottom: 1px solid #26314a; padding-bottom: 18px; }}
-  pre {{ white-space: pre-wrap; font-family: inherit; margin: 0; }}
+  .page.flat {{ border: 0; }} .page.flat .pagenum {{ display: none; }}
+  p {{ margin: 0 0 .7em 0; }} .empty {{ color: #8a94a8; font-style: italic; }}
+  table {{ border-collapse: collapse; margin: 12px 0; width: 100%; }}
+  td, th {{ border: 1px solid #2d3a57; padding: 6px 10px; text-align: start; }}
+  th {{ background: #18213a; }}
 </style></head><body>
 <h1>{title}</h1>
 {''.join(parts)}
@@ -266,25 +312,36 @@ def pdf_find_text(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     query = str(v.get("query") or "").strip()
     if not query:
         raise ToolError(ctx.M("عبارت جست‌وجو خالی است.", "The search phrase is empty."))
-    reader = _open_reader(ctx, src)
-    total = len(reader.pages)
+    ignore_case = bool(v.get("ignore_case", True))
+
+    def _fold(text: str) -> str:
+        # Persian-aware folding: ي/ك → ی/ک, digits unified, diacritics ignored and
+        # «کتاب ها» / «کتاب‌ها» / «کتابها» all treated as the same word
+        text = persian_pdf.normalize_persian(text, digits="en", zwnj=True, fix_reversed=False)
+        text = persian_pdf.strip_diacritics(text).replace("\u200C", "")
+        return text.lower() if ignore_case else text
+
+    needle = _fold(query)
+    doc = _open_doc(ctx, src)
     hits: List[str] = []
     count = 0
-    for index in range(total):
-        ctx.progress(index + 1, total, ctx.M(f"صفحه {index + 1}", f"Page {index + 1}"))
-        try:
-            text = reader.pages[index].extract_text() or ""
-        except Exception:
-            continue
-        haystack = text.lower() if v.get("ignore_case", True) else text
-        needle = query.lower() if v.get("ignore_case", True) else query
-        found = haystack.count(needle)
-        if found:
+    try:
+        total = doc.page_count
+        for index in range(total):
+            ctx.progress(index + 1, total, ctx.M(f"صفحه {index + 1}", f"Page {index + 1}"))
+            try:
+                pages_text = persian_pdf.extract_page(doc, index, tables=True, images=False).text
+            except Exception:
+                pages_text = doc[index].get_text("text")
+            lines = [line for line in pages_text.splitlines() if needle in _fold(line)]
+            found = sum(_fold(line).count(needle) for line in lines)
+            if not found:
+                continue
             count += found
-            lines = [line.strip() for line in text.splitlines() if needle in
-                     (line.lower() if v.get("ignore_case", True) else line)]
-            sample = " … ".join(lines[:2])[:160]
+            sample = " … ".join(line.strip() for line in lines[:2])[:160]
             hits.append(f"• {ctx.M('صفحه', 'Page')} {index + 1} ({found}×): {sample}")
+    finally:
+        doc.close()
     if not hits:
         return RunResult(message=ctx.M(f"«{query}» پیدا نشد.", f"“{query}” was not found."), details=src.name)
     return RunResult(

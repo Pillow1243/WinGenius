@@ -41,7 +41,7 @@ Consequences worth remembering:
 * **Tools never see a widget.** They receive a plain `dict` of values and a
   `RunContext(lang, output_dir, progress, cancel, log)`. Everything is testable
   headless with `QT_QPA_PLATFORM=offscreen`.
-* **Dynamic imports.** `registry.load_all()` imports the 42 modules listed in
+* **Dynamic imports.** `registry.load_all()` imports the 43 modules listed in
   `app/tools/__init__.py`, guarded so a missing optional library degrades one
   module instead of crashing startup. Import failures are now reported in
   `--doctor`, in the GUI toast and as a doctor issue (previously silent).
@@ -51,6 +51,25 @@ Consequences worth remembering:
 * **Undo, not deletion.** Destructive tools journal their file operations;
   `vault_remove`, `pdf_delete_pages`, `trash_cleanup` and `services_manager` are
   additionally marked `danger=True` and ask for confirmation in the UI.
+
+## Persian / RTL PDF engine (v7) — `app/core/persian_pdf.py`
+
+One module owns everything that touches Persian text in PDFs; tools call it instead
+of pypdf/ReportLab directly.
+
+| Stage | What it does | Why |
+|---|---|---|
+| `glyph_map_from_font()` | Parses the embedded font (`post` names, reverse `cmap`, `GSUB` single/ligature lookups) into `gid → text` | Modern fonts shape letters into glyphs that are absent from `/ToUnicode`; readers then print them as Cyrillic (`ѫ ѱ ӳ`) |
+| `repair_tounicode()` / `open_repaired()` | Merges the recovered mappings into each font's CMap in place (never replaces the stream) and reopens the document | Makes *any* reader — not only WinGenius — copy real letters |
+| `extract_page()` | Line-first layout: rawdict chars → ZWNJ recovery from glyph overlap → legacy visual-order reorder by geometry → paragraphs/headings/tables/images by gap, size and alignment | MuPDF emits one block per line (or per bidi run) for Persian; pypdf returns visual order |
+| `normalize_persian()` | Presentation forms → letters, `ي/ك → ی/ک`, mirrored brackets, smart ZWNJ (`می‌شود`, `کتاب‌ها`), digit policy | Consistent text for search, Word export and the index |
+| `flow_html_pages()` / `insert_html()` / `stamp_text()` / `stamp_line()` | HarfBuzz-shaped HTML through MuPDF `Story`/`insert_htmlbox` with the bundled Vazirmatn family, then CMap repair on save | ReportLab's base fonts cannot shape Arabic script; diagonal stamps use `show_pdf_page(rotate=…)` because `insert_htmlbox` only rotates by 90° |
+| DOCX helpers | `<w:bidi/>`, `<w:rtl/>`, `rFonts cs`, `bidiVisual` tables | Word needs explicit bidi flags; a Persian string in an LTR paragraph is still wrong |
+
+Rules: never use pypdf to read Persian text; keep `normalize_forms=False` while
+extracting (the geometry pass needs the shapes) and normalise only in outputs; every
+PDF written with the bundled fonts must go through `save_pdf()`/`pdf_bytes()` so the
+CMap repair runs. `tests/persian_pdf_test.py` pins all of this.
 
 ## Flow engine (v6)
 

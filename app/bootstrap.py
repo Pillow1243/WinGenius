@@ -78,6 +78,7 @@ def create_app(argv: List[str] | None = None) -> QApplication:
         app.setWindowIcon(QIcon(str(icon_png)))
 
     palette = theme.build_palette(settings.theme, settings.accent)
+    theme.register_fonts()                        # bundled Vazirmatn: same look on every PC
     app.setFont(theme.make_font(10))
     app.setStyleSheet(theme.stylesheet(palette))
     app.setLayoutDirection(
