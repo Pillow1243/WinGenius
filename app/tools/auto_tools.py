@@ -13,7 +13,8 @@ from ..core import history as history_module
 from ..core import macro as macro_module
 from ..core import registry
 from ..core.registry import tool
-from ..core.scheduler import Schedule, describe_cron, next_run, parse_cron, store, upcoming
+from ..core.scheduler import Schedule, describe_cron, next_run, parse_cron, upcoming, ScheduleStore
+store = ScheduleStore()
 from ..core.spec import (
     K_BOOL, K_CHOICE, K_DIR, K_FILE, K_INT, K_TEXT, Field, RunContext, RunResult, ToolError,
 )

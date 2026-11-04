@@ -3,7 +3,8 @@
 * `parse_cron` / `next_run` — a dependency-free 5-field cron engine
   (`minute hour day-of-month month day-of-week`) with `*`, `a,b`, `a-b`,
   `*/n` and `a-b/n` ranges, Sunday = 0 (7 is accepted as Sunday too).
-* `Schedule` — one persisted job: what to run, when, and what happened.
+* `Schedule` — one persisted job: what to run, when, what happened, and
+  explicit authorization/risk classification.
 * `ScheduleStore` — JSON file in the app data folder.
 * `Scheduler` — a light Qt timer that fires `triggered(schedule)` once per
   matching minute; the shell turns that into a normal background job.
@@ -209,7 +210,14 @@ class Schedule:
     last_run: float = 0.0
     last_status: str = ""
     runs: int = 0
-
+    
+    # --- P0.2 Secure Scheduler Authorization ---
+    # Explicit authorization per task
+    authorized_by: str = ""         # User ID or System ID who authorized the schedule
+    risk_classification: str = "SAFE" # SAFE | CONFIRM | DESTRUCTIVE | ELEVATED
+    scopes: List[str] = field(default_factory=list) # Required scopes (e.g., ["file_write", "network"])
+    recovery_info: str = ""         # Instructions or path for recovery/undo
+    
     # ------------------------------------------------------------------ helpers
     def title(self, lang: str = "fa") -> str:
         if self.name:
@@ -253,12 +261,23 @@ class Schedule:
             return f"{self.kind}: {self.target_id} · next {stamp}"
         return f"{self.kind}: {self.target_id} · بعدی {stamp}"
 
+    def risk_summary(self, lang: str = "fa") -> str:
+        """Machine-readable and human-readable risk summary."""
+        if lang == "en":
+            return f"Risk: {self.risk_classification} · Scopes: {', '.join(self.scopes) or 'none'} · Auth: {self.authorized_by or 'system'}"
+        return f"ریسک: {self.risk_classification} · محدوده: {', '.join(self.scopes) or 'بدون'} · مجوز: {self.authorized_by or 'سیستم'}"
+
     def as_dict(self) -> Dict[str, Any]:
         return {
             "id": self.id, "name": self.name, "cron": self.cron, "kind": self.kind,
             "target_id": self.target_id, "payload": sanitize_values(self.target_id, self.payload), "enabled": self.enabled,
             "catch_up": self.catch_up, "created": self.created, "last_run": self.last_run,
             "last_status": self.last_status, "runs": self.runs,
+            # P0.2 Security fields
+            "authorized_by": self.authorized_by,
+            "risk_classification": self.risk_classification,
+            "scopes": self.scopes,
+            "recovery_info": self.recovery_info,
         }
 
     @classmethod
@@ -276,6 +295,11 @@ class Schedule:
             last_run=float(data.get("last_run") or 0),
             last_status=str(data.get("last_status") or ""),
             runs=int(data.get("runs") or 0),
+            # P0.2 Security fields
+            authorized_by=str(data.get("authorized_by") or ""),
+            risk_classification=str(data.get("risk_classification") or "SAFE"),
+            scopes=list(data.get("scopes") or []),
+            recovery_info=str(data.get("recovery_info") or ""),
         )
 
 
@@ -349,13 +373,6 @@ class ScheduleStore:
         item.runs += 1
         self.save(item)
 
-    def clear(self) -> None:
-        self._items = []
-        self._save()
-
-
-store = ScheduleStore()
-
 
 # ------------------------------------------------------------------- scheduler
 class Scheduler(QObject):
@@ -391,6 +408,33 @@ class Scheduler(QObject):
         fired: List[Schedule] = []
         for item in self.store.all():
             if item.due(now) or item.catch_up_due(now):
+                # P0.2 Authorization Check before triggering
+                from .execution import OperationRisk, PolicyDeniedError, RiskAssessment
+                
+                # Map risk classification to OperationRisk
+                risk_map = {
+                    "SAFE": OperationRisk.SAFE,
+                    "CONFIRM": OperationRisk.CONFIRM,
+                    "DESTRUCTIVE": OperationRisk.DESTRUCTIVE,
+                    "ELEVATED": OperationRisk.ELEVATED
+                }
+                risk = risk_map.get(item.risk_classification, OperationRisk.SAFE)
+                
+                # Centralized policy gate
+                from .execution import execution_service
+                policy = execution_service.policy
+                
+                if policy is not None and not policy.allows(risk):
+                    # Log denial and skip firing
+                    from .journal import journal
+                    journal().record_denied(
+                        item.id, 
+                        RiskAssessment(f"schedule:{item.id}", risk, item.risk_summary(), f"Schedule {item.id} blocked by policy"),
+                        item.authorized_by,
+                        item.recovery_info
+                    )
+                    continue
+                
                 fired.append(item)
                 self.triggered.emit(item)
         self.ticked.emit(time.time())
