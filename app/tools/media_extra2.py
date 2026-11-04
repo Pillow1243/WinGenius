@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import time
 from array import array
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -175,40 +176,102 @@ def audio_waveform(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     if not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
         color = "#00D9A6"
     rate = 8000
-    command = [ffmpeg, "-v", "error", "-i", str(source), "-ac", "1", "-ar", str(rate),
+    command = [ffmpeg, "-v", "error", "-nostdin", "-i", str(source), "-ac", "1", "-ar", str(rate),
                "-f", "s16le", "-"]
     ctx.progress(0, 2, "رمزیابی صدا")
+    peaks: List[int] = []
+    total_samples = 0
+    leftover = b""
+    stride = 1
+    current_peak = 0
+    in_bin = 0
+    max_bins = max(4096, width * 2)
+    err_chunks: List[bytes] = []
     try:
-        proc = subprocess.run(command, capture_output=True, timeout=180, check=False)
-    except subprocess.TimeoutExpired:
-        raise ToolError(ctx.M("خواندن صدا طول کشید؛ فایل کوتاه‌تری امتحان کنید.",
-                              "Reading the audio took too long; try a shorter file."))
-    if proc.returncode != 0 or not proc.stdout:
-        message = (proc.stderr or b"").decode("utf-8", "replace").strip()[:300]
-        raise ToolError(ctx.M(f"صدا خوانده نشد: {message or 'بدون خروجی'}",
-                              f"Could not decode the audio: {message or 'no output'}"))
-    samples = array("h")
-    payload = proc.stdout[: len(proc.stdout) - (len(proc.stdout) % 2)]
-    samples.frombytes(payload)
-    if not samples:
+        proc = subprocess.Popen(
+            command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            creationflags=(0x08000000 if hasattr(subprocess, "CREATE_NO_WINDOW") else 0),
+        )
+    except OSError as exc:
+        raise ToolError(ctx.M(f"اجرای ffmpeg ناموفق بود: {exc}", f"Could not start ffmpeg: {exc}"))
+
+    import threading
+
+    def _drain_err() -> None:
+        if proc.stderr is None:
+            return
+        try:
+            err_chunks.append(proc.stderr.read()[-4096:])
+        except Exception:
+            pass
+
+    err_thread = threading.Thread(target=_drain_err, daemon=True)
+    err_thread.start()
+    started = time.monotonic() if "time" in globals() else 0.0
+    try:
+        assert proc.stdout is not None
+        while True:
+            ctx.check_cancel()
+            raw = proc.stdout.read(65536)
+            if not raw:
+                break
+            buf = leftover + raw
+            even = len(buf) - (len(buf) % 2)
+            leftover = buf[even:]
+            if not even:
+                continue
+            chunk_samples = array("h")
+            chunk_samples.frombytes(buf[:even])
+            total_samples += len(chunk_samples)
+            for s in chunk_samples:
+                val = -s if s < 0 else s
+                if val > current_peak:
+                    current_peak = val
+                in_bin += 1
+                if in_bin >= stride:
+                    peaks.append(current_peak)
+                    current_peak = 0
+                    in_bin = 0
+                    if len(peaks) >= max_bins * 2:
+                        peaks = [
+                            max(peaks[i], peaks[i + 1])
+                            for i in range(0, len(peaks) - 1, 2)
+                        ]
+                        stride *= 2
+            if started and (time.monotonic() - started) > 180:
+                proc.kill()
+                raise ToolError(ctx.M("خواندن صدا طول کشید؛ فایل کوتاه‌تری امتحان کنید.",
+                                      "Reading the audio took too long; try a shorter file."))
+        if in_bin > 0:
+            peaks.append(current_peak)
+        proc.wait(timeout=15)
+        err_thread.join(timeout=2)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+    if proc.returncode != 0 or not peaks or total_samples == 0:
+        message = b"".join(err_chunks).decode("utf-8", "replace").strip()[:300]
+        if proc.returncode != 0:
+            raise ToolError(ctx.M(f"صدا خوانده نشد: {message or 'بدون خروجی'}",
+                                  f"Could not decode the audio: {message or 'no output'}"))
         raise ToolError(ctx.M("این فایل صدایی ندارد.", "This file contains no audio."))
     ctx.progress(1, 2, "رسم موج")
-    buckets = max(1, width)
-    step = max(1, len(samples) // buckets)
     image = Image.new("RGB", (width, height), "#0B1020")
     draw = ImageDraw.Draw(image)
     middle = height / 2
+    n_peaks = len(peaks)
     for column in range(width):
-        start = column * step
-        chunk = samples[start:start + step]
-        if not chunk:
+        lo = (column * n_peaks) // width
+        hi = max(lo + 1, ((column + 1) * n_peaks) // width)
+        bucket = peaks[lo:hi]
+        if not bucket:
             break
-        peak = max(max(chunk), -min(chunk)) / 32768.0
-        amplitude = peak * (height / 2 - 4)
+        peak = max(bucket) / 32768.0
+        amplitude = min(1.0, peak) * (height / 2 - 4)
         draw.line([(column, middle - amplitude), (column, middle + amplitude)],
                   fill=color, width=1)
     draw.line([(0, middle), (width, middle)], fill="#33405c", width=1)
-    seconds = len(samples) / rate
+    seconds = total_samples / rate
     target = save_target(ctx, str(v.get("out") or "").strip(), f"{source.stem}_waveform.png")
     if target.suffix.lower() != ".png":
         target = target.with_suffix(".png")
@@ -242,9 +305,7 @@ def media_strip_metadata(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     source = first_file(v, "src", ctx)
     requested = str(v.get("out") or "").strip()
     default_name = f"{source.stem}_clean{source.suffix or '.mp4'}"
-    target = Path(requested) if requested else unique_path(out_dir(ctx, "media") / default_name)
-    if target.is_dir():
-        target = unique_path(target / default_name)
+    target = save_target(ctx, requested, default_name) if requested else unique_path(out_dir(ctx, "media") / default_name)
     ensure_dir(target.parent)
     command = [ffmpeg, "-v", "error", "-y", "-i", str(source), "-map_metadata", "-1",
                "-map_chapters", "-1", "-c", "copy", str(target)]

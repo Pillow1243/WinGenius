@@ -221,10 +221,12 @@ class MacroRunner:
                  run_tool: Optional[Callable[[str, Dict[str, Any]], Any]] = None,
                  on_log: Optional[Callable[[str], None]] = None,
                  on_progress: Optional[Callable[[int, int], None]] = None,
-                 journal_enabled: bool = True) -> None:
+                 journal_enabled: bool = True,
+                 policy: Any = None) -> None:
         self.lang = "en" if lang == "en" else "fa"
         self.output_dir = output_dir
         self.dry_run = dry_run
+        self.policy = policy
         self._run_tool = run_tool or self._default_run_tool
         self._on_log = on_log
         self._on_progress = on_progress
@@ -256,14 +258,16 @@ class MacroRunner:
 
     def _default_run_tool(self, tool_id: str, args: Dict[str, Any]) -> Any:
         from . import registry
+        from .execution import execution_service
         from .spec import RunContext
 
         spec = registry.get(tool_id)
         if spec is None:
             raise MacroError(self.M(f"ابزار «{tool_id}» پیدا نشد.", f"tool '{tool_id}' not found"))
         ctx = RunContext(lang=self.lang, output_dir=self.output_dir,
-                         on_message=lambda text: self._log(str(text)))
-        return spec.run(ctx, dict(args))
+                         on_message=lambda text: self._log(str(text)),
+                         policy=self.policy)
+        return execution_service.execute(spec, dict(args), ctx, policy=self.policy)
 
     @staticmethod
     def _result_outputs(result: Any) -> List[str]:
@@ -289,11 +293,29 @@ class MacroRunner:
             journal().record_trash(pairs, self.M("سطل ماکرو", "macro trash"),
                                    self.M("سطل ماکرو", "macro trash"), tool_id="macro_run")
 
+    def _check_file_policy(self, action_name: str) -> None:
+        if self.policy is None:
+            return
+        from .execution import OperationRisk, PolicyDeniedError, RiskAssessment
+
+        if not self.policy.allows(OperationRisk.CONFIRM):
+            assessment = RiskAssessment(
+                f"macro:{action_name}", OperationRisk.CONFIRM,
+                "حذف یا جابه‌جایی فایل توسط ماکرو نیازمند مجوز است",
+                f"Macro file {action_name} requires policy confirmation",
+            )
+            raise PolicyDeniedError(
+                self.M("عملیات تغییر فایل ماکرو توسط سیاست امنیتی مسدود شد.",
+                       "Macro file mutation blocked by execution policy."),
+                assessment,
+            )
+
     def _delete(self, target: Path) -> None:
         if self.dry_run:
             self.result.executed += 1
             self._log(self.M(f"حذف (تمرینی): {target}", f"would trash: {target}"))
             return
+        self._check_file_policy("delete")
         from .journal import send_to_trash
         self._record_trash(send_to_trash([target]))
         self.result.executed += 1
@@ -320,6 +342,7 @@ class MacroRunner:
             self.result.executed += 1
             self._log(self.M(f"انتقال (تمرینی): {src} → {dst}", f"would move: {src} → {dst}"))
             return None
+        self._check_file_policy("move")
         target = unique_path(dst if dst.suffix else dst / src.name)
         ensure_dir(target.parent)
         shutil.move(str(src), str(target))
@@ -355,6 +378,10 @@ class MacroRunner:
         except MacroError as exc:
             self.result.errors.append(str(exc))
         except Exception as exc:                       # noqa: BLE001 - report, never crash
+            from .execution import PolicyDeniedError
+
+            if isinstance(exc, PolicyDeniedError):
+                raise
             self.result.errors.append(f"{type(exc).__name__}: {exc}")
 
         if self.result.errors:
@@ -435,6 +462,10 @@ class MacroRunner:
         try:
             result = self._run_tool(tool_id, args)
         except Exception as exc:                       # tool errors should not kill the macro
+            from .execution import PolicyDeniedError
+
+            if isinstance(exc, PolicyDeniedError):
+                raise
             message = f"{tool_id}: {exc}"
             self.result.errors.append(message)
             self._log(self.M(f"خطا در {message}", f"error in {message}"))

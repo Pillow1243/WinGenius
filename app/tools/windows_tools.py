@@ -13,9 +13,9 @@ from ..core.registry import tool
 from ..core.spec import (
     K_CHOICE, K_FILE, K_INT, K_SAVE, K_TEXT, Field, RunContext, RunResult, ToolError,
 )
-from ..core.utils import human_size, run_cmd, unique_path
+from ..core.utils import human_size, run_cmd, safe_filename, unique_path
 from ..core import winapi
-from ._helpers import IS_WINDOWS, need_windows, out_dir, require
+from ._helpers import IS_WINDOWS, need_windows, out_dir, require, save_target
 
 APPLETS = [
     ("settings", "تنظیمات ویندوز", "Windows Settings", "ms-settings:"),
@@ -163,8 +163,8 @@ def screenshot(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     import datetime
 
     default_name = f"screenshot_{datetime.datetime.now():%Y%m%d_%H%M%S}.png"
-    dest = Path(str(v.get("out") or "")).expanduser() if str(v.get("out") or "").strip() else unique_path(
-        out_dir(ctx) / default_name)
+    requested = str(v.get("out") or "").strip()
+    dest = save_target(ctx, requested, default_name) if requested else unique_path(out_dir(ctx) / default_name)
     dest.parent.mkdir(parents=True, exist_ok=True)
     try:
         mss = require("mss", "mss", ctx)
@@ -174,20 +174,27 @@ def screenshot(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
             shot = sct.grab(sct.monitors[index])
             _png, _size = mss_tools.to_png(shot.rgb, shot.size, output=str(dest))
     except ToolError:
-        # Fallback: PowerShell screen capture on Windows
+        # Fallback: PowerShell screen capture on Windows (path passed via env var, never interpolated)
         need_windows(ctx)
         script = (
             "Add-Type -AssemblyName System.Windows.Forms,System.Drawing;"
             "$b=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds;"
             "$bmp=New-Object System.Drawing.Bitmap $b.Width,$b.Height;"
-            "$g=[System.Drawing.Graphics]::FromImage($bmp);"
+            "$g=[System.Windows.Forms.Graphics]::FromImage($bmp);"
             "$g.CopyFromScreen($b.Location,[System.Drawing.Point]::Empty,$b.Size);"
-            f"$bmp.Save('{dest}')"
+            "$bmp.Save($env:WG_SHOT_DEST);"
+            "$g.Dispose();$bmp.Dispose()"
         )
-        code, out, err = run_cmd(["powershell", "-NoProfile", "-Command", script], timeout=60)
+        env = dict(os.environ, WG_SHOT_DEST=str(dest))
+        proc = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            capture_output=True, text=True, timeout=60, env=env,
+            creationflags=(0x08000000 if IS_WINDOWS else 0),
+        )
         if not dest.exists():
-            raise ToolError(ctx.M(f"گرفتن اسکرین‌شات ناموفق بود: {err or out}",
-                                  f"Screenshot failed: {err or out}"))
+            detail = (proc.stderr or proc.stdout or "").strip()
+            raise ToolError(ctx.M(f"گرفتن اسکرین‌شات ناموفق بود: {detail}",
+                                  f"Screenshot failed: {detail}"))
     except Exception as exc:
         raise ToolError(ctx.M(f"گرفتن اسکرین‌شات ناموفق بود: {exc}", f"Screenshot failed: {exc}"))
     return RunResult(message=ctx.M(f"اسکرین‌شات ذخیره شد ({human_size(dest.stat().st_size)}).",
@@ -267,9 +274,11 @@ def create_shortcut(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     target = Path(str(v.get("target") or ""))
     if not target.exists():
         raise ToolError(ctx.M("مسیر هدف پیدا نشد.", "Target path not found."))
-    name = str(v.get("name") or "Shortcut")
-    if not name.lower().endswith(".lnk"):
-        name += ".lnk"
+    raw_name = str(v.get("name") or "Shortcut").strip()
+    if raw_name.lower().endswith(".lnk"):
+        raw_name = raw_name[:-4]
+    clean_stem = safe_filename(raw_name, fallback="Shortcut")
+    name = f"{clean_stem}.lnk"
     where = str(v.get("where") or "desktop")
     if where == "desktop":
         folder = Path(os.environ.get("USERPROFILE", str(Path.home()))) / "Desktop"
@@ -280,17 +289,31 @@ def create_shortcut(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
         folder = (Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Windows"
                   / "Start Menu" / "Programs")
     folder.mkdir(parents=True, exist_ok=True)
-    dest = folder / name
+    folder_root = folder.resolve()
+    dest = (folder_root / name).resolve()
+    if dest == folder_root or folder_root not in dest.parents:
+        raise ToolError(ctx.M("نام میان‌بر نامعتبر است.", "Invalid shortcut name."))
     script = (
         "$ws = New-Object -ComObject WScript.Shell;"
-        f"$s = $ws.CreateShortcut('{dest}');"
-        f"$s.TargetPath = '{target}';"
-        f"$s.WorkingDirectory = '{target.parent}';"
+        "$s = $ws.CreateShortcut($env:WG_LNK_DEST);"
+        "$s.TargetPath = $env:WG_LNK_TARGET;"
+        "$s.WorkingDirectory = $env:WG_LNK_WORKDIR;"
         "$s.Save()"
     )
-    code, out, err = run_cmd(["powershell", "-NoProfile", "-Command", script], timeout=40)
+    env = dict(
+        os.environ,
+        WG_LNK_DEST=str(dest),
+        WG_LNK_TARGET=str(target),
+        WG_LNK_WORKDIR=str(target.parent),
+    )
+    proc = subprocess.run(
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+        capture_output=True, text=True, timeout=40, env=env,
+        creationflags=(0x08000000 if IS_WINDOWS else 0),
+    )
     if not dest.exists():
-        raise ToolError(ctx.M(f"ساخت میان‌بر ناموفق بود: {err or out}", f"Shortcut creation failed: {err or out}"))
+        detail = (proc.stderr or proc.stdout or "").strip()
+        raise ToolError(ctx.M(f"ساخت میان‌بر ناموفق بود: {detail}", f"Shortcut creation failed: {detail}"))
     return RunResult(message=ctx.M("میان‌بر ساخته شد.", "Shortcut created."),
                      outputs=[str(dest)], open_target=str(dest))
 
@@ -386,15 +409,25 @@ def _make_shortcut(shortcut: Path, target: Path, arguments: str, ctx: RunContext
     except Exception as exc:
         ctx.log(f"pywin32 shortcut failed ({exc}); trying PowerShell")
     script = (
-        "$s=(New-Object -ComObject WScript.Shell).CreateShortcut('" + str(shortcut) + "');"
-        "$s.TargetPath='" + str(target) + "';"
-        "$s.Arguments='" + arguments.replace("'", "''") + "';"
-        "$s.WorkingDirectory='" + str(target.parent) + "';"
-        "$s.IconLocation='" + str(target) + "';"
+        "$s=(New-Object -ComObject WScript.Shell).CreateShortcut($env:WG_LNK_DEST);"
+        "$s.TargetPath=$env:WG_LNK_TARGET;"
+        "$s.Arguments=$env:WG_LNK_ARGS;"
+        "$s.WorkingDirectory=$env:WG_LNK_WORKDIR;"
+        "$s.IconLocation=$env:WG_LNK_TARGET;"
         "$s.Description='WinGenius';"
         "$s.Save()"
     )
-    result = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
-                            capture_output=True, text=True, timeout=60)
+    env = dict(
+        os.environ,
+        WG_LNK_DEST=str(shortcut),
+        WG_LNK_TARGET=str(target),
+        WG_LNK_ARGS=arguments,
+        WG_LNK_WORKDIR=str(target.parent),
+    )
+    result = subprocess.run(
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+        capture_output=True, text=True, timeout=60, env=env,
+        creationflags=(0x08000000 if IS_WINDOWS else 0),
+    )
     if result.returncode != 0:
         raise ToolError(f"PowerShell shortcut creation failed: {result.stderr[:400]}")

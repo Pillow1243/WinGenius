@@ -135,6 +135,7 @@ def macro_run(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
 
     runner = macro_module.MacroRunner(lang=ctx.lang, output_dir=str(out_dir(ctx, "macro")),
                                       dry_run=bool(v.get("dry_run")),
+                                      policy=getattr(ctx, "policy", None),
                                       on_log=lambda message: ctx.log(message),
                                       on_progress=lambda current, total: ctx.progress(current, total))
     result = runner.execute(macro, variables)
@@ -348,22 +349,42 @@ def backup_appdata(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
                               f"No permission to write into: {target_dir}"))
     archive = target_dir / time.strftime("wingenius-backup-%Y%m%d-%H%M.zip")
     wanted = ("settings.ini", "history.json", "workflows.json", "schedules.json", "watch_rules.json",
-              "search_index.sqlite3", "journal.sqlite3", "macros")
+              "search_index.sqlite3", "journal.sqlite3", "macros", "flows")
     added = 0
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as bundle:
         for name in wanted:
             path = base / name
+            if path.is_symlink():
+                continue
             if path.is_file():
                 if name in {"history.json", "workflows.json", "schedules.json", "watch_rules.json"}:
-                    from ..core.privacy import sanitize_document
                     import json
-                    clean = sanitize_document(json.loads(path.read_text(encoding="utf-8")))
+
+                    from ..core.privacy import sanitize_document
+                    try:
+                        clean = sanitize_document(json.loads(path.read_text(encoding="utf-8")))
+                    except ValueError:
+                        clean = []
                     bundle.writestr(name, json.dumps(clean, ensure_ascii=False))
+                elif path.suffix == ".sqlite3":
+                    import tempfile
+
+                    from ..core.upgrade import safe_copy_sqlite
+                    fd, snap_name = tempfile.mkstemp(prefix="wg_bak_", suffix=".sqlite3")
+                    os.close(fd)
+                    snap = Path(snap_name)
+                    try:
+                        safe_copy_sqlite(path, snap)
+                        bundle.write(snap, arcname=name)
+                    finally:
+                        snap.unlink(missing_ok=True)
                 else:
                     bundle.write(path, arcname=name)
                 added += 1
             elif path.is_dir():
                 for item in walk_files(path):
+                    if item.is_symlink():
+                        continue
                     try:
                         bundle.write(item, arcname=str(item.relative_to(base)))
                         added += 1

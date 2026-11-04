@@ -36,6 +36,7 @@ import json
 import os
 import shutil
 import struct
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
@@ -222,9 +223,30 @@ class Vault:
             payload = (MAGIC_V1 + self._salt + struct.pack(">I", self.iterations)
                        + nonce + struct.pack(">I", len(ciphertext)) + ciphertext)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        temp = self.path.with_suffix(self.path.suffix + ".tmp")
-        temp.write_bytes(payload)
-        os.replace(temp, self.path)
+        fd, temp_name = tempfile.mkstemp(
+            prefix=f".{self.path.name}.", suffix=".tmp", dir=self.path.parent
+        )
+        try:
+            if os.name != "nt":
+                try:
+                    os.fchmod(fd, 0o600)
+                except OSError:
+                    pass
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp_name, self.path)
+            if os.name != "nt":
+                try:
+                    os.chmod(self.path, 0o600)
+                except OSError:
+                    pass
+        finally:
+            try:
+                os.unlink(temp_name)
+            except FileNotFoundError:
+                pass
 
     # -------------------------------------------------------------------- read
     def unlock(self) -> List[Dict[str, Any]]:
@@ -428,12 +450,17 @@ class Vault:
             except Exception as exc:
                 raise VaultError(f"cannot decrypt {name}") from exc
             root = out_dir.resolve()
-            target = (out_dir / _safe_entry_name(entry["name"])).resolve()
-            if target != root and root not in target.parents:
+            safe_base = _safe_entry_name(entry["name"])
+            target = (root / safe_base).resolve()
+            if target == root or root not in target.parents:
                 raise VaultError(f"unsafe entry name in vault: {entry['name']!r}")
+            stem, suffix = Path(safe_base).stem, Path(safe_base).suffix
             counter = 2
-            while target.exists():
-                target = out_dir / f"{Path(entry['name']).stem}-{counter}{Path(entry['name']).suffix}"
+            while target.exists() or target.is_symlink():
+                candidate = (root / f"{stem}-{counter}{suffix}").resolve()
+                if candidate == root or root not in candidate.parents:
+                    raise VaultError(f"unsafe collision target in vault: {entry['name']!r}")
+                target = candidate
                 counter += 1
             target.write_bytes(plain)
             written.append(target)

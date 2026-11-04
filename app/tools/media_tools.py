@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -44,6 +45,19 @@ def _run_ffmpeg(ctx: RunContext, args: List[str], duration: float = 0.0, label: 
     except FileNotFoundError:
         raise ToolError(ctx.M("ffmpeg اجرا نشد.", "Could not run ffmpeg."))
     errors: List[str] = []
+
+    def _drain_stderr() -> None:
+        if proc.stderr is None:
+            return
+        try:
+            data = proc.stderr.read()
+            if data:
+                errors.append(data[-8192:])
+        except Exception:
+            pass
+
+    stderr_thread = threading.Thread(target=_drain_stderr, name="wg-ffmpeg-stderr", daemon=True)
+    stderr_thread.start()
     try:
         assert proc.stdout is not None
         for line in proc.stdout:
@@ -61,12 +75,16 @@ def _run_ffmpeg(ctx: RunContext, args: List[str], duration: float = 0.0, label: 
                 proc.kill()
                 proc.wait(timeout=5)
                 ctx.check_cancel()
-        assert proc.stderr is not None
-        errors.append(proc.stderr.read())
         proc.wait(timeout=30)
+        stderr_thread.join(timeout=5)
     finally:
         if proc.poll() is None:
             proc.kill()
+            try:
+                proc.wait(timeout=3)
+            except Exception:
+                pass
+        stderr_thread.join(timeout=2)
     if proc.returncode != 0:
         detail = "".join(errors).strip()[-1200:]
         raise ToolError(ctx.M(f"ffmpeg ناموفق بود:\n{detail}", f"ffmpeg failed:\n{detail}"))

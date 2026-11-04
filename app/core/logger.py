@@ -7,10 +7,23 @@ import threading
 from collections import deque
 
 from .paths import logs_dir
+from .privacy import scrub_text
 
 _LOCK = threading.Lock()
 _BUFFER: deque[str] = deque(maxlen=2000)
 _CONFIGURED = False
+
+
+class _ScrubbingFormatter(logging.Formatter):
+    """Redacts inline secrets and anonymizes home paths before persisting logs."""
+
+    def __init__(self, fmt: str, datefmt: str | None = None, *, scrub_paths: bool = False) -> None:
+        super().__init__(fmt, datefmt)
+        self._scrub_paths = scrub_paths
+
+    def format(self, record: logging.LogRecord) -> str:
+        rendered = super().format(record)
+        return scrub_text(rendered, scrub_paths=self._scrub_paths)
 
 
 class _BufferHandler(logging.Handler):
@@ -33,15 +46,19 @@ def setup_logging(debug: bool = False) -> None:
     root.setLevel(level)
     root.propagate = False
 
-    fmt = logging.Formatter(
-        "%(asctime)s | %(levelname)-7s | %(name)s | %(message)s", "%H:%M:%S"
+    fmt = _ScrubbingFormatter(
+        "%(asctime)s | %(levelname)-7s | %(name)s | %(message)s", "%H:%M:%S",
+        scrub_paths=False,
     )
     try:
         handler = logging.handlers.RotatingFileHandler(
             logs_dir() / "wingenius.log", maxBytes=1_500_000, backupCount=3, encoding="utf-8"
         )
         handler.setFormatter(
-            logging.Formatter("%(asctime)s | %(levelname)-7s | %(name)s | %(message)s")
+            _ScrubbingFormatter(
+                "%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
+                scrub_paths=True,
+            )
         )
         root.addHandler(handler)
     except OSError:

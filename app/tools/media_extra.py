@@ -234,7 +234,7 @@ def audio_tempo(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     _ffmpeg(ctx)
     src = first_file(v, "src", ctx)
     tempo = max(0.5, min(3.0, float(v.get("tempo") or 1.25)))
-    dest = _output(ctx, v, src, f"_tempo{tempo:g}", "mp3")
+    dest = save_target(ctx, str(v.get("out") or ""), f"{src.stem}_tempo{tempo:g}.mp3")
     chain = []
     remaining = tempo
     while remaining > 2.0:
@@ -251,6 +251,18 @@ def audio_tempo(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
         message=ctx.M(f"سرعت صدا ×{tempo:g} شد.\n{dest}", f"Audio tempo ×{tempo:g}.\n{dest}"),
         outputs=[str(dest)], open_target=str(dest),
     )
+
+
+def _escape_ffmpeg_filter_path(path: Path) -> str:
+    """Escape a filesystem path for an ffmpeg lavfi `subtitles='...'` option."""
+    raw = str(path).replace("\\", "/")
+    out: List[str] = []
+    for ch in raw:
+        if ch in ("\\", "'", ":", ",", ";", "[", "]"):
+            out.append("\\" + ch)
+        else:
+            out.append(ch)
+    return "".join(out)
 
 
 @tool(
@@ -273,7 +285,7 @@ def video_burn_subtitles(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     subs = first_file(v, "subs", ctx)
     dest = save_target(ctx, str(v.get("out") or ""), f"{src.stem}_subbed.mp4")
     style = f"FontSize={max(10, int(v.get('font_size') or 24))},Outline=1,Shadow=0"
-    path_for_filter = str(subs).replace("\\", "/").replace(":", "\\:")
+    path_for_filter = _escape_ffmpeg_filter_path(subs)
     args = ["-y", "-i", str(src), "-vf", f"subtitles='{path_for_filter}':force_style='{style}'",
             "-c:a", "copy", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", str(dest)]
     _run_ffmpeg(ctx, args, _duration(src), ctx.M("حک کردن زیرنویس…", "Burning subtitles…"))
@@ -466,6 +478,10 @@ def _load_whisper(ctx: RunContext):
         ))
 
 
+_ALLOWED_WHISPER_MODELS = {"tiny", "base", "small", "medium", "large-v3"}
+_ALLOWED_WHISPER_LANGS = {"", "auto", "fa", "en", "ar", "tr", "de", "fr", "es", "ru", "zh", "ja"}
+
+
 @tool(
     id="audio_transcribe", category="media", name="گفتار به متن (زیرنویس خودکار)",
     name_en="Speech to text (auto subtitles)",
@@ -499,9 +515,16 @@ def _load_whisper(ctx: RunContext):
 )
 def audio_transcribe(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     src = first_file(v, "src", ctx)
+    model_name = str(v.get("model") or "small").strip()
+    if model_name not in _ALLOWED_WHISPER_MODELS:
+        raise ToolError(ctx.M(
+            f"مدل «{model_name}» مجاز نیست (یکی از tiny/base/small/medium/large-v3 را انتخاب کنید).",
+            f"Unsupported Whisper model '{model_name}' (choose tiny, base, small, medium, or large-v3).",
+        ))
+    language = str(v.get("language") or "auto").strip().lower()
+    if language not in _ALLOWED_WHISPER_LANGS:
+        raise ToolError(ctx.M("کد زبان گفتار نامعتبر است.", "Invalid spoken language code."))
     engine = _load_whisper(ctx)
-    model_name = str(v.get("model") or "small")
-    language = str(v.get("language") or "auto")
     fmt = str(v.get("fmt") or "srt")
     language = None if language in ("", "auto") else language
 

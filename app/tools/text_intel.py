@@ -12,7 +12,7 @@ from ..core.spec import (
     K_CHOICE, K_FILE, K_INT, K_MULTILINE, K_SAVE, K_TEXT, Field, RunContext, RunResult, ToolError,
 )
 from ..core.utils import ensure_dir
-from ._helpers import read_text_file
+from ._helpers import read_text_file, save_target
 
 STOP_FA = set("""
 و در به از که این را با برای آن است بود شد می هم یا تا بر ای اند شده کند کنند کرد باید
@@ -60,11 +60,11 @@ def _tokens(text: str) -> List[str]:
     return [word.lower() for word in WORD_RE.findall(text)]
 
 
-def _save(text: str, requested: str) -> List[str]:
+def _save(ctx: RunContext, text: str, requested: str, default_name: str = "output.txt") -> List[str]:
     requested = (requested or "").strip()
     if not requested:
         return []
-    target = ensure_dir(Path(requested).parent) / Path(requested).name
+    target = save_target(ctx, requested, default_name)
     target.write_text(text, encoding="utf-8")
     return [str(target)]
 
@@ -116,7 +116,7 @@ def text_summarize(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     summary = "\n".join(f"• {sentence}" for _score, _index, sentence in picked)
     details = (f"{ctx.M('جمله‌های متن', 'Sentences')}: {len(sentences)} · "
                f"{ctx.M('کلمه‌ها', 'Words')}: {len(_tokens(raw))}\n\n{summary}")
-    outputs = _save(summary, str(v.get("out") or ""))
+    outputs = _save(ctx, summary, str(v.get("out") or ""), "summary.txt")
     return RunResult(
         message=ctx.M(f"خلاصه در {len(picked)} جمله آماده شد.", f"Summary ready ({len(picked)} sentences)."),
         details=details, outputs=outputs)
@@ -457,7 +457,7 @@ def text_cleanup(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
             unique.append(line)
         text = "\n".join(unique)
     text = text.strip()
-    outputs = _save(text, str(v.get("out") or ""))
+    outputs = _save(ctx, text, str(v.get("out") or ""), "cleaned.txt")
     return RunResult(message=ctx.M(f"پاک‌سازی شد ({before} → {len(text)} کاراکتر).",
                                   f"Cleaned ({before} → {len(text)} chars)."),
                      details=text[:4000], outputs=outputs)

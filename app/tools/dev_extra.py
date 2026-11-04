@@ -13,7 +13,7 @@ from ..core.spec import (
     K_CHOICE, K_DIR, K_FILE, K_MULTILINE, K_SAVE, K_TEXT, Field, RunContext, RunResult, ToolError,
 )
 from ..core.utils import ensure_dir
-from ._helpers import read_text_file
+from ._helpers import read_text_file, save_target
 
 # --------------------------------------------------------------------- minify
 def _minify_css(text: str) -> str:
@@ -73,7 +73,7 @@ def minify_code(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     saved: List[str] = []
     requested = str(v.get("out") or "").strip()
     if requested:
-        target = ensure_dir(Path(requested).parent) / Path(requested).name
+        target = save_target(ctx, requested, f"minified.{kind}")
         target.write_text(result, encoding="utf-8")
         saved.append(str(target))
     saved_percent = max(0.0, 100 - len(result) * 100 / max(1, len(raw)))
@@ -116,7 +116,7 @@ def sql_format(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     saved: List[str] = []
     requested = str(v.get("out") or "").strip()
     if requested:
-        target = ensure_dir(Path(requested).parent) / Path(requested).name
+        target = save_target(ctx, requested, "formatted.sql")
         target.write_text(formatted, encoding="utf-8")
         saved.append(str(target))
     return RunResult(message=ctx.M("SQL مرتب شد.", "SQL formatted."), details=formatted, outputs=saved)
@@ -178,7 +178,7 @@ def json_yaml(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     saved: List[str] = []
     requested = str(v.get("out") or "").strip()
     if requested:
-        target_path = ensure_dir(Path(requested).parent) / Path(requested).name
+        target_path = save_target(ctx, requested, f"converted.{target}")
         target_path.write_text(output, encoding="utf-8")
         saved.append(str(target_path))
     return RunResult(message=ctx.M(f"{source.upper()} → {target.upper()} آماده است.",
@@ -388,7 +388,7 @@ def csv_to_sql(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     saved: List[str] = []
     requested = str(v.get("out") or "").strip()
     if requested:
-        target = ensure_dir(Path(requested).parent) / Path(requested).name
+        target = save_target(ctx, requested, f"{table}.sql")
         target.write_text(sql, encoding="utf-8")
         saved.append(str(target))
     return RunResult(message=ctx.M(f"{len(rows) - 1} ردیف به SQL تبدیل شد.",

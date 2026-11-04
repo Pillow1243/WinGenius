@@ -123,8 +123,23 @@ STRINGS: Dict[str, Dict[str, str]] = {
     "cmd.undo": {"fa": "بازگردانی آخرین عملیات", "en": "Undo last operation"},
     "cmd.api": {"fa": "API محلی: روشن/خاموش", "en": "Local API: on/off"},
     "cmd.vault": {"fa": "گاوصندوق رمزدار", "en": "Encrypted vault"},
+    "cmd.update": {"fa": "بررسی و نصب به‌روزرسانی", "en": "Check & install updates"},
     "cmd.section": {"fa": "دستورها", "en": "Commands"},
     "cmd.recent": {"fa": "اخیر", "en": "Recent"},
+    # settings: updates section
+    "st.updates": {"fa": "به‌روزرسانی برنامه", "en": "Application updates"},
+    "st.auto_update": {
+        "fa": "بررسی خودکار نسخه‌ی جدید هنگام شروع برنامه",
+        "en": "Automatically check for updates on startup",
+    },
+    "st.check_update_btn": {
+        "fa": "بررسی و نصب نسخه‌ی جدید…",
+        "en": "Check & install updates…",
+    },
+    "st.rollback_btn": {
+        "fa": "بازگشت به نسخه‌ی قبلی ({0})",
+        "en": "Rollback to previous version ({0})",
+    },
     # settings: system section
     "st.system": {"fa": "سیستم و عیب‌یابی", "en": "System and diagnostics"},
     "st.doctor": {"fa": "گزارش کامل وضعیت", "en": "Full status report"},

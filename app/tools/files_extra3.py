@@ -1,6 +1,7 @@
 """File extras: AES-encrypted ZIP archives and long-path auditing for Windows."""
 from __future__ import annotations
 
+import stat
 import zipfile
 from pathlib import Path
 from typing import Any, Dict, List
@@ -129,9 +130,28 @@ def archive_decrypt(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
         infos = archive.infolist()
         if not infos:
             raise ToolError(ctx.M("این آرشیو خالی است.", "This archive is empty."))
+        max_entries = 10_000
+        max_total_bytes = 2 * 1024 * 1024 * 1024
+        max_ratio = 200
+        total_written = 0
+        if len(infos) > max_entries:
+            raise ToolError(ctx.M(
+                f"تعداد فایل‌های داخل آرشیو بیش از سقف مجاز ({max_entries:,}) است.",
+                f"Archive exceeds the maximum entry limit ({max_entries:,}).",
+            ))
         for index, info in enumerate(infos, start=1):
             ctx.progress(index, len(infos), info.filename)
             name = info.filename.replace("\\", "/")
+            mode = (info.external_attr >> 16) & 0xFFFF
+            if stat.S_ISLNK(mode):
+                skipped.append(name)
+                continue
+            if info.file_size > 10 * 1024 * 1024:
+                if info.file_size / max(1, info.compress_size) > max_ratio:
+                    raise ToolError(ctx.M(
+                        f"نسبت فشرده‌سازی مشکوک (ZIP bomb) در {name}.",
+                        f"Suspicious compression ratio (ZIP bomb) in {name}.",
+                    ))
             if name.startswith("/") or ".." in Path(name).parts or ":" in name.split("/")[0]:
                 skipped.append(name)
                 continue
@@ -152,7 +172,16 @@ def archive_decrypt(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
                         chunk = handle.read(1 << 20)
                         if not chunk:
                             break
+                        total_written += len(chunk)
+                        if total_written > max_total_bytes:
+                            raise ToolError(ctx.M(
+                                "حجم بازشده‌ی آرشیو از سقف مجاز (۲ گیگابایت) گذشت.",
+                                "Uncompressed archive size exceeded the 2 GiB safety limit.",
+                            ))
                         out_handle.write(chunk)
+            except ToolError:
+                target.unlink(missing_ok=True)
+                raise
             except RuntimeError as exc:
                 if "password" in str(exc).lower() or "encrypted" in str(exc).lower():
                     raise ToolError(ctx.M(

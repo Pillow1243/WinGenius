@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -9,7 +10,7 @@ from typing import Any, Dict, List
 
 from .logger import get_logger
 from .paths import data_dir
-from .privacy import atomic_json_write, sanitize_document, sanitize_values, redact_known, secret_strings
+from .privacy import atomic_json_write, redact_known, sanitize_document, sanitize_values, scrub_text, secret_strings
 
 log = get_logger("history")
 MAX_ENTRIES = 150
@@ -43,6 +44,7 @@ class HistoryEntry:
 
 class History:
     def __init__(self) -> None:
+        self._lock = threading.RLock()
         self._path = data_dir() / "history.json"
         self._entries: List[HistoryEntry] = []
         self._load()
@@ -90,21 +92,26 @@ class History:
             message=(getattr(job, "message", "") or getattr(job, "error", ""))[:400],
             values=dict(getattr(job, "values", {}) or {}),
         )
-        entry.message = redact_known(entry.message, secret_strings(entry.tool_id, entry.values))
+        entry.message = scrub_text(redact_known(entry.message, secret_strings(entry.tool_id, entry.values)))
         entry.values = sanitize_values(entry.tool_id, entry.values)
-        self._entries.insert(0, entry)
-        del self._entries[MAX_ENTRIES:]
-        self._save()
+        with self._lock:
+            self._entries.insert(0, entry)
+            del self._entries[MAX_ENTRIES:]
+            self._save()
 
     def entries(self, limit: int = 20) -> List[HistoryEntry]:
-        return self._entries[:limit]
+        with self._lock:
+            return list(self._entries[:limit])
 
     def for_tool(self, tool_id: str, limit: int = 5) -> List[HistoryEntry]:
-        return [entry for entry in self._entries if entry.tool_id == tool_id][:limit]
+        with self._lock:
+            return [entry for entry in self._entries if entry.tool_id == tool_id][:limit]
 
     def recent_outputs(self, limit: int = 12) -> List[str]:
         seen: List[str] = []
-        for entry in self._entries:
+        with self._lock:
+            snapshot = list(self._entries)
+        for entry in snapshot:
             for output in entry.outputs:
                 if output not in seen and Path(output).exists():
                     seen.append(output)
@@ -113,8 +120,9 @@ class History:
         return seen
 
     def clear(self) -> None:
-        self._entries.clear()
-        self._save()
+        with self._lock:
+            self._entries.clear()
+            self._save()
 
 
 history = History()

@@ -54,6 +54,35 @@ def secret_strings(tool_id: str, values: dict[str, Any]) -> list[str]:
     return found
 
 
+_SECRET_VALUE_PATTERNS = (
+    re.compile(r"(?i)\b(bearer|x-wingenius-token)\s*[:=]\s*([^\s,;\"']+)"),
+    re.compile(r"(?i)\b(password|passwd|passphrase|secret|api[_-]?key|access[_-]?token|auth[_-]?token)\s*([:=])\s*([^\s,;\"']+)"),
+    re.compile(r"\b(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b"),
+    re.compile(r"\b(AIza[0-9A-Za-z_-]{32,})\b"),
+    re.compile(r"\b(AKIA[0-9A-Z]{16})\b"),
+    re.compile(r"\b(sk-[A-Za-z0-9_-]{20,})\b"),
+    re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b"),
+    re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----"),
+)
+_USER_HOME_RE = re.compile(
+    r"(?:[A-Za-z]:\\Users\\[^\\\s\"']+)|(?:/home/[^/\s\"']+)|(?:/Users/[^/\s\"']+)"
+)
+
+
+def scrub_text(text: str, *, scrub_paths: bool = False) -> str:
+    """Redact credential tokens and key=secret pairs; optionally anonymize user home paths."""
+    if not text:
+        return ""
+    out = str(text)
+    out = _SECRET_VALUE_PATTERNS[0].sub(r"\1: [REDACTED]", out)
+    out = _SECRET_VALUE_PATTERNS[1].sub(r"\1\2[REDACTED]", out)
+    for pattern in _SECRET_VALUE_PATTERNS[2:]:
+        out = pattern.sub("[REDACTED]", out)
+    if scrub_paths:
+        out = _USER_HOME_RE.sub("<home>", out)
+    return out
+
+
 def redact_known(text: str, secrets: list[str]) -> str:
     for secret in sorted(set(secrets), key=len, reverse=True):
         text = text.replace(secret, "[REDACTED]")

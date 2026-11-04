@@ -1,15 +1,23 @@
-# WinGenius 7.0 — دستیار همه‌کاره ویندوز
+# WinGenius 7.1 — دستیار همه‌کاره ویندوز
 
 <p align="center">
   <a href="https://github.com/Pillow1243/WinGenius/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Pillow1243/WinGenius/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="tools" src="https://img.shields.io/badge/tools-292-5B8CFF">
-  <img alt="checks" src="https://img.shields.io/badge/checks-2%2C313%20passing-2BD9A0">
+  <img alt="checks" src="https://img.shields.io/badge/checks-2%2C336%20passing-2BD9A0">
   <img alt="python" src="https://img.shields.io/badge/python-3.12%20%7C%203.13-3776AB">
   <img alt="platform" src="https://img.shields.io/badge/platform-Windows%2010%2F11-0078D6">
   <img alt="license" src="https://img.shields.io/badge/license-AGPL--3.0-orange">
   <a href="../../releases/latest"><img alt="release" src="https://img.shields.io/github/v/release/Pillow1243/WinGenius?display_name=tag"></a>
 </p>
 
+> **نسخه‌ی ۷.۱ — «معماری یکپارچه‌ی اجرا و سخت‌سازی امنیتی سرتاسری»:** همه‌ی مسیرهای اجرا
+> (رابط گرافیکی، صف، گردش‌کار، ماکرو، CLI، زمان‌بند، پایش پوشه و API محلی) از هسته‌ی واحد
+> `ExecutionService` و طبقه‌بند ریسک پویا در چهار سطح (`safe`، `confirm`، `destructive`، `elevated`)
+> عبور می‌کنند؛ حالت CLI کاملاً بدون وابستگی به `PySide6` اجرا می‌شود (`--yes` و `--dry-run`)؛
+> API محلی در برابر حملات `Origin`/CSRF و قاچاق فریم HTTP محافظت شد؛ استخراج آرشیو و حذف امن در
+> برابر symlink و ZIP-bomb مقاوم شدند؛ و رمزنگاری متنی به `AES-256-GCM` احرازشده (`WGA1`) ارتقا یافت.
+> جزئیات در [`CHANGELOG.md`](CHANGELOG.md) و [`docs/audit_7_1.md`](docs/audit_7_1.md).
+>
 > **نسخه‌ی ۷.۰ — «فارسیِ درست در PDF، از ریشه»:** موتور تازه‌ی `persian_pdf` سه مشکل قدیمی را
 > یک‌جا حل می‌کند: **متن فارسی خروجی PDF دیگر به‌هم‌ریخته یا برعکس نیست** (بازیابی گلیف‌های
 > بدون نگاشت، ترتیب منطقی، نیم‌فاصله‌ی سالم)، **PDF→Word واقعاً راست‌به‌چپ است** (پاراگراف‌های
@@ -78,7 +86,7 @@
 - API بدون توکن معتبر راه نمی‌افتد؛ ابزارهای مخرب به‌صورت پیش‌فرض از API ممنوع‌اند.
 - تأیید عملیات خطرناک در اجرای مستقیم و پس‌زمینه یکسان شد؛ تنظیمات هر کار در صف مستقل‌اند.
 - افزونه‌های Python فقط پس از تأیید صریح نسخهٔ دقیق فایل اجرا می‌شوند؛ سندباکس نیستند.
-- ۳۹ تست بازگشت جدید: `python -m pytest tests/hardening_test.py -q`.
+- ۵۶ تست بازگشت سخت‌سازی: `python -m pytest tests/hardening_test.py -q`.
 
 [جزئیات و محدودیت‌های این تغییرها](docs/hardening.md)
 
@@ -459,7 +467,7 @@ WinGenius/
 
 ---
 
-## ۱۰. تست‌ها (۲٬۳۱۳ بررسی، ۰ خطا)
+## ۱۰. تست‌ها (۲٬۳۳۶ بررسی، ۰ خطا)
 
 ```bash
 python tests/smoke_test.py                 # ۱۵۴ تست عملکردی روی فایل‌های واقعی
@@ -489,9 +497,9 @@ python packaging/make_showcase.py                                # docs/showcase
 ```
 
 آخرین نتیجه (headless، `QT_QPA_PLATFORM=offscreen`): **smoke ۱۵۴/۱۵۴** ·
-**functional ۶۳۸/۶۳۸** · **output ۱۱۱/۱۱۱** · **UI ۱٬۲۵۹ بررسی: ALL CHECKS PASSED** ·
-**security ۵۷/۵۷** · **hardening ۳۹/۳۹** · **persian ۲۸/۲۸** · **packaging ۲۷/۲۷** · **۲۹۲ ابزار، ۰ خطای بارگذاری** —
-جمعاً **۲٬۳۱۳ بررسی PASS** (2,313 checks — آخرین `python scripts/stats.py --run`).
+**functional ۶۴۲/۶۴۲** · **output ۱۱۲/۱۱۲** · **UI ۱٬۲۵۹ بررسی: ALL CHECKS PASSED** ·
+**security ۵۷/۵۷** · **hardening ۵۶/۵۶** · **persian ۲۸/۲۸** · **packaging ۲۸/۲۸** · **۲۹۲ ابزار، ۰ خطای بارگذاری** —
+جمعاً **۲٬۳۳۶ بررسی PASS** (2,336 checks — آخرین `python scripts/stats.py --run`).
 پوشش تست (coverage) روی `app/` (اندازه‌گیری خطی؛ نه branch coverage): **۷۵٪**؛ با کنار گذاشتن ماژول‌های
 فقط-ویندوزی (`winapi`, `windows_*`) که روی لینوکس اجرا نمی‌شوند، **۷۷٪**.
 ماژول‌های تازه‌ی ۵.۰: `pdf_sign_tools` ۷۷٪، `indexer` (با OCR) ۷۸٪، `core/tesseract` ۷۵٪.

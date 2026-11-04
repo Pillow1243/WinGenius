@@ -33,6 +33,7 @@ class SettingsPanel(QWidget):
     pluginsChanged = Signal()
     openJobsRequested = Signal()
     jobsChangedRequested = Signal(int)
+    checkUpdatesRequested = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -270,6 +271,31 @@ class SettingsPanel(QWidget):
         history_row.addWidget(clear_history)
         history_row.addStretch(1)
         self._add_row(history_row)
+
+        # ------------------------------------------------------------- updates
+        self._add_row(divider())
+        self._section(t("st.updates"))
+        auto_upd_chk = QCheckBox(t("st.auto_update"))
+        auto_upd_chk.setChecked(bool(settings.get("ui/auto_check_updates")))
+        auto_upd_chk.toggled.connect(lambda state: self._set_flag("ui/auto_check_updates", state))
+        self._add_row(auto_upd_chk)
+
+        upd_row = QHBoxLayout()
+        check_upd_btn = QPushButton(t("st.check_update_btn"))
+        check_upd_btn.setObjectName("Primary")
+        check_upd_btn.clicked.connect(self.checkUpdatesRequested.emit)
+        upd_row.addWidget(check_upd_btn)
+
+        from ..core.updates import get_rollback_state
+
+        rb_state = get_rollback_state()
+        if rb_state and (rb_state.get("backup_exe_exists") or rb_state.get("data_backup_exists")):
+            rb_btn = QPushButton(t("st.rollback_btn", str(rb_state.get("previous_version") or "?")))
+            rb_btn.setObjectName("Ghost")
+            rb_btn.clicked.connect(self.checkUpdatesRequested.emit)
+            upd_row.addWidget(rb_btn)
+        upd_row.addStretch(1)
+        self._add_row(upd_row)
 
         # ------------------------------------------------------------- misc
         self._add_row(divider())

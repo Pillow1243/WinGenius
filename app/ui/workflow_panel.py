@@ -443,10 +443,34 @@ class WorkflowPanel(OverlaySheet):
             self.toastRequested.emit("در حال اجراست…" if self.lang != "en" else "Already running…",
                                      "warning")
             return
-        runner = WorkflowRunner(target, self.lang, settings.output_dir, {"__paths__": self._paths}, self)
+        from ..core.execution import ExecutionPolicy, OperationRisk, classify_steps
+
+        highest_risk, flagged = classify_steps([(step.tool_id, step.values) for step in target.steps])
+        if settings.get("ui/confirm_danger") and highest_risk >= OperationRisk.CONFIRM and flagged:
+            from PySide6.QtWidgets import QMessageBox
+
+            tier = highest_risk.label_for(self.lang)
+            reason = " · ".join(f"{a.tool_id}: {a.reason_for(self.lang)}" for a in flagged[:3])
+            prompt = (f"این گردش‌کار شامل عملیات حساس است:\n[{tier}] {reason}\n\nآیا اجرا شود؟"
+                      if self.lang != "en"
+                      else f"This workflow includes sensitive operations:\n[{tier}] {reason}\n\nRun anyway?")
+            answer = QMessageBox.question(
+                self, "تأیید اجرا" if self.lang != "en" else "Confirm execution", prompt,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        runner = WorkflowRunner(
+            target, self.lang, settings.output_dir, {"__paths__": self._paths}, self,
+            policy=ExecutionPolicy.for_gui(confirmed=True, record_history=True),
+        )
         runner.stepStarted.connect(self._on_step_started)
         runner.stepFinished.connect(self._on_step_finished)
         runner.finished.connect(self._on_finished)
+        self._retiring_runners = getattr(self, "_retiring_runners", [])
+        self._retiring_runners.append(runner)
+        runner.finished.connect(lambda _res, r=runner: self._release_runner(r))
         self._runner = runner
         for row in self._step_rows:
             row.set_status("")
@@ -473,8 +497,25 @@ class WorkflowPanel(OverlaySheet):
             self.toastRequested.emit(("خطا: " if self.lang != "en" else "Failed: ")
                                      + (result.message or ""), "error")
 
+    def _release_runner(self, runner: WorkflowRunner) -> None:
+        pool = getattr(self, "_retiring_runners", None)
+        if isinstance(pool, list) and runner in pool:
+            pool.remove(runner)
+        runner.deleteLater()
+
     def close_panel(self) -> None:
         if self._runner is not None:
             self._runner.cancel()
             self._runner = None
         super().close_panel()
+
+    def shutdown(self, timeout_ms: int = 2000) -> None:
+        runners = list(getattr(self, "_retiring_runners", []) or [])
+        if self._runner is not None and self._runner not in runners:
+            runners.append(self._runner)
+        for runner in runners:
+            try:
+                runner.shutdown(timeout_ms)
+            except Exception:
+                pass
+        self._runner = None

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -17,6 +18,17 @@ from ._helpers import ensure_dir, first_file, out_dir, require, save_target
 
 IMG_FILTER = "تصاویر (*.png *.jpg *.jpeg *.webp *.bmp *.tif *.tiff);;همه فایل‌ها (*)"
 IS_WINDOWS = sys.platform.startswith("win")
+_OCR_LANG_MULTI_RE = re.compile(r"^[a-z]{3}(?:_[a-z0-9]{1,8})?(?:\+[a-z]{3}(?:_[a-z0-9]{1,8})?)*$")
+_OCR_LANG_SINGLE_RE = re.compile(r"^[a-z]{3}(?:_[a-z0-9]{1,8})?$")
+MAX_TRAINEDDATA_BYTES = 100 * 1024 * 1024
+
+
+def _validate_ocr_lang(lang: str, ctx: RunContext, *, allow_plus: bool = True) -> str:
+    clean = str(lang or "").strip().lower()
+    pattern = _OCR_LANG_MULTI_RE if allow_plus else _OCR_LANG_SINGLE_RE
+    if not pattern.fullmatch(clean):
+        raise ToolError(ctx.M("کد زبان OCR نامعتبر است.", "Invalid OCR language code."))
+    return clean
 
 OCR_HINT_FA = (
     "برای خواندن متن از تصویر دو چیز لازم است:\n"
@@ -74,9 +86,11 @@ def image_ocr(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     if image.mode not in ("L", "RGB"):
         image = image.convert("RGB")
     ctx.progress(2, 3, ctx.M("خواندن متن", "Recognising text"))
-    config = f"--oem 3 --psm {int(v.get('psm') or 3)}"
+    lang_code = _validate_ocr_lang(str(v.get("lang") or "fas+eng"), ctx, allow_plus=True)
+    psm_val = max(0, min(13, int(v.get("psm") or 3)))
+    config = f"--oem 3 --psm {psm_val}"
     try:
-        text = pytesseract.image_to_string(image, lang=str(v.get("lang") or "fas+eng"), config=config)
+        text = pytesseract.image_to_string(image, lang=lang_code, config=config)
     except Exception as exc:
         raise ToolError(ctx.M(
             f"خواندن متن ناموفق بود. اگر خطا از زبان فارسی است، بسته‌ی زبان را نصب کنید:\n{exc}",
@@ -120,8 +134,8 @@ def pdf_ocr(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
 
     fitz = _fitz(ctx)
     src = first_file(v, "src", ctx)
-    language = str(v.get("lang") or "fas+eng")
-    language = "fas" if "fas" in language else "eng"
+    raw_lang = _validate_ocr_lang(str(v.get("lang") or "fas+eng"), ctx, allow_plus=True)
+    language = "fas" if "fas" in raw_lang else "eng"
     doc = fitz.open(str(src))
     outputs: List[str] = []
     try:
@@ -330,28 +344,40 @@ def ocr_setup(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
         if not raw:
             raise ToolError(ctx.M("مسیر خالی است.", "The path is empty."))
         candidate = Path(raw)
-        if candidate.is_dir():
+        if candidate.is_dir() and not candidate.is_symlink():
             for name in ("tesseract.exe", "tesseract"):
-                if (candidate / name).exists():
+                if (candidate / name).is_file() and not (candidate / name).is_symlink():
                     candidate = candidate / name
                     break
-        if not candidate.exists():
-            raise ToolError(ctx.M(f"این مسیر وجود ندارد: {candidate}",
-                                  f"That path does not exist: {candidate}"))
-        settings.set("ocr_tesseract_path", str(candidate))
-        langs = _installed_langs(candidate)
+        if not candidate.exists() and not candidate.is_symlink():
+            raise ToolError(ctx.M(f"مسیر وجود ندارد: {candidate}",
+                                  f"Path does not exist: {candidate}"))
+        if candidate.is_symlink() or not candidate.is_file():
+            raise ToolError(ctx.M(f"فایل اجرایی معتبر پیدا نشد: {candidate}",
+                                  f"Valid executable file not found: {candidate}"))
+        if not candidate.stem.lower().startswith("tesseract"):
+            raise ToolError(ctx.M(
+                "فقط فایل اجرایی Tesseract (tesseract / tesseract.exe) مجاز است.",
+                "Only a Tesseract executable (tesseract / tesseract.exe) may be configured.",
+            ))
+        resolved = candidate.resolve()
+        settings.set("ocr_tesseract_path", str(resolved))
+        langs = _installed_langs(str(resolved))
         return RunResult(
-            message=ctx.M(f"مسیر ثبت شد: {candidate}",
-                          f"Path saved: {candidate}"),
+            message=ctx.M(f"مسیر ثبت شد: {resolved}",
+                          f"Path saved: {resolved}"),
             details=ctx.M("زبان‌های نصب‌شده: ", "Installed languages: ")
                     + (", ".join(sorted(langs)) or ctx.M("هیچ", "none")),
         )
 
     exe = find_tesseract()
     if action == "download":
-        lang = str(v.get("lang") or "fas")
+        lang = _validate_ocr_lang(str(v.get("lang") or "fas"), ctx, allow_plus=False)
         target_dir = _writable_tessdata(exe, ctx)
-        target = target_dir / f"{lang}.traineddata"
+        target_root = target_dir.resolve()
+        target = (target_root / f"{lang}.traineddata").resolve()
+        if target_root not in target.parents:
+            raise ToolError(ctx.M("کد زبان نامعتبر است.", "Invalid language code."))
         if target.exists() and target.stat().st_size > 100_000:
             return RunResult(
                 message=ctx.M(f"بسته‌ی {LANG_LABELS.get(lang, lang)} از قبل نصب است.",
@@ -381,8 +407,13 @@ def ocr_setup(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
         with temp.open("wb") as handle:
             for chunk in response.iter_content(chunk_size=262_144):
                 if chunk:
-                    handle.write(chunk)
                     size += len(chunk)
+                    if size > MAX_TRAINEDDATA_BYTES:
+                        handle.close()
+                        temp.unlink(missing_ok=True)
+                        raise ToolError(ctx.M("فایل دانلودشده بیش از حد بزرگ است.",
+                                              "Downloaded language file exceeds the safety limit."))
+                    handle.write(chunk)
         if size < 100_000:
             temp.unlink(missing_ok=True)
             raise ToolError(ctx.M("فایل دانلودشده معتبر نیست (خیلی کوچک است).",

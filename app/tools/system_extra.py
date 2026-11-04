@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime
@@ -303,6 +304,13 @@ def scheduled_tasks(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     )
 
 
+_SENSITIVE_ENV_RE = re.compile(
+    r"(?:secret|token|password|passwd|pwd|api[_-]?key|private[_-]?key|auth|credential|"
+    r"access[_-]?key|client[_-]?secret|database_url|connection_string)",
+    re.IGNORECASE,
+)
+
+
 @tool(
     id="env_vars", category="system", name="متغیرهای محیطی", name_en="Environment variables",
     desc="متغیرهای محیطی را می‌خواند یا یک متغیر کاربر را تنظیم/حذف می‌کند.",
@@ -322,7 +330,10 @@ def env_vars(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     action = str(v.get("action") or "list")
     name = str(v.get("name") or "").strip()
     if action == "list":
-        rows = [f"{key}={value}" for key, value in sorted(os.environ.items())]
+        rows = [
+            f"{key}={'<redacted>' if _SENSITIVE_ENV_RE.search(key) else value}"
+            for key, value in sorted(os.environ.items())
+        ]
         return RunResult(message=ctx.M(f"{len(rows)} متغیر محیطی.", f"{len(rows)} environment variables."),
                          details="\n".join(rows))
     if not name:

@@ -294,6 +294,19 @@ jobs:
           $sums | Set-Content -Path release/SHA256SUMS.txt -Encoding utf8
           Get-ChildItem release | Select-Object Name, Length | Format-Table -AutoSize
 
+      - name: Build and sign update manifest
+        shell: pwsh
+        env:
+          WINGENIUS_UPDATE_SIGNING_KEY: ${{ secrets.WINGENIUS_UPDATE_SIGNING_KEY }}
+          WINGENIUS_UPDATE_KEY_ID: ${{ vars.WINGENIUS_UPDATE_KEY_ID }}
+        run: |
+          $tagArg = "${{ steps.meta.outputs.tag }}"
+          if ([string]::IsNullOrWhiteSpace($tagArg)) {
+            $tagArg = "v${{ steps.meta.outputs.version }}"
+          }
+          python scripts/sign_release.py --build --dir release `
+            --version "${{ steps.meta.outputs.version }}" --tag "$tagArg"
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v7
         with:

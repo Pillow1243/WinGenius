@@ -51,6 +51,8 @@ class RadialMenu(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setAccessibleName("Radial tool menu")
         self.setMinimumSize(520, 520)
         self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, False)
         self.palette_ref: Palette = theme.build_palette("aurora", "#5B8CFF")
@@ -514,15 +516,43 @@ class RadialMenu(QWidget):
             self.pageChanged.emit(self._page, self._pages)
             self.update()
 
+    def showEvent(self, event) -> None:
+        if self._animations and (self._pending is not None or self._nodes) and not self._timer.isActive():
+            self._last_tick = time.time()
+            self._timer.start()
+        super().showEvent(event)
+
+    def hideEvent(self, event) -> None:
+        if self._timer.isActive():
+            self._timer.stop()
+        super().hideEvent(event)
+
     def keyPressEvent(self, event) -> None:
         key = event.key()
-        if key in (Qt.Key.Key_Left, Qt.Key.Key_Up):
+        if key in (Qt.Key.Key_PageUp,):
             self.navigate_page(-1)
-        elif key in (Qt.Key.Key_Right, Qt.Key.Key_Down):
+        elif key in (Qt.Key.Key_PageDown,):
             self.navigate_page(1)
-        elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            if self._hovered_node():
-                self.nodeClicked.emit(self._hovered_node().id)
+        elif key in (Qt.Key.Key_Left, Qt.Key.Key_Up):
+            if self._nodes:
+                self._hovered = ((self._hovered - 1) if self._hovered is not None else len(self._nodes) - 1) % len(self._nodes)
+                self.update()
+            else:
+                self.navigate_page(-1)
+        elif key in (Qt.Key.Key_Right, Qt.Key.Key_Down):
+            if self._nodes:
+                self._hovered = ((self._hovered + 1) if self._hovered is not None else 0) % len(self._nodes)
+                self.update()
+            else:
+                self.navigate_page(1)
+        elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            node = self._hovered_node()
+            if node is not None:
+                self.nodeClicked.emit(node.id)
+            else:
+                self.centerClicked.emit()
+        elif key in (Qt.Key.Key_Escape, Qt.Key.Key_Backspace) and self._allow_back:
+            self.centerClicked.emit()
         else:
             super().keyPressEvent(event)
 

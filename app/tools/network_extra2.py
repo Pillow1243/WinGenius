@@ -230,16 +230,19 @@ def security_headers(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     except Exception:
         raise ToolError(ctx.M("کتابخانه‌ی requests لازم است.", "The requests package is required."))
     try:
-        response = requests.get(url, timeout=int(v.get("timeout") or 15),
-                                allow_redirects=True,
-                                headers={"User-Agent": "WinGenius security audit"})
+        with requests.get(url, timeout=int(v.get("timeout") or 15),
+                          allow_redirects=True, stream=True,
+                          headers={"User-Agent": "WinGenius security audit"}) as response:
+            resp_url = response.url
+            resp_status = response.status_code
+            headers = {key.lower(): value for key, value in response.headers.items()}
+            cookies = list(response.cookies)
     except Exception as exc:                          # noqa: BLE001 - network is hostile
         raise ToolError(ctx.M(f"سایت پاسخ نداد: {exc}", f"The site did not answer: {exc}"))
-    headers = {key.lower(): value for key, value in response.headers.items()}
     score = 0
     maximum = 0
-    lines = [f"URL      {response.url}",
-             f"status   {response.status_code}",
+    lines = [f"URL      {resp_url}",
+             f"status   {resp_status}",
              ""]
     missing: List[str] = []
     for key, label, weight, fa, en in SECURITY_HEADERS:
@@ -257,7 +260,6 @@ def security_headers(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
         lines.append(("! سایت روی HTTPS نیست؛ همه‌ی امتیازهای بالاتر بی‌فایده‌اند."
                       if ctx.lang != "en" else
                       "! The site is not on HTTPS; the score above is meaningless."))
-    cookies = response.cookies
     if cookies:
         insecure = [cookie.name for cookie in cookies if not cookie.secure]
         lines.append("")
@@ -303,13 +305,20 @@ def http_timing(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     url = str(v.get("url") or "").strip()
     if not url:
         raise ToolError(ctx.M("آدرس را وارد کنید.", "Enter a URL."))
+    if any(ord(ch) < 33 or ord(ch) == 127 for ch in url):
+        raise ToolError(ctx.M("آدرس شامل نویسه‌های کنترلی یا فاصله‌ی غیرمجاز است.",
+                              "URL contains control characters or unencoded whitespace."))
     if "://" not in url:
         url = "https://" + url
     parsed = urllib.parse.urlparse(url)
-    host = parsed.hostname or ""
-    if not host:
-        raise ToolError(ctx.M(f"آدرس نامعتبر است: {url}", f"Invalid URL: {url}"))
-    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    if parsed.scheme not in ("http", "https"):
+        raise ToolError(ctx.M("فقط پروتکل http و https پشتیبانی می‌شود.",
+                              "Only http:// and https:// URLs are supported."))
+    host = validate_host(parsed.hostname or "", ctx)
+    try:
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    except ValueError as exc:
+        raise ToolError(ctx.M(f"پورت نامعتبر است: {exc}", f"Invalid port: {exc}"))
     timings: List[Tuple[str, float]] = []
     started = time.perf_counter()
     try:
@@ -320,47 +329,56 @@ def http_timing(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     family, socktype, proto, _canon, address = infos[0]
     raw = socket.socket(family, socktype, proto)
     raw.settimeout(12)
-    mark = time.perf_counter()
+    stream: socket.socket = raw
     try:
-        raw.connect(address)
-    except OSError as exc:
-        raw.close()
-        raise ToolError(ctx.M(f"اتصال TCP برقرار نشد: {exc}", f"TCP connect failed: {exc}"))
-    timings.append(("tcp", (time.perf_counter() - mark) * 1000))
-    stream = raw
-    if parsed.scheme == "https":
         mark = time.perf_counter()
         try:
-            context = ssl.create_default_context()
-            stream = context.wrap_socket(raw, server_hostname=host)
-        except Exception as exc:                      # noqa: BLE001 - TLS is external
-            raw.close()
-            raise ToolError(ctx.M(f"دست‌دادن TLS ناموفق بود: {exc}", f"TLS handshake failed: {exc}"))
-        timings.append(("tls", (time.perf_counter() - mark) * 1000))
-    first_byte = 0.0
-    total_payload = 0
-    if v.get("request", True):
-        path = parsed.path or "/"
-        if parsed.query:
-            path += "?" + parsed.query
-        request = (f"GET {path} HTTP/1.1\r\nHost: {host}\r\n"
-                   "User-Agent: WinGenius timing\r\nConnection: close\r\n\r\n")
-        mark = time.perf_counter()
-        try:
-            stream.sendall(request.encode("ascii", "ignore"))
-            first = stream.recv(1)
-            first_byte = (time.perf_counter() - mark) * 1000
-            chunk = first
-            while chunk and total_payload < 512 * 1024:
-                chunk = stream.recv(65536)
-                total_payload += len(chunk)
+            raw.connect(address)
         except OSError as exc:
-            raise ToolError(ctx.M(f"درخواست ناموفق بود: {exc}", f"The request failed: {exc}"))
-        timings.append(("first byte", first_byte))
-    try:
-        stream.close()
-    except OSError:
-        pass
+            raise ToolError(ctx.M(f"اتصال TCP برقرار نشد: {exc}", f"TCP connect failed: {exc}"))
+        timings.append(("tcp", (time.perf_counter() - mark) * 1000))
+        if parsed.scheme == "https":
+            mark = time.perf_counter()
+            try:
+                context = ssl.create_default_context()
+                stream = context.wrap_socket(raw, server_hostname=host)
+            except Exception as exc:                      # noqa: BLE001 - TLS is external
+                raise ToolError(ctx.M(f"دست‌دادن TLS ناموفق بود: {exc}", f"TLS handshake failed: {exc}"))
+            timings.append(("tls", (time.perf_counter() - mark) * 1000))
+        first_byte = 0.0
+        total_payload = 0
+        if v.get("request", True):
+            path = urllib.parse.quote(parsed.path or "/", safe="/:@!$&'()*+,;=-._~%")
+            if parsed.query:
+                path += "?" + urllib.parse.quote(parsed.query, safe="/?:@!$&'()*+,;=-._~%")
+            if any(ch in path for ch in ("\r", "\n", "\x00", " ")):
+                raise ToolError(ctx.M("مسیر URL نامعتبر است.", "Unsafe URL request target."))
+            host_header = f"[{host}]" if ":" in host else host
+            if (parsed.scheme == "http" and port != 80) or (parsed.scheme == "https" and port != 443):
+                host_header = f"{host_header}:{port}"
+            request = (f"GET {path} HTTP/1.1\r\nHost: {host_header}\r\n"
+                       "User-Agent: WinGenius timing\r\nConnection: close\r\n\r\n")
+            mark = time.perf_counter()
+            try:
+                stream.sendall(request.encode("ascii"))
+                first = stream.recv(1)
+                first_byte = (time.perf_counter() - mark) * 1000
+                chunk = first
+                while chunk and total_payload < 512 * 1024:
+                    chunk = stream.recv(65536)
+                    total_payload += len(chunk)
+            except OSError as exc:
+                raise ToolError(ctx.M(f"درخواست ناموفق بود: {exc}", f"The request failed: {exc}"))
+            timings.append(("first byte", first_byte))
+    finally:
+        try:
+            stream.close()
+        except OSError:
+            pass
+        try:
+            raw.close()
+        except OSError:
+            pass
     total = (time.perf_counter() - started) * 1000
     labels = {"dns": "DNS", "tcp": "TCP", "tls": "TLS", "first byte": "TTFB"}
     lines = [f"{labels[key]:10} {value:8.1f} ms" for key, value in timings]

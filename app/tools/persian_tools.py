@@ -50,8 +50,9 @@ def _read_text(ctx: RunContext, value: Any, path_key: str = "file") -> str:
 
 
 def _emit(ctx: RunContext, v: Dict[str, Any], text: str, suffix: str = "_fixed") -> RunResult:
-    if v.get("write_file"):
-        dest = save_target(ctx, str(v.get("out") or ""), f"text{suffix}.txt")
+    requested_out = str(v.get("out") or "").strip()
+    if v.get("write_file") or requested_out:
+        dest = save_target(ctx, requested_out, f"text{suffix}.txt")
         dest.write_text(text, encoding="utf-8")
         return RunResult(
             message=ctx.M(f"متن اصلاح‌شده ذخیره شد.\n{dest}", f"Fixed text saved.\n{dest}"),
@@ -120,6 +121,7 @@ def persian_fix(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
                        ("ar", "عربی ١٢٣", "Arabic ١٢٣")]),
         Field("thousands", K_BOOL, "جداکننده‌ی هزارگان (۱٬۲۳۴)", "Thousands separator (1,234)", default=False),
         Field("write_file", K_BOOL, "ذخیره در فایل", "Save to file", default=False),
+        Field("out", K_SAVE, "فایل خروجی", "Output file", filt="متن (*.txt)", visible_when=("write_file", True)),
     ],
 )
 def persian_numbers(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
@@ -273,6 +275,7 @@ def jalali_date(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
               visible_when=("source", "file")),
         Field("descending", K_BOOL, "نزولی", "Descending", default=False),
         Field("write_file", K_BOOL, "ذخیره در فایل", "Save to file", default=False),
+        Field("out", K_SAVE, "فایل خروجی", "Output file", filt="متن (*.txt)", visible_when=("write_file", True)),
     ],
 )
 def persian_sort(ctx: RunContext, v: Dict[str, Any]) -> RunResult:

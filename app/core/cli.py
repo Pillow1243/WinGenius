@@ -45,6 +45,7 @@ CLI_FLAGS = {"--list", "--run", "--describe", "--doctor", "--self-test", "--vers
              "--list-workflows", "--run-workflow", "--plan", "--list-schedules",
              "--run-schedule", "--undo", "--macros", "--run-macro", "--serve", "--port",
              "--help", "-h", "--install-sendto", "--remove-sendto", "--check-update",
+             "--update", "--rollback-update",
              "--flows", "--run-flow", "--lint-flow", "--explain-flow"}
 
 
@@ -80,7 +81,9 @@ def _print(text: str = "") -> None:
 
 def _parse_args(argv: List[str]) -> Dict[str, Any]:
     options: Dict[str, Any] = {"files": [], "sets": [], "out": "", "category": "",
-                               "json": False, "lang": "fa", "quiet": False, "title": ""}
+                               "json": False, "lang": "fa", "quiet": False, "title": "",
+                               "yes": False, "dry_run": False, "download_only": False,
+                               "allow_unsigned": False}
     index = 0
     while index < len(argv):
         arg = argv[index]
@@ -94,6 +97,14 @@ def _parse_args(argv: List[str]) -> Dict[str, Any]:
             options["mode"] = "doctor"
         elif arg == "--check-update":
             options["mode"] = "check-update"
+        elif arg == "--update":
+            options["mode"] = "update"
+        elif arg == "--rollback-update":
+            options["mode"] = "rollback-update"
+        elif arg == "--download-only":
+            options["download_only"] = True
+        elif arg == "--allow-unsigned":
+            options["allow_unsigned"] = True
         elif arg == "--version":
             options["mode"] = "version"
         elif arg == "--list-workflows":
@@ -150,10 +161,9 @@ def _parse_args(argv: List[str]) -> Dict[str, Any]:
         elif arg == "--json":
             options["json"] = True
         elif arg == "--dry-run":
-            # parsed like every other flag: peeking at sys.argv meant an embedded
-            # caller (or a wrapper script) silently *executed* what it asked to
-            # dry-run.
             options["dry_run"] = True
+        elif arg in ("--yes", "-y"):
+            options["yes"] = True
         elif arg == "--quiet":
             options["quiet"] = True
         elif arg == "--lang":
@@ -307,9 +317,89 @@ def run_cli(argv: List[str]) -> int:
         elif result.get("update_available"):
             _print(f"a newer release is available: {result['latest']} "
                    f"(installed: {result['current']})\n{result['url']}")
+            if result.get("body"):
+                _print("\nRelease notes:\n" + str(result["body"])[:1500])
         else:
             _print(f"WinGenius is up to date ({result['current']})")
         return 0 if result.get("ok") else 1
+
+    if mode == "update":
+        from .updates import (
+            UpdateError,
+            apply_verified_update,
+            download_and_verify_update,
+            fetch_latest_release,
+            version_key,
+        )
+        from .paths import APP_VERSION
+
+        try:
+            release = fetch_latest_release()
+            if version_key(release.version) <= version_key(APP_VERSION):
+                payload = {"ok": True, "updated": False, "current": APP_VERSION, "latest": release.version}
+                _print(json.dumps(payload, indent=2) if options["json"]
+                       else f"WinGenius is already up to date ({APP_VERSION}).")
+                return 0
+            if options["dry_run"]:
+                payload = {
+                    "ok": True, "dry_run": True, "current": APP_VERSION,
+                    "latest": release.version, "url": release.html_url,
+                }
+                _print(json.dumps(payload, indent=2) if options["json"]
+                       else f"[DRY-RUN] Update available: {APP_VERSION} -> {release.version}")
+                return 0
+            pkg = download_and_verify_update(
+                release,
+                require_signature=not bool(options["allow_unsigned"]),
+            )
+            if options["download_only"]:
+                payload = {
+                    "ok": True, "downloaded": str(pkg.file_path), "version": pkg.version,
+                    "sha256": pkg.verification.sha256,
+                    "cryptographically_verified": pkg.verification.cryptographically_verified,
+                }
+                _print(json.dumps(payload, indent=2) if options["json"]
+                       else f"Verified update saved: {pkg.file_path} (SHA-256: {pkg.verification.sha256})")
+                return 0
+            if not options["yes"]:
+                _print(
+                    f"Verified WinGenius {pkg.version} ({pkg.file_path.name}, "
+                    f"SHA-256: {pkg.verification.sha256[:16]}…). "
+                    "Re-run with --yes to confirm installation or --download-only to stage."
+                )
+                return 2
+            applied = apply_verified_update(pkg, silent_installer=True)
+            _print(json.dumps(applied, indent=2) if options["json"]
+                   else f"Update {pkg.version} launched ({applied.get('mode')}).")
+            return 0
+        except UpdateError as exc:
+            if options["json"]:
+                _print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+            else:
+                _print(f"update failed: {exc}")
+            return 1
+
+    if mode == "rollback-update":
+        from .updates import UpdateError, rollback_previous_version
+
+        if not options["yes"] and not options["dry_run"]:
+            _print("Pass --yes to confirm rolling back to the previous backed-up executable.")
+            return 2
+        if options["dry_run"]:
+            from .updates import get_rollback_state
+
+            st = get_rollback_state() or {}
+            _print(json.dumps({"ok": bool(st), "dry_run": True, "state": st}, indent=2))
+            return 0 if st else 1
+        try:
+            res = rollback_previous_version()
+            _print(json.dumps(res, indent=2) if options["json"]
+                   else f"Rolled back to version {res.get('previous_version')}: {res.get('restored_exe')}")
+            return 0
+        except UpdateError as exc:
+            _print(json.dumps({"ok": False, "error": str(exc)}) if options["json"]
+                   else f"rollback failed: {exc}")
+            return 1
 
     if mode == "self-test":
         # handled by the GUI bootstrap
@@ -337,6 +427,7 @@ def run_cli(argv: List[str]) -> int:
         return 0
 
     if mode == "run-schedule":
+        from .execution import ExecutionPolicy, execution_service
         from .scheduler import store as schedule_store
         from .workflows import run_sync
 
@@ -344,6 +435,37 @@ def run_cli(argv: List[str]) -> int:
         if item is None:
             _print(f"unknown schedule: {options.get('schedule')}")
             return 2
+        sched_policy = ExecutionPolicy.for_scheduler()
+        if item.kind == "macro":
+            from . import macro as macro_module
+
+            target = str(item.target_id or "").strip()
+            path = Path(target)
+            if not path.exists():
+                matches = [m for m in macro_module.library() if m.stem == target or m.name == target]
+                if matches:
+                    path = matches[0]
+            if not path.exists():
+                schedule_store.mark_run(item.id, "failed")
+                _print(f"unknown macro: {target}")
+                return 2
+            try:
+                macro_doc = macro_module.load_macro(path)
+                runner = macro_module.MacroRunner(
+                    lang=options["lang"],
+                    output_dir=options["out"] or settings.output_dir,
+                    dry_run=bool(options.get("dry_run")),
+                    policy=sched_policy,
+                )
+                mres = runner.execute(macro_doc, dict(item.payload or {}))
+            except Exception as exc:                    # noqa: BLE001
+                schedule_store.mark_run(item.id, "failed")
+                _print(f"failed: {exc}")
+                return 1
+            ok = mres.status in ("done", "dry-run")
+            schedule_store.mark_run(item.id, "done" if ok else "failed")
+            _print(mres.message(options["lang"]))
+            return 0 if ok else 1
         if item.kind != "workflow":
             from .registry import get as _get
 
@@ -351,9 +473,11 @@ def run_cli(argv: List[str]) -> int:
             if spec is None:
                 _print(f"unknown tool: {item.target_id}")
                 return 2
-            ctx = RunContext(lang=options["lang"], output_dir=options["out"] or settings.output_dir)
+            ctx = RunContext(lang=options["lang"], output_dir=options["out"] or settings.output_dir,
+                             policy=sched_policy)
             try:
-                result = spec.run(ctx, dict(item.payload or {}))
+                result = execution_service.execute(spec, dict(item.payload or {}), ctx,
+                                                   policy=sched_policy)
             except Exception as exc:                    # noqa: BLE001
                 schedule_store.mark_run(item.id, "failed")
                 _print(f"failed: {exc}")
@@ -370,7 +494,7 @@ def run_cli(argv: List[str]) -> int:
             _print(f"unknown workflow: {item.target_id}")
             return 2
         result = run_sync(workflow, options["lang"], options["out"] or settings.output_dir,
-                          dict(item.payload or {}))
+                          dict(item.payload or {}), policy=sched_policy)
         schedule_store.mark_run(item.id, result.status)
         _print(result.message or result.status)
         for step in result.steps:
@@ -465,11 +589,19 @@ def run_cli(argv: List[str]) -> int:
         variables = {key: raw for key, raw in options["sets"]}
         dry_run = bool(options.get("dry_run"))
         output_dir = options["out"] or settings.output_dir
+        from .execution import ExecutionPolicy, PolicyDeniedError
+
+        cli_policy = ExecutionPolicy.for_cli(yes=bool(options.get("yes")), dry_run=dry_run)
         runner = macro_module.MacroRunner(lang=options["lang"], output_dir=output_dir,
                                           dry_run=dry_run,
+                                          policy=cli_policy,
                                           on_log=(None if options["quiet"] else
                                                   lambda line: sys.stderr.write(f"  {line}\n")))
-        result = runner.execute(macro, variables)
+        try:
+            result = runner.execute(macro, variables)
+        except PolicyDeniedError as exc:
+            _print(f"DENIED: {exc} (pass --yes to confirm)")
+            return 1
         if options["json"]:
             _print(json.dumps({"status": result.status, "executed": result.executed,
                                "outputs": result.outputs, "errors": result.errors,
@@ -510,8 +642,16 @@ def run_cli(argv: List[str]) -> int:
             _print("no plan matched that sentence")
             return 2
         if not options.get("run_flag", True) or options.get("dry_run"):
-            _print(f"{workflow.name_for(options['lang'])} ({len(workflow.steps)} steps)")
-            _print(describe(workflow, options["lang"]))
+            if options["json"]:
+                _print(json.dumps({
+                    "id": workflow.id,
+                    "name": workflow.name_for(options["lang"]),
+                    "dry_run": True,
+                    "steps": [{"tool": s.tool_id, "values": dict(s.values)} for s in workflow.steps],
+                }, ensure_ascii=False, indent=2))
+            else:
+                _print(f"{workflow.name_for(options['lang'])} ({len(workflow.steps)} steps)")
+                _print(describe(workflow, options["lang"]))
             return 0
         options["workflow"] = workflow.id
         mode = "run-workflow"
@@ -519,6 +659,7 @@ def run_cli(argv: List[str]) -> int:
 
     if mode in ("flows", "run-flow", "lint-flow", "explain-flow"):
         from . import flowkit
+        from .execution import ExecutionPolicy, PolicyDeniedError
         from .workflows import run_sync
 
         if mode == "flows":
@@ -551,10 +692,18 @@ def run_cli(argv: List[str]) -> int:
         for key, raw in options["sets"]:
             base[key] = raw
         output_dir = options["out"] or settings.output_dir
+        cli_policy = ExecutionPolicy.for_cli(
+            yes=bool(options.get("yes")), dry_run=bool(options.get("dry_run"))
+        )
         progress = (lambda index, step: (
             None if options["quiet"] else sys.stderr.write(
                 f"  [{index + 1}] {step.tool_id}: {step.status}\n") or sys.stderr.flush()))
-        result = run_sync(flow, options["lang"], output_dir, base, on_step=progress)
+        try:
+            result = run_sync(flow, options["lang"], output_dir, base,
+                              on_step=progress, policy=cli_policy)
+        except PolicyDeniedError as exc:
+            _print(f"DENIED: {exc} (pass --yes to confirm)")
+            return 1
         if options["json"]:
             _print(json.dumps({
                 "flow": flow.id, "status": result.status, "message": result.message,
@@ -572,6 +721,7 @@ def run_cli(argv: List[str]) -> int:
         return 0 if result.status in ("done", "partial") else 1
 
     if mode == "run-workflow":
+        from .execution import ExecutionPolicy, PolicyDeniedError
         from .workflows import run_sync, store as workflow_store
 
         workflow = locals().get("plan_workflow") or workflow_store.get(str(options.get("workflow") or ""))
@@ -590,10 +740,16 @@ def run_cli(argv: List[str]) -> int:
         base = {"__paths__": list(options["files"])}
         base.update(overrides)
         output_dir = options["out"] or settings.output_dir
+        cli_policy = ExecutionPolicy.for_cli(yes=bool(options.get("yes")), dry_run=False)
         progress = (lambda index, step: (
             None if options["quiet"] else sys.stderr.write(
                 f"  [{index + 1}] {step.tool_id}: {step.status}\n") or sys.stderr.flush()))
-        result = run_sync(workflow, options["lang"], output_dir, base, on_step=progress)
+        try:
+            result = run_sync(workflow, options["lang"], output_dir, base,
+                              on_step=progress, policy=cli_policy)
+        except PolicyDeniedError as exc:
+            _print(f"DENIED: {exc} (pass --yes to confirm)")
+            return 1
         if options["json"]:
             _print(json.dumps({
                 "workflow": workflow.id, "status": result.status, "message": result.message,
@@ -611,6 +767,7 @@ def run_cli(argv: List[str]) -> int:
 
     # ---------------------------------------------------------------- run tool
     tool_id = options.get("run", "")
+    from .execution import ExecutionPolicy, PolicyDeniedError, execution_service
     from .i18n import set_language
 
     set_language(options["lang"])
@@ -633,10 +790,16 @@ def run_cli(argv: List[str]) -> int:
         if not options["quiet"]:
             sys.stderr.write(f"\r    · {message[:80]:<80}\n")
 
+    cli_policy = ExecutionPolicy.for_cli(
+        yes=bool(options.get("yes")), dry_run=bool(options.get("dry_run"))
+    )
     ctx = RunContext(lang=options["lang"], output_dir=options["out"] or settings.output_dir,
-                     on_progress=on_progress, on_message=on_message)
+                     on_progress=on_progress, on_message=on_message, policy=cli_policy)
     try:
-        result = spec.run(ctx, values) if spec.run else None
+        result = execution_service.execute(spec, values, ctx, policy=cli_policy)
+    except PolicyDeniedError as exc:
+        _print(f"DENIED: {exc} (pass --yes to confirm)")
+        return 1
     except ToolError as exc:
         _print(f"FAILED: {exc}")
         return 1

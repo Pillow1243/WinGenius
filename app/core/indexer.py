@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,14 +23,22 @@ TEXT_SUFFIXES = {
     ".txt", ".md", ".markdown", ".rst", ".log", ".csv", ".tsv", ".json", ".xml", ".yaml",
     ".yml", ".ini", ".cfg", ".conf", ".toml", ".html", ".htm", ".css", ".js", ".ts", ".py",
     ".ps1", ".bat", ".cmd", ".sh", ".sql", ".java", ".c", ".cpp", ".h", ".cs", ".go", ".rs",
-    ".php", ".rb", ".kt", ".swift", ".env", ".gitignore", ".tex", ".srt", ".vtt",
+    ".php", ".rb", ".kt", ".swift", ".gitignore", ".tex", ".srt", ".vtt",
 }
 PDF_SUFFIXES = {".pdf"}
 DOCX_SUFFIXES = {".docx"}
 SUPPORTED = TEXT_SUFFIXES | PDF_SUFFIXES | DOCX_SUFFIXES
 
+SENSITIVE_SUFFIXES = {
+    ".env", ".pem", ".key", ".pfx", ".p12", ".kdbx", ".wgv", ".wgenc", ".jks", ".keystore",
+}
+SENSITIVE_NAMES = {
+    ".env", ".netrc", ".npmrc", ".pypirc", "id_rsa", "id_ed25519", "id_ecdsa",
+    "api_token.txt", "credentials.json", "secrets.json", "secrets.yaml", "secrets.yml",
+}
+
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build", ".idea",
-             ".vs", ".gradle", "target", ".mypy_cache", ".pytest_cache", ".cache"}
+             ".vs", ".gradle", "target", ".mypy_cache", ".pytest_cache", ".cache", ".ssh", ".gnupg"}
 
 MAX_FILE_BYTES = 24 * 1024 * 1024
 MAX_CHARS = 400_000
@@ -219,9 +228,11 @@ def ocr_pdf(path: Path, max_pages: int = OCR_MAX_PAGES, dpi: int = OCR_DPI) -> s
         with fitz.open(str(path)) as doc:
             for index in range(min(max_pages, doc.page_count)):
                 pixmap = doc[index].get_pixmap(dpi=dpi)
-                image_path = temp_dir / f"ocr_{os.getpid()}_{index}.png"
-                pixmap.save(str(image_path))
+                fd, tmp_name = tempfile.mkstemp(prefix="ocr_", suffix=".png", dir=temp_dir)
+                os.close(fd)
+                image_path = Path(tmp_name)
                 try:
+                    pixmap.save(str(image_path))
                     parts.append(image_to_text(image_path, lang=language, psm=6))
                 finally:
                     try:
@@ -255,6 +266,13 @@ def guess_language(text: str) -> str:
     return "-"
 
 
+def _is_sensitive_file(path: Path) -> bool:
+    lower_name = path.name.lower()
+    if lower_name in SENSITIVE_NAMES or lower_name.startswith(".env."):
+        return True
+    return path.suffix.lower() in SENSITIVE_SUFFIXES
+
+
 # --------------------------------------------------------------------- build
 def build(folders: Iterable[str], patterns: str = "", recursive: bool = True,
           on_progress: Optional[Callable[[int, int, str], None]] = None,
@@ -269,15 +287,30 @@ def build(folders: Iterable[str], patterns: str = "", recursive: bool = True,
     files: List[Path] = []
     for folder in folders:
         root = Path(folder)
+        if root.is_symlink():
+            continue
         if root.is_file():
-            files.append(root)
+            if not _is_sensitive_file(root):
+                files.append(root)
             continue
         if not root.exists():
             continue
-        iterator = root.rglob("*") if recursive else root.glob("*")
-        for path in iterator:
+        if recursive:
+            candidates: List[Path] = []
+            for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+                dirnames[:] = [
+                    d for d in dirnames
+                    if d.lower() not in SKIP_DIRS and not (Path(dirpath) / d).is_symlink()
+                ]
+                for fname in filenames:
+                    candidates.append(Path(dirpath) / fname)
+        else:
+            candidates = list(root.glob("*"))
+        for path in candidates:
             try:
-                if not path.is_file():
+                if path.is_symlink() or not path.is_file():
+                    continue
+                if _is_sensitive_file(path):
                     continue
                 if any(part.lower() in SKIP_DIRS for part in path.parts):
                     continue
@@ -338,25 +371,35 @@ def build(folders: Iterable[str], patterns: str = "", recursive: bool = True,
 
 
 # -------------------------------------------------------------------- query
+def _fts_quote(term: str) -> str:
+    return '"' + term.replace('"', '""') + '"'
+
+
 def _clean_query(query: str) -> str:
     text = (query or "").strip()
     if not text:
         return ""
     tokens = []
     for token in text.split():
+        bare = token.strip('"')
+        if not bare:
+            continue
         if token.startswith("-") and len(token) > 1:
-            tokens.append(f'NOT "{token[1:]}"')
-        elif token.endswith("*") and len(token) > 2:
-            tokens.append(f'"{token[:-1]}"*')
-        elif token.startswith('"') and token.endswith('"'):
-            tokens.append(token)
+            sub = token[1:].strip('"')
+            if sub:
+                tokens.append(f"NOT {_fts_quote(sub)}")
+        elif token.endswith("*") and len(bare) >= 2:
+            prefix = bare[:-1] if bare.endswith("*") else bare
+            if prefix:
+                tokens.append(f"{_fts_quote(prefix)}*")
         else:
-            tokens.append(f'"{token}"')
+            tokens.append(_fts_quote(bare))
     return " ".join(tokens)
 
 
 def search(query: str, limit: int = 25) -> List[Hit]:
-    if not query.strip():
+    cleaned = _clean_query(query)
+    if not cleaned:
         return []
     try:
         conn = _connect()
@@ -368,7 +411,7 @@ def search(query: str, limit: int = 25) -> List[Hit]:
             """SELECT f.path, snippet(docs_fts, 1, '«', '»', '…', 14), d.size, d.mtime
                  FROM docs_fts f LEFT JOIN docs d ON d.path = f.path
                 WHERE docs_fts MATCH ? ORDER BY rank LIMIT ?""",
-            (_clean_query(query), max(1, int(limit)))).fetchall()
+            (cleaned, max(1, int(limit)))).fetchall()
         for path, snippet, size, mtime in rows:
             hits.append(Hit(path=path, snippet=(snippet or "").replace("\n", " "),
                             size=int(size or 0), modified=float(mtime or 0)))
@@ -403,6 +446,11 @@ def clear() -> None:
         conn.execute("DELETE FROM docs_fts")
         conn.execute("DELETE FROM docs")
         conn.commit()
+        try:
+            conn.isolation_level = None
+            conn.execute("VACUUM")
+        except sqlite3.Error:
+            pass
     finally:
         conn.close()
 

@@ -1,5 +1,5 @@
 {
-  "version": "7.0.0",
+  "version": "7.1.0",
   "tools": 292,
   "categories": 11,
   "category_counts": {
@@ -17,15 +17,15 @@
   },
   "suites": {
     "smoke": 154,
-    "functional": 638,
-    "output": 111,
+    "functional": 642,
+    "output": 112,
     "ui": 1259,
     "security": 57,
-    "hardening": 39,
+    "hardening": 56,
     "persian": 28,
-    "packaging": 27
+    "packaging": 28
   },
-  "checks": 2313,
+  "checks": 2336,
   "coverage": 75,
   "python": [
     "3.12",

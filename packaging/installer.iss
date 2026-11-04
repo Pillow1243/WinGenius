@@ -1,6 +1,6 @@
 ; Inno Setup 6 script — produces dist\WinGenius-Setup.exe
 #define AppName "WinGenius"
-#define AppVersion "7.0.0"
+#define AppVersion "7.1.0"
 #define AppExe "WinGenius.exe"
 
 [Setup]
@@ -22,6 +22,13 @@ Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64compatible
+UsePreviousAppDir=yes
+UsePreviousGroup=yes
+UsePreviousTasks=yes
+PrivilegesRequiredOverridesAllowed=dialog commandline
+CloseApplications=yes
+CloseApplicationsFilter=WinGenius.exe,WinGenius-onedir.exe
+RestartApplications=yes
 
 [Languages]
 ; Inno Setup has no built-in Persian translation. Use the stock English wizard

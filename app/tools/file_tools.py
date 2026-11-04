@@ -13,7 +13,7 @@ from typing import Any, Dict, List
 
 from ..core.registry import tool
 from ..core.spec import (
-    K_BOOL, K_CHOICE, K_DIR, K_FILES, K_FILE, K_INT, K_SAVE, K_TEXT,
+    K_BOOL, K_CHOICE, K_DIR, K_FILES, K_FILE, K_INT, K_PASSWORD, K_SAVE, K_TEXT,
     Field, RunContext, RunResult, ToolError,
 )
 from ..core.utils import (hash_file, human_size, list_files, natural_key, safe_filename,
@@ -304,7 +304,7 @@ def zip_create(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     fields=[
         Field("src", K_FILE, "فایل ZIP", "ZIP file", required=True, filt="ZIP (*.zip);;همه فایل‌ها (*)"),
         Field("dest", K_DIR, "پوشه‌ی مقصد", "Destination folder"),
-        Field("password", K_TEXT, "رمز (اختیاری)", "Password (optional)"),
+        Field("password", K_PASSWORD, "رمز (اختیاری)", "Password (optional)"),
     ],
 )
 def zip_extract(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
@@ -315,20 +315,62 @@ def zip_extract(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     extracted = 0
     skipped: List[str] = []
     root = dest.resolve()
+    max_entries = 10_000
+    max_total_bytes = 2 * 1024 * 1024 * 1024
+    max_ratio = 200
+    total_written = 0
     try:
         with zipfile.ZipFile(src) as archive:
             members = archive.infolist()
             total = len(members)
+            if total > max_entries:
+                raise ToolError(ctx.M(
+                    f"تعداد فایل‌های داخل آرشیو بیش از سقف مجاز ({max_entries:,}) است.",
+                    f"Archive exceeds the maximum entry limit ({max_entries:,}).",
+                ))
             for index, member in enumerate(members):
                 ctx.progress(index, total, member.filename)
-                target = (dest / member.filename).resolve()
+                mode = (member.external_attr >> 16) & 0xFFFF
+                if stat.S_ISLNK(mode):
+                    skipped.append(member.filename)
+                    continue
+                if member.file_size > 10 * 1024 * 1024:
+                    ratio = member.file_size / max(1, member.compress_size)
+                    if ratio > max_ratio:
+                        raise ToolError(ctx.M(
+                            f"نسبت فشرده‌سازی مشکوک (ZIP bomb) در {member.filename}.",
+                            f"Suspicious compression ratio (ZIP bomb) in {member.filename}.",
+                        ))
+                name = member.filename.replace("\\", "/")
+                if name.startswith("/") or ".." in Path(name).parts or ":" in name.split("/")[0]:
+                    skipped.append(member.filename)
+                    continue
+                target = (dest / name).resolve()
                 # zip-slip: never let a member escape the destination folder.
-                # (An earlier version checked this but still called extractall(),
-                #  which happily wrote the very members it had just skipped.)
                 if root not in target.parents and target != root:
                     skipped.append(member.filename)
                     continue
-                archive.extract(member, dest, pwd=password)
+                if member.is_dir():
+                    target.mkdir(parents=True, exist_ok=True)
+                    extracted += 1
+                    continue
+                target.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    with archive.open(member, pwd=password) as src_fh, target.open("wb") as dst_fh:
+                        while True:
+                            chunk = src_fh.read(1 << 20)
+                            if not chunk:
+                                break
+                            total_written += len(chunk)
+                            if total_written > max_total_bytes:
+                                raise ToolError(ctx.M(
+                                    "حجم بازشده‌ی آرشیو از سقف مجاز (۲ گیگابایت) گذشت.",
+                                    "Uncompressed archive size exceeded the 2 GiB safety limit.",
+                                ))
+                            dst_fh.write(chunk)
+                except ToolError:
+                    target.unlink(missing_ok=True)
+                    raise
                 extracted += 1
     except RuntimeError as exc:
         raise ToolError(ctx.M(f"رمز اشتباه یا فایل معیوب است: {exc}", f"Wrong password or corrupt file: {exc}"))
@@ -381,6 +423,9 @@ def secure_delete(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     for index, path in enumerate(files):
         ctx.progress(index, len(files), path.name)
         try:
+            if path.is_symlink():
+                raise ToolError(ctx.M("حذف امن روی میان‌بر/سیم‌لینک مجاز نیست.",
+                                      "Secure delete refuses symbolic links for safety."))
             if not path.exists():
                 continue
             if path.is_dir():

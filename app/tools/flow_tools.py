@@ -83,7 +83,14 @@ def flow_run(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
                           f"({len(workflow.steps)} steps) and ready to run."),
             details=report.text(ctx.lang) + "\n\n" + flowkit.explain(workflow, ctx.lang))
     base = {"input": inputs[0] if inputs else "", "__paths__": inputs}
-    result = run_sync(workflow, lang=ctx.lang, output_dir=out_dir, base_values=base)
+    result = run_sync(
+        workflow,
+        lang=ctx.lang,
+        output_dir=out_dir,
+        base_values=base,
+        cancel_event=ctx._cancel,
+        policy=getattr(ctx, "policy", None),
+    )
     details = flowkit.explain(workflow, ctx.lang) + "\n\n"
     for step in result.steps:
         mark = {"done": "✓", "skipped": "–", "failed": "✖"}.get(step.status, "·")

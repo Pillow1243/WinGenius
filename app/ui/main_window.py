@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import os
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -141,6 +142,14 @@ class MainWindow(QWidget):
         root.addWidget(self.title_bar)
         self._build_titlebar()
 
+        from .update_dialog import UpdateBanner
+
+        self.update_banner = UpdateBanner(self.lang, self)
+        self.update_banner.openRequested.connect(self.open_update_dialog)
+        root.addWidget(self.update_banner)
+        self._last_update_check: Optional[dict] = None
+        self._bg_update_worker = None
+
         self.radial = RadialMenu(self)
         self.radial.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         root.addWidget(self.radial, 1)
@@ -196,6 +205,7 @@ class MainWindow(QWidget):
         self.settings_panel.openJobsRequested.connect(self.open_jobs)
         self.settings_panel.jobsChangedRequested.connect(self._on_parallel_changed)
         self.settings_panel.pluginsChanged.connect(self._on_plugins_changed)
+        self.settings_panel.checkUpdatesRequested.connect(lambda: self.open_update_dialog())
         self.quick_search.toolChosen.connect(self._open_tool_by_id)
         self.quick_search.commandChosen.connect(self._on_command)
         self.quick_search.recentChosen.connect(self._open_tool_by_id)
@@ -774,28 +784,67 @@ class MainWindow(QWidget):
             self.scheduler.start()
 
     # ------------------------------------------------------------ v4 automation
+    def _release_bg_runner(self, attr: str, runner) -> None:
+        pool = getattr(self, attr, None)
+        if isinstance(pool, list) and runner in pool:
+            pool.remove(runner)
+        try:
+            runner.deleteLater()
+        except Exception:
+            pass
+
     def _on_schedule_triggered(self, schedule, reason: str = "auto") -> None:
-        """A cron schedule fired: queue its workflow or tool."""
+        """A cron schedule fired: queue its workflow, macro, or tool."""
+        from ..core.execution import ExecutionPolicy
+
         try:
             schedule_store.mark_run(schedule.id, reason)
         except Exception:
             pass
         title = schedule.title(self.lang)
-        if getattr(schedule, "kind", "workflow") == "workflow":
+        sched_policy = ExecutionPolicy.for_scheduler()
+        kind = getattr(schedule, "kind", "workflow")
+        if kind == "workflow":
             workflow = workflow_store.get(schedule.target_id)
             if workflow is None:
                 self._show_toast(f"{title}: " + ("گردش‌کار پیدا نشد" if self.lang != "en"
                                                  else "workflow not found"), "warning")
                 return
-            runner = WorkflowRunner(workflow, self.lang, settings.output_dir,
-                                    dict(getattr(schedule, "payload", {}) or {}), self)
+            runner = WorkflowRunner(
+                workflow, self.lang, settings.output_dir,
+                dict(getattr(schedule, "payload", {}) or {}), self,
+                policy=sched_policy,
+            )
             runner.finished.connect(self._on_workflow_done)
+            runner.finished.connect(lambda _res, r=runner: self._release_bg_runner("_scheduler_runners", r))
             self._scheduler_runners = getattr(self, "_scheduler_runners", [])
             self._scheduler_runners.append(runner)
             runner.start()
             self._show_toast(("⏱ " if reason == "auto" else "▶ ") + title, "info")
+        elif kind == "macro":
+            payload = dict(getattr(schedule, "payload", {}) or {})
+            macro_file = str(payload.get("file") or schedule.target_id or "").strip()
+            if not macro_file or not Path(macro_file).is_file():
+                self._show_toast(f"{title}: " + ("فایل ماکرو پیدا نشد" if self.lang != "en"
+                                                 else "macro file not found"), "warning")
+                return
+            job = self.jobs.submit_by_id(
+                "macro_run",
+                {"file": macro_file, "dry_run": bool(payload.get("dry_run", False))},
+                policy=sched_policy,
+            )
+            if job is None:
+                self._show_toast(f"{title}: " + ("ابزار ماکرو پیدا نشد" if self.lang != "en"
+                                                 else "macro runner unavailable"), "warning")
+                return
+            self._update_jobs_badge()
+            self._show_toast(("⏱ " if reason == "auto" else "▶ ") + title, "info")
         else:
-            job = self.jobs.submit_by_id(schedule.target_id, dict(getattr(schedule, "payload", {}) or {}))
+            job = self.jobs.submit_by_id(
+                schedule.target_id,
+                dict(getattr(schedule, "payload", {}) or {}),
+                policy=sched_policy,
+            )
             if job is None:
                 self._show_toast(f"{title}: " + ("ابزار پیدا نشد" if self.lang != "en"
                                                  else "tool not found"), "warning")
@@ -915,6 +964,37 @@ class MainWindow(QWidget):
             self.tray.jobsRequested.connect(self._restore_from_tray_and_jobs)
             self.tray.automationRequested.connect(self._restore_from_tray_and_automation)
             self.tray.quitRequested.connect(self.close)
+        if bool(settings.get("ui/auto_check_updates")) and not os.environ.get("WINGENIUS_NO_LAUNCH"):
+            self.check_updates_background()
+
+    def check_updates_background(self, url: Optional[str] = None) -> None:
+        """Run a non-blocking update check and surface the banner if a newer version exists."""
+        from .update_dialog import UpdateCheckWorker
+        from ..core.updates import RELEASES_URL
+
+        if self._bg_update_worker is not None and self._bg_update_worker.isRunning():
+            return
+        worker = UpdateCheckWorker(url=url or RELEASES_URL, parent=self)
+        worker.checkFinished.connect(self._on_bg_update_checked)
+        self._bg_update_worker = worker
+        worker.start()
+
+    def _on_bg_update_checked(self, result: dict) -> None:
+        self._last_update_check = dict(result)
+        if result.get("ok") and result.get("update_available"):
+            self.update_banner.show_release(result)
+            latest = result.get("latest", "")
+            self._show_toast(
+                f"نسخه‌ی جدید {latest} منتشر شد!" if self.lang == "fa" else f"Update v{latest} is available!",
+                "info",
+            )
+
+    def open_update_dialog(self, check_data: Optional[dict] = None) -> None:
+        from .update_dialog import UpdateDialog
+
+        initial = check_data or self._last_update_check
+        dlg = UpdateDialog(lang=self.lang, initial_check=initial, parent=self)
+        dlg.exec()
 
     def _restore_from_tray(self) -> None:
         self.showNormal()
@@ -944,14 +1024,22 @@ class MainWindow(QWidget):
         self._show_toast(f"👁 {rule.title(self.lang)} ← {Path(path).name}", "info")
 
     def _run_watch_rule(self, rule, path: str) -> None:
+        from ..core.execution import ExecutionPolicy
+
+        allow_danger = bool(settings.get("automation/allow_dangerous") or False)
+        watch_policy = ExecutionPolicy.for_watcher(allow_dangerous=allow_danger)
         if getattr(rule, "action", "workflow") == "workflow":
             workflow = workflow_store.get(rule.target_id)
             if workflow is None:
                 self._show_toast(t("as.no_result"), "warning")
                 return
-            runner = WorkflowRunner(workflow, self.lang, settings.output_dir,
-                                    {"__paths__": [path]}, self)
+            runner = WorkflowRunner(
+                workflow, self.lang, settings.output_dir,
+                {"__paths__": [path]}, self,
+                policy=watch_policy,
+            )
             runner.finished.connect(self._on_workflow_done)
+            runner.finished.connect(lambda _res, r=runner: self._release_bg_runner("_watch_runners", r))
             self._watch_runners = getattr(self, "_watch_runners", [])
             self._watch_runners.append(runner)
             runner.start()
@@ -966,7 +1054,7 @@ class MainWindow(QWidget):
                 values = autofill(spec, [path])
             else:
                 values.setdefault("input", path)
-            self.jobs.submit_by_id(rule.target_id, values)
+            self.jobs.submit_by_id(rule.target_id, values, policy=watch_policy)
             self.open_jobs()
 
     def _on_workflow_done(self, result) -> None:
@@ -1039,6 +1127,8 @@ class MainWindow(QWidget):
             self.open_jobs()
         elif command == "doctor":
             self.run_doctor()
+        elif command == "update":
+            self.open_update_dialog()
         elif command == "plugins":
             from ..core.plugins import open_plugins_folder
 
@@ -1146,6 +1236,22 @@ class MainWindow(QWidget):
             pass
         settings.set("app/window_pos", f"{self.x()},{self.y()}")
         self.tool_panel.shutdown()
+        for panel_attr in ("plan_panel", "workflow_panel"):
+            panel = getattr(self, panel_attr, None)
+            if panel is not None and hasattr(panel, "shutdown"):
+                try:
+                    panel.shutdown()
+                except Exception:
+                    pass
+        for pool_attr in ("_scheduler_runners", "_watch_runners"):
+            for runner in list(getattr(self, pool_attr, []) or []):
+                try:
+                    runner.shutdown(1500)
+                except Exception:
+                    pass
+        if getattr(self, "_bg_update_worker", None) is not None and self._bg_update_worker.isRunning():
+            self._bg_update_worker.quit()
+            self._bg_update_worker.wait(1500)
         if getattr(self, "jobs", None) is not None:
             self.jobs.shutdown()
         super().closeEvent(event)
@@ -1154,11 +1260,12 @@ class MainWindow(QWidget):
     def _apply_theme(self, rebuild: bool = True) -> None:
         self.palette_ref = theme.build_palette(settings.theme, settings.accent)
         app = QApplication.instance()
+        direction = "rtl" if self.lang == "fa" else "ltr"
         if app is not None:
-            app.setStyleSheet(theme.stylesheet(self.palette_ref))
             app.setLayoutDirection(
                 Qt.LayoutDirection.RightToLeft if self.lang == "fa" else Qt.LayoutDirection.LeftToRight
             )
+            app.setStyleSheet(theme.stylesheet(self.palette_ref, direction=direction))
         self.radial.apply_palette(self.palette_ref, settings.animations, settings.get("ui/glow"))
         self.tool_panel.apply_palette(self.palette_ref)
         self.quick_search.apply_palette(self.palette_ref)
@@ -1198,6 +1305,12 @@ class MainWindow(QWidget):
         self._minimize_button.setToolTip(t("tb.minimize"))
         self._close_button.setToolTip(t("tb.close"))
         self._back_button.setToolTip(t("center.back"))
+        self._settings_button.setAccessibleName(t("tb.settings"))
+        self._minimize_button.setAccessibleName(t("tb.minimize"))
+        self._close_button.setAccessibleName(t("tb.close"))
+        self._back_button.setAccessibleName(t("center.back"))
+        self._search_button.setAccessibleName(t("home.search"))
+        self._lang_button.setAccessibleName(t("tb.lang"))
         self.quick_search.set_language(self.lang)
         self.settings_panel.set_language(self.lang)
         self.jobs_drawer.set_language(self.lang)
@@ -1207,6 +1320,8 @@ class MainWindow(QWidget):
         self.workflow_panel.set_language(self.lang)
         self.automation_panel.set_language(self.lang)
         self.scheduler_panel.set_language(self.lang)
+        if getattr(self, "update_banner", None) is not None:
+            self.update_banner.set_language(self.lang)
         if self.tray is not None:
             self.tray.set_language(self.lang)
         self._retranslate_nav_rail()

@@ -29,6 +29,8 @@ hidden += [f"app.tools.{name}" for name in _names]
 try:
     from PyInstaller.utils.hooks import collect_submodules
 
+    hidden += collect_submodules("app.core")
+    hidden += collect_submodules("app.ui")
     hidden += collect_submodules("app.tools")
     # Imported lazily inside tool functions, so static analysis cannot see
     # them.  Without this the shipped exe advertised signing/OCR but could

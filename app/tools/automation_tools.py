@@ -12,6 +12,7 @@ from ..core.spec import (
 from ..core.utils import ensure_dir, human_size
 from ..core.watcher import store as watch_store
 from ..core.workflows import store as workflow_store
+from ._helpers import save_target
 
 
 # ------------------------------------------------------------------- indexing
@@ -75,7 +76,7 @@ def index_search(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     outputs: List[str] = []
     requested = str(v.get("out") or "").strip()
     if requested:
-        target = ensure_dir(Path(requested).parent) / Path(requested).name
+        target = save_target(ctx, requested, "search_results.txt")
         target.write_text(text, encoding="utf-8")
         outputs.append(str(target))
     message = (f"{len(hits)} نتیجه پیدا شد." if hits else
@@ -169,7 +170,7 @@ def tools_inventory(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     outputs: List[str] = []
     requested = str(v.get("out") or "").strip()
     if requested:
-        target = ensure_dir(Path(requested).parent) / Path(requested).name
+        target = save_target(ctx, requested, "tools_inventory.txt")
         target.write_text(text, encoding="utf-8")
         outputs.append(str(target))
     return RunResult(message=f"{len(items)} ابزار" if ctx.lang != "en" else f"{len(items)} tools",

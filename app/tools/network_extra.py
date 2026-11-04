@@ -110,32 +110,57 @@ def http_request(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     url = str(v.get("url") or "").strip()
     if not url:
         raise ToolError(ctx.M("آدرس را وارد کنید.", "Enter a URL."))
+    if "://" in url and not url.lower().startswith(("http://", "https://")):
+        raise ToolError(ctx.M("فقط پروتکل‌های http و https مجازند.", "Only http:// and https:// URLs are allowed."))
     if not url.lower().startswith(("http://", "https://")):
         url = "https://" + url
     method = str(v.get("method") or "GET").upper()
+    if method not in ("GET", "HEAD", "POST"):
+        method = "GET"
     ctx.progress(1, 2, ctx.M("ارسال درخواست", "Sending request"))
     started = time.time()
+    max_body_bytes = 10 * 1024 * 1024
+    buf = bytearray()
+    truncated = False
     try:
-        response = requests.request(
+        with requests.request(
             method, url, data=(str(v.get("body") or "") or None),
             timeout=max(1, int(v.get("timeout") or 15)),
-            headers={"User-Agent": "WinGenius/2.0"})
+            headers={"User-Agent": "WinGenius/7.1"},
+            stream=True,
+        ) as response:
+            status_code = response.status_code
+            reason = response.reason
+            final_url = response.url
+            headers_list = list(response.headers.items())[:25]
+            encoding = response.encoding or "utf-8"
+            if method != "HEAD":
+                for chunk in response.iter_content(chunk_size=65536):
+                    if not chunk:
+                        continue
+                    remaining = max_body_bytes - len(buf)
+                    if len(chunk) > remaining:
+                        buf.extend(chunk[:remaining])
+                        truncated = True
+                        break
+                    buf.extend(chunk)
     except Exception as exc:
         raise ToolError(ctx.M(f"درخواست ناموفق بود:\n{exc}", f"Request failed:\n{exc}"))
     elapsed = (time.time() - started) * 1000
     ctx.progress(2, 2, "")
-    lines = [f"{method} {response.url}",
-             f"{ctx.M('کد وضعیت', 'Status')}: {response.status_code} {response.reason}",
+    size_label = human_size(len(buf)) + ("+" if truncated else "")
+    lines = [f"{method} {final_url}",
+             f"{ctx.M('کد وضعیت', 'Status')}: {status_code} {reason}",
              f"{ctx.M('زمان', 'Time')}: {elapsed:.0f} ms",
-             f"{ctx.M('حجم', 'Size')}: {human_size(len(response.content))}",
+             f"{ctx.M('حجم', 'Size')}: {size_label}",
              "", ctx.M("هدرها:", "Headers:")]
-    lines.extend(f"  {key}: {value}" for key, value in list(response.headers.items())[:25])
+    lines.extend(f"  {key}: {value}" for key, value in headers_list)
     if method != "HEAD":
-        preview = response.text[:1200]
+        preview = bytes(buf[:8192]).decode(encoding, errors="replace")[:1200]
         lines += ["", ctx.M("بخشی از پاسخ:", "Body preview:"), preview]
     return RunResult(
-        message=ctx.M(f"{response.status_code} {response.reason} — {elapsed:.0f} میلی‌ثانیه",
-                      f"{response.status_code} {response.reason} — {elapsed:.0f} ms"),
+        message=ctx.M(f"{status_code} {reason} — {elapsed:.0f} میلی‌ثانیه",
+                      f"{status_code} {reason} — {elapsed:.0f} ms"),
         details="\n".join(lines))
 
 
@@ -164,6 +189,16 @@ def lan_scan(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
         if not candidates:
             raise ToolError(ctx.M("شبکه‌ی فعالی پیدا نشد.", "No active network found."))
         prefix = ".".join(candidates[0].split(".")[:3])
+    prefix = prefix.split("/")[0].strip().rstrip(".")
+    parts = prefix.split(".")
+    if len(parts) == 4 and all(p.isdigit() and 0 <= int(p) <= 255 for p in parts):
+        parts = parts[:3]
+    if len(parts) not in (2, 3) or not all(p.isdigit() and 0 <= int(p) <= 255 for p in parts):
+        raise ToolError(ctx.M(
+            "زیرشبکه باید اعداد معتبر IPv4 مثل 192.168.1 باشد.",
+            "Subnet prefix must be valid IPv4 octets such as 192.168.1.",
+        ))
+    prefix = ".".join(str(int(p)) for p in parts)
     timeout_ms = max(100, int(v.get("timeout") or 400))
     hosts = [f"{prefix}.{index}" for index in range(1, 255)]
 
@@ -351,21 +386,38 @@ def port_listen(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     ],
 )
 def whois_lookup(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
+    import ipaddress
+
     domain = str(v.get("domain") or "").strip().lower()
     domain = re.sub(r"^https?://", "", domain).split("/")[0]
-    if "." not in domain:
-        raise ToolError(ctx.M("دامنه‌ی کامل را وارد کنید (مثل example.com).",
-                              "Enter a full domain (e.g. example.com)."))
+    if "." not in domain or not valid_domain(domain):
+        raise ToolError(ctx.M("دامنه‌ی کامل و معتبر وارد کنید (مثل example.com).",
+                              "Enter a valid full domain (e.g. example.com)."))
+
+    def _safe_whois_host(server: str) -> str:
+        clean = server.strip().lower().rstrip(".")
+        if not valid_domain(clean):
+            raise ValueError(f"invalid WHOIS server: {server}")
+        infos = socket.getaddrinfo(clean, 43, proto=socket.IPPROTO_TCP)
+        for info in infos:
+            addr = ipaddress.ip_address(info[4][0])
+            if (addr.is_private or addr.is_loopback or addr.is_link_local
+                    or addr.is_multicast or addr.is_reserved or addr.is_unspecified):
+                raise ValueError(f"refusing non-public WHOIS referral: {clean}")
+        return clean
 
     def query(server: str, text: str) -> str:
-        with socket.create_connection((server, 43), timeout=12) as sock:
+        safe_srv = _safe_whois_host(server)
+        with socket.create_connection((safe_srv, 43), timeout=12) as sock:
             sock.sendall((text + "\r\n").encode("utf-8"))
             chunks = []
-            while True:
+            total = 0
+            while total < 262_144:
                 data = sock.recv(4096)
                 if not data:
                     break
                 chunks.append(data)
+                total += len(data)
             return b"".join(chunks).decode("utf-8", errors="replace")
 
     ctx.progress(1, 3, ctx.M("پرسش از سرور WHOIS", "Asking the WHOIS server"))

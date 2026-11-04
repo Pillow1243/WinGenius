@@ -1,45 +1,52 @@
-"""Application bootstrap: DPI, logging, theme, tool registry, main window."""
+"""Application bootstrap: DPI, logging, theme, tool registry, main window.
+
+Headless CLI purity: `PySide6.QtGui` and `PySide6.QtWidgets` are NEVER imported
+before `wants_cli(argv)` is checked, so CLI invocations run cleanly on headless
+servers, SSH sessions, and containers without X11/Wayland display libraries.
+"""
 from __future__ import annotations
 
 import os
 import sys
-from pathlib import Path
 import traceback
-from typing import List
+from pathlib import Path
+from typing import TYPE_CHECKING, List
 
-from PySide6.QtCore import QCoreApplication, Qt
-from PySide6.QtGui import QFont, QIcon
-from PySide6.QtWidgets import QApplication, QMessageBox
-
-from .core import theme
+from .core import single_instance, upgrade, winapi
 from .core.i18n import set_language
 from .core.logger import get_logger, setup_logging
 from .core.paths import APP_NAME, APP_VERSION, IS_WINDOWS, resource_path
-from .core.registry import load_all, count
+from .core.registry import count, load_all
 from .core.settings import settings
-from .core import single_instance, upgrade, winapi
+
+if TYPE_CHECKING:
+    from PySide6.QtWidgets import QApplication
 
 log = get_logger("bootstrap")
-_APP: QApplication | None = None
-
-
+_APP: "QApplication | None" = None
 _REPORTING = False
 
 
 def _excepthook(exc_type, exc_value, exc_tb) -> None:
     global _REPORTING
-    text = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+    from .core.privacy import scrub_text
+
+    text = scrub_text("".join(traceback.format_exception(exc_type, exc_value, exc_tb)))
     log.error("uncaught exception:\n%s", text)
     if _REPORTING or issubclass(exc_type, RecursionError):
         print(text, file=sys.stderr)
         return
-    if os.environ.get("QT_QPA_PLATFORM", "").lower() == "offscreen" or "--self-test" in sys.argv \
-            or os.environ.get("WG_NO_DIALOG"):
-        # headless / automated runs: never show a modal that would block forever
+    if (
+        os.environ.get("QT_QPA_PLATFORM", "").lower() == "offscreen"
+        or "--self-test" in sys.argv
+        or os.environ.get("WG_NO_DIALOG")
+    ):
         print(text, file=sys.stderr)
         return
     _REPORTING = True
     try:
+        from PySide6.QtWidgets import QMessageBox
+
         box = QMessageBox()
         box.setIcon(QMessageBox.Icon.Critical)
         box.setWindowTitle(f"{APP_NAME} — {APP_VERSION}")
@@ -52,9 +59,15 @@ def _excepthook(exc_type, exc_value, exc_tb) -> None:
         _REPORTING = False
 
 
-def create_app(argv: List[str] | None = None) -> QApplication:
+def create_app(argv: List[str] | None = None) -> "QApplication":
     """Create the QApplication with WinGenius look & feel."""
     global _APP
+    from PySide6.QtCore import QCoreApplication, Qt
+    from PySide6.QtGui import QIcon
+    from PySide6.QtWidgets import QApplication
+
+    from .core import theme
+
     winapi.dpi_awareness()
     QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_UseHighDpiPixmaps, True)
     app = QApplication(argv if argv is not None else sys.argv)
@@ -77,26 +90,21 @@ def create_app(argv: List[str] | None = None) -> QApplication:
     if icon_png.exists():
         app.setWindowIcon(QIcon(str(icon_png)))
 
+    direction = "rtl" if settings.lang == "fa" else "ltr"
     palette = theme.build_palette(settings.theme, settings.accent)
     theme.register_fonts()                        # bundled Vazirmatn: same look on every PC
     app.setFont(theme.make_font(10))
-    app.setStyleSheet(theme.stylesheet(palette))
     app.setLayoutDirection(
         Qt.LayoutDirection.RightToLeft if settings.lang == "fa" else Qt.LayoutDirection.LeftToRight
     )
+    app.setStyleSheet(theme.stylesheet(palette, direction=direction))
     sys.excepthook = _excepthook
     _APP = app
     return app
 
 
 def _attach_console() -> None:
-    """Give the windowed .exe a voice on the command line.
-
-    PyInstaller builds WinGenius with `console=False`, so on Windows `sys.stdout` is
-    None and `WinGenius.exe --version` used to print *nothing at all* — the CLI worked
-    when run from source but looked broken from the shipped exe. Attaching to the
-    parent console and re-opening CONOUT$/CONIN$ fixes that without a second binary.
-    """
+    """Give the windowed .exe a voice on the command line."""
     if not IS_WINDOWS or sys.stdout is not None:
         return
     try:
@@ -123,7 +131,6 @@ def main(argv: List[str] | None = None) -> int:
         return run_cli(argv)
 
     # ------------------------------------------------- single-instance guard
-    # A second copy would fight over settings.ini, the journal and the scheduler.
     guard = None
     if "--allow-multi" not in argv:
         guard = single_instance.InstanceGuard()
@@ -147,14 +154,18 @@ def main(argv: List[str] | None = None) -> int:
     except Exception as exc:  # a broken plugin must never stop the app
         log.warning("plugin loading failed: %s", exc)
     log.info("%s %s starting with %d tools", APP_NAME, APP_VERSION, count())
+    try:
+        from .core.updates import confirm_post_update_health
+
+        confirm_post_update_health()
+    except Exception as exc:
+        log.warning("post-update health check skipped: %s", exc)
 
     from .ui.main_window import MainWindow
 
     window = MainWindow()
     window.show()
     if failures:
-        # A missing optional dependency used to silently shrink the toolbox;
-        # the user deserves to know that the 254 tools are not all loaded.
         window._show_toast(
             (f"{len(failures)} ماژول ابزار بارگذاری نشد؛ جزئیات در لاگ است."
              if settings.lang == "fa" else
@@ -180,8 +191,6 @@ def main(argv: List[str] | None = None) -> int:
     if "--pick" in argv:
         window.open_search()
     if "--sendto" in argv:
-        # Launched from the Explorer "Send to" shortcut: every existing path after the
-        # flag goes straight into the smart-drop sheet.
         incoming = []
         for item in argv[argv.index("--sendto") + 1:]:
             if item.startswith("--"):
@@ -193,7 +202,6 @@ def main(argv: List[str] | None = None) -> int:
             log.info("send-to received %d item(s)", len(incoming))
             window._show_drop(incoming)
     if "--self-test" in sys.argv:
-        # headless-friendly smoke run used by the build pipeline
         from PySide6.QtCore import QTimer
 
         QTimer.singleShot(2500, app.quit)

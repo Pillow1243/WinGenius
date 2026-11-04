@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Callable, Dict, Iterable, List, Optional, Sequence
 
 from .logger import get_logger
+from .privacy import scrub_text
 from .spec import RunContext, RunResult, ToolError, ToolSpec
 
 log = get_logger("tools")
@@ -16,7 +17,7 @@ log = get_logger("tools")
 def _friendly_message(ctx: RunContext, tool_id: str, exc: BaseException) -> str:
     """Bilingual 'this failed, and here is why' text for an unexpected crash."""
     kind = type(exc).__name__
-    detail = str(exc).strip()
+    detail = scrub_text(str(exc).strip())
     detail = detail if len(detail) <= 160 else detail[:157] + "…"
     if ctx.lang == "en":
         return (f"'{tool_id}' could not finish with these inputs ({kind}).\n"
@@ -179,6 +180,24 @@ def load_all() -> list:
 
 def count() -> int:
     return len(_TOOLS)
+
+
+def invoke(tool_id: str, ctx: RunContext, values: Dict, policy=None) -> RunResult:
+    """Execute a registered tool through `ExecutionService` with policy enforcement."""
+    from .execution import ExecutionPolicy, execution_service
+
+    active_policy = policy or ctx.policy or ExecutionPolicy.for_cli(yes=True)
+    outcome = execution_service().execute(
+        tool_id,
+        values,
+        policy=active_policy,
+        lang=ctx.lang,
+        output_dir=ctx.output_dir,
+        on_progress=ctx._progress,
+        on_message=ctx._message,
+        cancel_event=ctx._cancel,
+    )
+    return outcome.result or RunResult()
 
 
 def iter_keywords(spec: ToolSpec) -> Iterable[str]:

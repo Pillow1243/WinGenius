@@ -335,7 +335,10 @@ class Dashboard(OverlaySheet):
         try:
             import psutil
 
-            entries.append(("CPU", float(psutil.cpu_percent(interval=0.05)), f"{psutil.cpu_count()} core"))
+            if not getattr(self, "_cpu_primed", False):
+                psutil.cpu_percent(interval=None)
+                self._cpu_primed = True
+            entries.append(("CPU", float(psutil.cpu_percent(interval=None)), f"{psutil.cpu_count()} core"))
             memory = psutil.virtual_memory()
             entries.append(("RAM", float(memory.percent), human_size(memory.available)))
             try:

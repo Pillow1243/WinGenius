@@ -1,21 +1,24 @@
 """Local HTTP API — drive WinGenius from scripts, editors or another app.
 
-The server binds to 127.0.0.1 only, requires a per-install token and speaks
-plain JSON, so `curl`, PowerShell, AutoHotkey or a browser console can all use
-the same 225+ tools the UI uses.
+The server binds to 127.0.0.1 only, requires a per-install token, enforces
+Host / Origin / Sec-Fetch-Site anti-rebinding & anti-CSRF checks, separates
+unauthenticated auth-failure throttling from authenticated rate limits, rejects
+ambiguous HTTP framing (`Transfer-Encoding`, negative `Content-Length`), and
+routes all tool invocations through `ExecutionService` (`SAFE` only unless
+`allow_dangerous=True`).
 
     python main.py --serve            # http://127.0.0.1:8770
     curl -H "X-WinGenius-Token: …" http://127.0.0.1:8770/health
 
 Routes
-    GET  /health                     version, tool count, uptime
-    GET  /tools[?q=&category=]       tool catalogue
-    GET  /tools/<id>                 one spec, with its fields
-    POST /run      {"tool": id, "values": {…}}
+    GET  /health                     version, tool count, uptime, guard config
+    GET  /tools[?q=&category=]       tool catalogue with risk classification
+    GET  /tools/<id>                 one spec, with its fields and default risk
+    POST /run      {"tool": id, "values": {…}, "dry_run": false}
     GET  /workflows                  workflow list
     GET  /plan?q=<sentence>          planner chain for a sentence
     GET  /journal                    recent undoable operations
-    POST /undo     {"count": 1}
+    POST /undo     {"count": 1}      requires allow_dangerous=True
     GET  /jobs                       queue statistics
 """
 from __future__ import annotations
@@ -30,8 +33,10 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 from urllib.parse import parse_qs, urlparse
 
+from .execution import ExecutionPolicy, PolicyDeniedError, classify_invocation, execution_service
 from .logger import get_logger
 from .paths import APP_VERSION, data_dir
+from .privacy import redact_known, scrub_text, secret_strings
 
 log = get_logger("api")
 
@@ -72,16 +77,11 @@ def api_token(create: bool = True) -> str:
 
 
 DRAIN_LIMIT = 8 * 1024 * 1024          # largest oversized body we bother to swallow
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
 class RateLimiter:
-    """Token-bucket per client, so a runaway script cannot freeze the app.
-
-    The server only ever listens on 127.0.0.1, but "local" is not the same as
-    "trusted": any process (or a stray browser tab pointed at the port) can hammer
-    it. Bursts are allowed up to `burst`, then the bucket refills at
-    `limit` requests per `window` seconds.
-    """
+    """Token-bucket per client, so a runaway script cannot freeze the app."""
 
     def __init__(self, limit: int = 300, window: float = 60.0, burst: Optional[int] = None) -> None:
         self.limit = max(1, int(limit))
@@ -119,7 +119,8 @@ class ApiServer:
                  output_dir: str = "", jobs: Any = None,
                  rate_limit: int = 300, rate_window: float = 60.0,
                  allow_query_token: bool = False,
-                 allow_dangerous: bool = False, max_parallel: int = 3) -> None:
+                 allow_dangerous: bool = False, max_parallel: int = 3,
+                 auth_fail_limit: int = 30) -> None:
         self.host = host
         self.port = int(port)
         self.token = token if token is not None else api_token()
@@ -127,6 +128,7 @@ class ApiServer:
         self.output_dir = output_dir
         self.jobs = jobs
         self.limiter = RateLimiter(limit=rate_limit, window=rate_window)
+        self.auth_limiter = RateLimiter(limit=max(5, int(auth_fail_limit)), window=rate_window)
         # A token in the URL ends up in logs and shell history, so it is OFF by
         # default.  Enable explicitly only for a throwaway local demo.
         self.allow_query_token = bool(allow_query_token)
@@ -172,9 +174,15 @@ class ApiServer:
         return f"http://{self.host}:{self.port}"
 
     def guard_stats(self) -> Dict[str, Any]:
-        return {"rate_limit": self.limiter.limit, "rate_window": self.limiter.window,
-                "rejected": self.limiter.rejected, "max_body": self.max_body,
-                "allow_query_token": self.allow_query_token}
+        return {
+            "rate_limit": self.limiter.limit,
+            "rate_window": self.limiter.window,
+            "rejected": self.limiter.rejected,
+            "auth_rejected": self.auth_limiter.rejected,
+            "max_body": self.max_body,
+            "allow_query_token": self.allow_query_token,
+            "allow_dangerous": self.allow_dangerous,
+        }
 
     # -------------------------------------------------------------------- core
     def dispatch(self, method: str, path: str, query: Dict[str, list],
@@ -207,17 +215,27 @@ class ApiServer:
                          or needle in spec.name_en.lower()]
             return 200, {"count": len(items), "tools": [
                 {"id": s.id, "name": s.name, "name_en": s.name_en, "category": s.category,
-                 "desc": s.desc, "desc_en": s.desc_en} for s in items[:400]]}
+                 "desc": s.desc, "desc_en": s.desc_en,
+                 "risk": classify_invocation(s).risk.slug}
+                for s in items[:400]]}
 
         if route.startswith("/tools/"):
-            spec = registry.get(route.split("/", 2)[2])
+            tool_key = route.split("/", 2)[2]
+            if "/" in tool_key or ".." in tool_key:
+                return 404, {"error": "unknown tool"}
+            spec = registry.get(tool_key)
             if spec is None:
                 return 404, {"error": "unknown tool"}
-            return 200, {"id": spec.id, "name": spec.name, "name_en": spec.name_en,
-                         "category": spec.category, "desc": spec.desc,
-                         "fields": [{"key": f.key, "kind": f.kind, "label": f.label,
-                                     "label_en": f.label_en, "required": f.required,
-                                     "default": f.default} for f in spec.fields]}
+            assessment = classify_invocation(spec)
+            return 200, {
+                "id": spec.id, "name": spec.name, "name_en": spec.name_en,
+                "category": spec.category, "desc": spec.desc, "desc_en": spec.desc_en,
+                "risk": assessment.risk.slug,
+                "requires_confirmation": assessment.requires_confirmation,
+                "fields": [{"key": f.key, "kind": f.kind, "label": f.label,
+                            "label_en": f.label_en, "required": f.required,
+                            "default": f.default} for f in spec.fields],
+            }
 
         if route == "/workflows":
             return 200, {"workflows": [
@@ -245,34 +263,73 @@ class ApiServer:
         if route == "/run" and method == "POST":
             payload = body or {}
             tool_id = str(payload.get("tool") or "")
-            values = payload.get("values") or {}
+            values = payload.get("values") if payload.get("values") is not None else {}
+            dry_run = bool(payload.get("dry_run"))
             if not isinstance(values, dict):
                 return 400, {"error": "values must be an object"}
             spec = registry.get(tool_id)
             if spec is None:
                 return 404, {"error": f"unknown tool: {tool_id}"}
-            if spec.danger and not self.allow_dangerous:
-                return 403, {"error": "destructive tools are disabled for this API"}
+            policy = ExecutionPolicy.for_api(allow_dangerous=self.allow_dangerous, dry_run=dry_run)
+            assessment = classify_invocation(spec, values)
+            if not policy.allows(assessment.risk):
+                return 403, {
+                    "ok": False,
+                    "error": "destructive or confirmation-gated tools are disabled for this API",
+                    "code": "dangerous_tool",
+                    "risk": assessment.risk.slug,
+                }
             if not self._execution_slots.acquire(blocking=False):
                 return 429, {"error": "too many running tools"}
-            ctx = RunContext(lang=self.lang, output_dir=self.output_dir or str(Path.home()))
+            ctx = RunContext(lang=self.lang, output_dir=self.output_dir or str(Path.home()),
+                             policy=policy)
+            secrets_list = secret_strings(tool_id, values)
             try:
-                result = spec.run(ctx, values)
+                result = execution_service.execute(spec, values, ctx, policy=policy)
+            except PolicyDeniedError as exc:
+                return 403, {
+                    "ok": False,
+                    "error": scrub_text(redact_known(str(exc), secrets_list)),
+                    "code": "dangerous_tool",
+                    "risk": exc.assessment.risk.slug,
+                }
             except Exception as exc:                       # tool error → 200 with ok=false
-                return 200, {"ok": False, "error": str(exc), "tool": tool_id}
+                cleaned = scrub_text(redact_known(str(exc), secrets_list))
+                return 200, {"ok": False, "error": cleaned, "tool": tool_id}
             finally:
                 self._execution_slots.release()
-            return 200, {"ok": True, "tool": tool_id,
-                         "message": getattr(result, "message", ""),
-                         "outputs": getattr(result, "outputs", []) or [],
-                         "details": getattr(result, "details", "")}
+            return 200, {
+                "ok": True,
+                "tool": tool_id,
+                "risk": assessment.risk.slug,
+                "message": getattr(result, "message", ""),
+                "outputs": getattr(result, "outputs", []) or [],
+                "details": getattr(result, "details", ""),
+            }
 
         if route == "/undo" and method == "POST":
+            raw_count = (body or {}).get("count", 1)
+            if isinstance(raw_count, bool):
+                return 400, {"error": "count must be a positive integer"}
             try:
-                count = max(1, min(50, int((body or {}).get("count", 1) or 1)))
+                parsed_count = int(raw_count)
             except (TypeError, ValueError):
-                return 400, {"error": "count must be an integer"}
-            results = journal().undo_last(count)
+                return 400, {"error": "count must be a positive integer"}
+            if parsed_count < 1:
+                return 400, {"error": "count must be at least 1"}
+            if not self.allow_dangerous:
+                return 403, {
+                    "ok": False,
+                    "error": "undo modifies the filesystem and requires allow_dangerous",
+                    "code": "dangerous_tool",
+                }
+            count = min(50, parsed_count)
+            if not self._execution_slots.acquire(blocking=False):
+                return 429, {"error": "too many running tools"}
+            try:
+                results = journal().undo_last(count)
+            finally:
+                self._execution_slots.release()
             return 200, {"undone": [{"id": r["id"], "status": r["status"],
                                      "restored": r["restored"], "problems": r["problems"]}
                                     for r in results]}
@@ -280,8 +337,16 @@ class ApiServer:
         return 404, {"error": "not found", "path": route}
 
 
+def _extract_hostname(raw_host: str) -> str:
+    host = (raw_host or "").strip().lower()
+    if host.startswith("["):
+        return host[1:].split("]")[0]
+    return host.split(":")[0]
+
+
 def _make_handler(server: ApiServer):
     class Handler(BaseHTTPRequestHandler):
+        __slots__ = ()
         server_version = "WinGeniusAPI/" + APP_VERSION
         protocol_version = "HTTP/1.1"
 
@@ -292,12 +357,30 @@ def _make_handler(server: ApiServer):
         # ------------------------------------------------------------- helpers
         def _host_ok(self) -> bool:
             """Refuse DNS-rebinding: only our own loopback hostnames are valid."""
-            host = (self.headers.get("Host") or "").strip().lower()
-            if host.startswith("["):                    # IPv6 literal
-                host = host[1:].split("]")[0]
-            else:
-                host = host.split(":")[0]
-            return host in {"127.0.0.1", "localhost", "::1"}
+            return _extract_hostname(self.headers.get("Host") or "") in _LOOPBACK_HOSTS
+
+        def _origin_ok(self) -> bool:
+            """Reject cross-site browser requests (CSRF / sandboxed iframe)."""
+            sec_site = (self.headers.get("Sec-Fetch-Site") or "").strip().lower()
+            if sec_site and sec_site not in {"same-origin", "none"}:
+                return False
+            origin = (self.headers.get("Origin") or "").strip()
+            if not origin:
+                return True
+            if origin.lower() == "null":
+                return False
+            parsed = urlparse(origin)
+            if parsed.scheme not in {"http"}:
+                return False
+            return _extract_hostname(parsed.netloc) in _LOOPBACK_HOSTS
+
+        def _framing_ok(self) -> bool:
+            """Reject Transfer-Encoding to prevent HTTP/1.1 keep-alive desync."""
+            if self.headers.get("Transfer-Encoding") is not None:
+                self.close_connection = True
+                self._reply(501, {"error": "Transfer-Encoding is not supported"})
+                return False
+            return True
 
         def _authorised(self, query: Dict[str, list]) -> bool:
             if not isinstance(server.token, str) or not server.token.strip():
@@ -310,12 +393,26 @@ def _make_handler(server: ApiServer):
             given = (query.get("token", [""])[0] or "")
             return bool(given) and secrets.compare_digest(given, server.token)
 
-        def _throttled(self) -> bool:
-            client = self.client_address[0] if self.client_address else "?"
-            if server.limiter.allow(client):
+        def _check_access(self, query: Dict[str, list]) -> bool:
+            if not self._framing_ok():
                 return False
-            self._reply(429, {"error": "too many requests",
-                              "retry_after": server.limiter.retry_after()})
+            if not self._host_ok() or not self._origin_ok():
+                self.close_connection = True
+                self._reply(403, {"error": "host or origin not allowed"})
+                return False
+            client = self.client_address[0] if self.client_address else "?"
+            if not self._authorised(query):
+                if not server.auth_limiter.allow(client):
+                    self.close_connection = True
+                    self._reply(429, {"error": "too many failed authentication attempts",
+                                      "retry_after": server.auth_limiter.retry_after()})
+                    return False
+                self._reply(401, {"error": "unauthorised"})
+                return False
+            if not server.limiter.allow(client):
+                self._reply(429, {"error": "too many requests",
+                                  "retry_after": server.limiter.retry_after()})
+                return False
             return True
 
         def _reply(self, status: int, payload: Dict[str, Any]) -> None:
@@ -328,20 +425,34 @@ def _make_handler(server: ApiServer):
             self.send_header("Referrer-Policy", "no-referrer")
             self.end_headers()
             self.wfile.write(raw)
-            # Audit trail without ever recording the token or the query string.
             log.info("api %s %s -> %s", self.command, urlparse(self.path).path, status)
 
-        def _body(self) -> Optional[Dict[str, Any]]:
+        def send_error(self, code: int, message: Optional[str] = None,
+                       explain: Optional[str] = None) -> None:
+            self.close_connection = True
+            status = int(code)
+            if status == 501 and message and "Unsupported method" in message:
+                status = 405
             try:
-                length = int(self.headers.get("Content-Length", "0") or 0)
+                self._reply(status, {"error": message or "request error", "status": status})
+            except OSError:
+                pass
+
+        def _body(self) -> Any:
+            raw_len = self.headers.get("Content-Length")
+            if raw_len is None or raw_len.strip() == "":
+                return {}
+            try:
+                length = int(raw_len.strip())
             except ValueError:
+                self.close_connection = True
                 return None
-            if length <= 0:
+            if length < 0:
+                self.close_connection = True
+                return None
+            if length == 0:
                 return {}
             if length > server.max_body:
-                # Drain a *reasonable* oversized body so the client can read our 413
-                # (closing the socket mid-upload just gives it a broken pipe), but
-                # never read a hostile multi-gigabyte payload.
                 if length <= DRAIN_LIMIT:
                     remaining = length
                     while remaining > 0:
@@ -351,23 +462,22 @@ def _make_handler(server: ApiServer):
                         remaining -= len(chunk)
                 else:
                     self.close_connection = True
-                return "too-large"                    # sentinel, handled by the caller
+                return "too-large"
+            raw_bytes = self.rfile.read(length)
+            if len(raw_bytes) != length:
+                self.close_connection = True
+                return None
             try:
-                return json.loads(self.rfile.read(length).decode("utf-8"))
+                return json.loads(raw_bytes.decode("utf-8"))
             except (ValueError, UnicodeDecodeError):
+                self.close_connection = True
                 return None
 
         # -------------------------------------------------------------- verbs
         def do_GET(self) -> None:                      # noqa: N802
             parsed = urlparse(self.path)
             query = parse_qs(parsed.query)
-            if self._throttled():
-                return
-            if not self._host_ok():
-                self._reply(403, {"error": "host not allowed"})
-                return
-            if not self._authorised(query):
-                self._reply(401, {"error": "unauthorised"})
+            if not self._check_access(query):
                 return
             try:
                 status, payload = server.dispatch("GET", parsed.path, query, None)
@@ -379,19 +489,14 @@ def _make_handler(server: ApiServer):
         def do_POST(self) -> None:                     # noqa: N802
             parsed = urlparse(self.path)
             query = parse_qs(parsed.query)
-            if self._throttled():
-                return
-            if not self._host_ok():
-                self._reply(403, {"error": "host not allowed"})
-                return
-            if not self._authorised(query):
-                self._reply(401, {"error": "unauthorised"})
+            if not self._check_access(query):
                 return
             body = self._body()
             if body == "too-large":
                 self._reply(413, {"error": "payload too large", "limit": server.max_body})
                 return
             if not isinstance(body, dict):
+                self.close_connection = True
                 self._reply(400, {"error": "JSON body must be an object"})
                 return
             try:

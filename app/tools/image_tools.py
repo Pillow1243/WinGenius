@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from ..core.registry import tool
 from ..core.spec import (
-    K_CHOICE, K_COLOR, K_DIR, K_FILES, K_FLOAT, K_INT, K_SAVE, K_TEXT,
+    K_CHOICE, K_COLOR, K_DIR, K_FILE, K_FILES, K_FLOAT, K_INT, K_SAVE, K_TEXT,
     Field, RunContext, RunResult, ToolError,
 )
 from ..core.utils import human_size, unique_path
@@ -231,7 +231,7 @@ def image_compress(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     fields=[
         Field("src", K_FILES, "تصاویر", "Images", required=True, filt=IMG_FILTER, multiple=True),
         Field("text", K_TEXT, "متن", "Text", default="@MyBrand"),
-        Field("logo", K_SAVE, "یا فایل لوگو (اختیاری)", "Or logo file (optional)",
+        Field("logo", K_FILE, "یا فایل لوگو (اختیاری)", "Or logo file (optional)",
               filt="PNG (*.png);;همه فایل‌ها (*)"),
         Field("position", K_CHOICE, "موقعیت", "Position", default="br",
               choices=[("br", "پایین راست", "Bottom right"), ("bl", "پایین چپ", "Bottom left"),
@@ -247,12 +247,15 @@ def image_watermark(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     Image = _image(ctx)
     ImageDraw = require("PIL.ImageDraw", "Pillow", ctx)
     ImageFont = require("PIL.ImageFont", "Pillow", ctx)
+    ImageColor = require("PIL.ImageColor", "Pillow", ctx)
     files = files_or_raise(v, "src", ctx)
     opened = _open_images(ctx, files)
-    from PySide6.QtGui import QColor
-
-    color = QColor(str(v.get("color") or "#FFFFFF"))
-    color_tuple = (color.red(), color.green(), color.blue())
+    raw_color = str(v.get("color") or "#FFFFFF").strip() or "#FFFFFF"
+    try:
+        rgb = ImageColor.getrgb(raw_color)
+        color_tuple = (int(rgb[0]), int(rgb[1]), int(rgb[2]))
+    except Exception:
+        color_tuple = (255, 255, 255)
     logo_path = str(v.get("logo") or "").strip()
     logo = None
     if logo_path and Path(logo_path).exists():

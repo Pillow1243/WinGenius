@@ -86,6 +86,8 @@ class ClipboardWatcher(QObject):
 
     def set_enabled(self, value: bool) -> None:
         self._enabled = bool(value)
+        if not self._enabled:
+            self._last = ""
 
     # ----------------------------------------------------------------- events
     def _on_changed(self) -> None:

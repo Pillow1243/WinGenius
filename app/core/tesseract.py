@@ -7,6 +7,7 @@ agree on *which* engine and *which* language folder is in use.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -14,6 +15,7 @@ from typing import List, Set
 
 MODULE_HINT_FA = "pip install pytesseract"
 MODULE_HINT_EN = "pip install pytesseract"
+_LANG_RE = re.compile(r"^[A-Za-z0-9_+]{1,64}$")
 
 
 def _settings_value(key: str) -> str:
@@ -43,10 +45,16 @@ def find_tesseract() -> str:
     if found:
         return found
     configured = _settings_value("ocr_tesseract_path")
-    if configured and Path(configured).exists():
-        return configured
+    if configured:
+        cand = Path(configured)
+        if (
+            not cand.is_symlink()
+            and cand.is_file()
+            and cand.stem.lower().startswith("tesseract")
+        ):
+            return str(cand)
     for candidate in _standard_paths():
-        if Path(candidate).exists():
+        if Path(candidate).is_file():
             return candidate
     return ""
 
@@ -110,6 +118,9 @@ def image_to_text(path: Path, lang: str = "eng", psm: int = 3) -> str:
     import pytesseract
     from PIL import Image
 
+    clean_lang = str(lang or "eng").strip()
+    if not _LANG_RE.fullmatch(clean_lang):
+        raise ValueError(f"invalid OCR language spec: {clean_lang!r}")
     exe = find_tesseract()
     if not exe:
         raise RuntimeError("tesseract engine not found")
@@ -117,4 +128,4 @@ def image_to_text(path: Path, lang: str = "eng", psm: int = 3) -> str:
     with Image.open(str(path)) as image:
         if image.mode not in ("L", "RGB"):
             image = image.convert("RGB")
-        return pytesseract.image_to_string(image, lang=lang, config=f"--oem 3 --psm {int(psm)}")
+        return pytesseract.image_to_string(image, lang=clean_lang, config=f"--oem 3 --psm {int(psm)}")

@@ -108,12 +108,14 @@ class RunContext:
         on_progress: Optional[Callable[[int, int, str], None]] = None,
         on_message: Optional[Callable[[str], None]] = None,
         cancel_event: Optional[threading.Event] = None,
+        policy: Any = None,
     ) -> None:
         self.lang = "en" if lang == "en" else "fa"
         self.output_dir = output_dir
         self._on_progress = on_progress
         self._on_message = on_message
         self._cancel = cancel_event or threading.Event()
+        self.policy = policy
 
     # ------------------------------------------------------------------ i18n
     def M(self, fa: str, en: Optional[str] = None) -> str:

@@ -6,6 +6,7 @@ import binascii
 import colorsys
 import csv
 import datetime
+import html as _html
 import json
 import re
 import sys
@@ -15,10 +16,10 @@ from typing import Any, Dict, List
 
 from ..core.registry import tool
 from ..core.spec import (
-    K_BOOL, K_CHOICE, K_DIR, K_FILE, K_FLOAT, K_INT, K_MULTILINE, K_SAVE, K_TEXT,
+    K_BOOL, K_CHOICE, K_DIR, K_FILE, K_FLOAT, K_INT, K_MULTILINE, K_PASSWORD, K_SAVE, K_TEXT,
     Field, RunContext, RunResult, ToolError,
 )
-from ..core.utils import human_size, unique_path
+from ..core.utils import human_size, safe_filename, unique_path
 from ._helpers import (ensure_dir, first_file, out_dir, read_text_file, require, save_target,
                        text_or_file)
 
@@ -362,6 +363,14 @@ def _parse_color(raw: str):
 
 
 # -------------------------------------------------------------------------- QR
+def _escape_wifi_qr(value: str) -> str:
+    return (value.replace("\\", "\\\\")
+            .replace(";", "\\;")
+            .replace(",", "\\,")
+            .replace(":", "\\:")
+            .replace('"', '\\"'))
+
+
 @tool(
     id="qr_generate", category="convert", name="ساخت QR کد", name_en="QR code",
     desc="از متن، لینک یا وای‌فای یک QR کد PNG/SVG می‌سازد.",
@@ -373,7 +382,7 @@ def _parse_color(raw: str):
         Field("text", K_TEXT, "متن یا لینک", "Text or link", default="https://",
               visible_when=("mode", "text")),
         Field("ssid", K_TEXT, "نام شبکه (SSID)", "SSID", visible_when=("mode", "wifi")),
-        Field("password", K_TEXT, "رمز وای‌فای", "Wi-Fi password", visible_when=("mode", "wifi")),
+        Field("password", K_PASSWORD, "رمز وای‌فای", "Wi-Fi password", visible_when=("mode", "wifi")),
         Field("size", K_INT, "اندازه (px)", "Size (px)", default=600, minimum=100, maximum=2000),
         Field("color", K_TEXT, "رنگ (HEX)", "Colour (HEX)", default="#101828"),
         Field("out", K_SAVE, "ذخیره در", "Save as", filt="PNG (*.png);;SVG (*.svg)"),
@@ -385,8 +394,9 @@ def qr_generate(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
         ssid = str(v.get("ssid") or "").strip()
         if not ssid:
             raise ToolError(ctx.M("نام شبکه را وارد کنید.", "Enter the SSID."))
-        payload = f"WIFI:T:WPA;S:{ssid};P:{v.get('password') or ''};;"
-        name = f"wifi_{ssid}"
+        pw = str(v.get("password") or "")
+        payload = f"WIFI:T:WPA;S:{_escape_wifi_qr(ssid)};P:{_escape_wifi_qr(pw)};;"
+        name = f"wifi_{safe_filename(ssid)}"
     else:
         payload = str(v.get("text") or "").strip()
         if not payload:
@@ -559,7 +569,7 @@ def timestamp_convert(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
         f"{ctx.M('یونیکس (ثانیه)', 'Unix (s)')} : {int(stamp.timestamp())}",
         f"{ctx.M('یونیکس (میلی‌ثانیه)', 'Unix (ms)')} : {int(stamp.timestamp() * 1000)}",
         f"{ctx.M('محلی', 'Local')}              : {stamp:%Y-%m-%d %H:%M:%S}",
-        f"UTC                : {datetime.datetime.utcfromtimestamp(stamp.timestamp()):%Y-%m-%d %H:%M:%S}",
+        f"UTC                : {datetime.datetime.fromtimestamp(stamp.timestamp(), tz=datetime.timezone.utc):%Y-%m-%d %H:%M:%S}",
         f"ISO 8601           : {stamp.isoformat()}",
         f"{ctx.M('روز هفته', 'Weekday')}          : {stamp:%A}",
     ]
@@ -602,10 +612,12 @@ def markdown_to_html(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
  table{border-collapse:collapse;width:100%} th,td{border:1px solid #e1e6f0;padding:8px}
  img{max-width:100%}
 </style>"""
+    title_text = _html.escape(Path(file_value).stem) if file_value else "Document"
     html = f"""<!DOCTYPE html>
 <html lang="fa" dir="auto"><head><meta charset="utf-8">
-<title>{Path(file_value).stem if file_value else 'Document'}</title>{style}</head>
+<title>{title_text}</title>{style}</head>
 <body>{body}</body></html>"""
-    dest = save_target(ctx, str(v.get("out") or ""), f"{(Path(file_value).stem if file_value else 'document')}.html")
+    default_stem = safe_filename(Path(file_value).stem) if file_value else "document"
+    dest = save_target(ctx, str(v.get("out") or ""), f"{default_stem}.html")
     dest.write_text(html, encoding="utf-8")
     return RunResult(message=ctx.M("HTML ساخته شد.", "HTML created."), outputs=[str(dest)], open_target=str(dest))

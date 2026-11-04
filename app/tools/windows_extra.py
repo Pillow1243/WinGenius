@@ -1,10 +1,12 @@
 """Windows power tools: winget, event log, drivers, restore points, cleanup, features."""
 from __future__ import annotations
 
+import os
+import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from ..core.registry import tool
 from ..core.spec import (
@@ -14,13 +16,20 @@ from ..core.utils import human_size
 from ._helpers import need_windows
 
 NO_WINDOW = 0x08000000 if sys.platform.startswith("win") else 0
+_VALID_EVENT_LOGS = {"System", "Application", "Security", "Setup"}
+_FEATURE_NAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,120}$")
 
 
-def _cmd(args: List[str], ctx: RunContext, timeout: int = 180) -> tuple[int, str]:
+def _cmd(args: List[str], ctx: RunContext, timeout: int = 180,
+         extra_env: Optional[Dict[str, str]] = None) -> tuple[int, str]:
     ctx.check_cancel()
+    env = None
+    if extra_env:
+        env = dict(os.environ)
+        env.update(extra_env)
     try:
         completed = subprocess.run(args, capture_output=True, text=True, timeout=timeout,
-                                   errors="replace", creationflags=NO_WINDOW)
+                                   errors="replace", env=env, creationflags=NO_WINDOW)
     except FileNotFoundError:
         return 127, f"{args[0]} {ctx.M('نصب نیست یا در PATH نیست.', 'is not installed or not on PATH.')}"
     except subprocess.TimeoutExpired:
@@ -30,8 +39,10 @@ def _cmd(args: List[str], ctx: RunContext, timeout: int = 180) -> tuple[int, str
     return completed.returncode, ((completed.stdout or "") + (completed.stderr or "")).strip()
 
 
-def _powershell(ctx: RunContext, script: str, timeout: int = 180) -> tuple[int, str]:
-    return _cmd(["powershell", "-NoProfile", "-NonInteractive", "-Command", script], ctx, timeout)
+def _powershell(ctx: RunContext, script: str, timeout: int = 180,
+                extra_env: Optional[Dict[str, str]] = None) -> tuple[int, str]:
+    return _cmd(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                ctx, timeout, extra_env=extra_env)
 
 
 @tool(
@@ -107,17 +118,22 @@ def winget_tool(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
 )
 def event_errors(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     need_windows(ctx)
-    log = str(v.get("log") or "System")
-    count = max(5, int(v.get("count") or 15))
-    hours = max(1, int(v.get("hours") or 72))
+    log = str(v.get("log") or "System").strip()
+    if log not in _VALID_EVENT_LOGS:
+        raise ToolError(ctx.M("نام لاگ معتبر نیست.", "Invalid Windows Event Log name."))
+    count = max(5, min(500, int(v.get("count") or 15)))
+    hours = max(1, min(8760, int(v.get("hours") or 72)))
     script = (
-        f"$since=(Get-Date).AddHours(-{hours}); "
-        f"Get-WinEvent -FilterHashtable @{{LogName='{log}';Level=1,2;StartTime=$since}} "
-        f"-MaxEvents {count} -ErrorAction SilentlyContinue | "
+        "$since=(Get-Date).AddHours(-[int]$env:WG_EVENT_HOURS); "
+        "Get-WinEvent -FilterHashtable @{LogName=$env:WG_EVENT_LOG;Level=1,2;StartTime=$since} "
+        "-MaxEvents ([int]$env:WG_EVENT_COUNT) -ErrorAction SilentlyContinue | "
         "Select-Object TimeCreated,Id,ProviderName,@{n='Msg';e={($_.Message -split \"`n\")[0]}} | "
         "Format-Table -AutoSize | Out-String -Width 220"
     )
-    code, output = _powershell(ctx, script, timeout=120)
+    code, output = _powershell(
+        ctx, script, timeout=120,
+        extra_env={"WG_EVENT_LOG": log, "WG_EVENT_HOURS": str(hours), "WG_EVENT_COUNT": str(count)},
+    )
     if code != 0 or not output.strip():
         return RunResult(message=ctx.M(f"خطای مهمی در {hours} ساعت اخیر ثبت نشده — خبر خوبی است!",
                                       f"No serious errors in the last {hours} hours — good news!"))
@@ -172,13 +188,17 @@ def driver_problems(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
 )
 def restore_point(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     need_windows(ctx)
-    description = str(v.get("description") or "WinGenius checkpoint").replace("'", "")
+    raw_desc = str(v.get("description") or "WinGenius checkpoint")
+    description = re.sub(r"[\x00-\x1f\x7f]", " ", raw_desc).strip()[:120] or "WinGenius checkpoint"
     ctx.progress(1, 4, ctx.M("فعال‌سازی محافظت سیستم", "Enabling system protection"))
     _powershell(ctx, "Enable-ComputerRestore -Drive $env:SystemDrive", timeout=120)
     ctx.progress(2, 4, ctx.M("ساخت نقطه‌ی بازگردانی", "Creating the restore point"))
-    code, output = _powershell(ctx,
-                               f"Checkpoint-Computer -Description '{description}' "
-                               "-RestorePointType 'MODIFY_SETTINGS'", timeout=600)
+    code, output = _powershell(
+        ctx,
+        "Checkpoint-Computer -Description $env:WG_RP_DESC -RestorePointType 'MODIFY_SETTINGS'",
+        timeout=600,
+        extra_env={"WG_RP_DESC": description},
+    )
     ctx.progress(3, 4, ctx.M("خواندن فهرست", "Reading the list"))
     listing = ""
     if v.get("list", True):
@@ -261,10 +281,19 @@ def windows_features(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
                          details=output[:12000])
     if not name:
         raise ToolError(ctx.M("نام دقیق قابلیت را وارد کنید.", "Enter the exact feature name."))
+    if not _FEATURE_NAME_RE.fullmatch(name):
+        raise ToolError(ctx.M("نام قابلیت شامل نویسه‌های غیرمجاز است.",
+                              "Invalid feature name (only letters, digits, dots, underscores, hyphens)."))
+    if action not in ("enable", "disable"):
+        raise ToolError(ctx.M("عملیات نامعتبر است.", "Invalid action."))
     verb = "Enable" if action == "enable" else "Disable"
     ctx.progress(1, 2, ctx.M("در حال اعمال تغییر…", "Applying the change…"))
     code, output = _powershell(
-        ctx, f"{verb}-WindowsOptionalFeature -Online -FeatureName '{name}' -All -NoRestart", timeout=1800)
+        ctx,
+        f"{verb}-WindowsOptionalFeature -Online -FeatureName $env:WG_FEAT_NAME -All -NoRestart",
+        timeout=1800,
+        extra_env={"WG_FEAT_NAME": name},
+    )
     ctx.progress(2, 2, "")
     if code != 0:
         raise ToolError(ctx.M(f"تغییر انجام نشد:\n{output[-1500:]}", f"The change failed:\n{output[-1500:]}"))

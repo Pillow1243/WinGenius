@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 
 from PySide6.QtCore import QObject, Signal
 
+from .execution import ExecutionPolicy
 from .history import history
 from .logger import get_logger
 from .registry import get as get_tool
@@ -46,6 +47,7 @@ class Job:
     started: float = 0.0
     finished: float = 0.0
     result: Optional[RunResult] = None
+    policy: Optional[ExecutionPolicy] = None
 
     @property
     def elapsed(self) -> float:
@@ -123,9 +125,21 @@ class JobManager(QObject):
 
     # ------------------------------------------------------------------ submit
     def submit(self, spec: ToolSpec, values: Dict[str, Any], lang: str = "",
-               output_dir: str = "", title: str = "") -> Job:
+               output_dir: str = "", title: str = "",
+               policy: Optional[ExecutionPolicy] = None) -> Job:
         if self._closed:
             raise RuntimeError("job manager is shut down")
+        base_policy = policy or ExecutionPolicy.for_gui(
+            confirmed=True, record_history=False, source="queue"
+        )
+        if base_policy.record_history:
+            base_policy = ExecutionPolicy(
+                source=base_policy.source,
+                max_risk=base_policy.max_risk,
+                confirmed=base_policy.confirmed,
+                dry_run=base_policy.dry_run,
+                record_history=False,
+            )
         job = Job(
             id=uuid.uuid4().hex[:12],
             tool_id=spec.id,
@@ -133,6 +147,7 @@ class JobManager(QObject):
             values=deepcopy(values or {}),
             lang=lang or self._lang,
             output_dir=output_dir or self._output_dir,
+            policy=base_policy,
         )
         self._jobs[job.id] = job
         self.jobAdded.emit(job)
@@ -140,11 +155,12 @@ class JobManager(QObject):
         self._pump()
         return job
 
-    def submit_by_id(self, tool_id: str, values: Dict[str, Any]) -> Optional[Job]:
+    def submit_by_id(self, tool_id: str, values: Dict[str, Any],
+                     policy: Optional[ExecutionPolicy] = None) -> Optional[Job]:
         spec = get_tool(tool_id)
         if spec is None:
             return None
-        return self.submit(spec, values)
+        return self.submit(spec, values, policy=policy)
 
     def _pump(self) -> None:
         if self._closed:
@@ -163,7 +179,7 @@ class JobManager(QObject):
             job.error = f"unknown tool: {job.tool_id}"
             self.jobFinished.emit(job)
             return
-        runner = ToolRunner(spec, job.values, job.lang, job.output_dir, self)
+        runner = ToolRunner(spec, job.values, job.lang, job.output_dir, self, policy=job.policy)
         job.status = RUNNING
         job.started = time.time()
         job.message = ""

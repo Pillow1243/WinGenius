@@ -239,12 +239,29 @@ def _chevron_svg(color: str) -> str:
     )
 
 
-def stylesheet(p: Palette) -> str:
+def _relative_luminance(hex_color: str) -> float:
+    c = QColor(hex_color)
+    if not c.isValid():
+        return 0.2
+
+    def _chan(v: int) -> float:
+        s = v / 255.0
+        return s / 12.92 if s <= 0.03928 else ((s + 0.055) / 1.055) ** 2.4
+
+    return 0.2126 * _chan(c.red()) + 0.7152 * _chan(c.green()) + 0.0722 * _chan(c.blue())
+
+
+def stylesheet(p: Palette, direction: str = "rtl") -> str:
     dim = p.text_dim
     family = ui_font_family()
     mono = mono_font_family()
     t = TYPE_SCALE
-    on_accent = "#FFFFFF"
+    on_accent = "#101626" if _relative_luminance(p.accent) > 0.62 else "#FFFFFF"
+    is_rtl = str(direction or "rtl").lower() != "ltr"
+    combo_pad_side = "padding-left" if is_rtl else "padding-right"
+    combo_drop_pos = "center left" if is_rtl else "center right"
+    menu_item_pad = "7px 28px 7px 14px" if is_rtl else "7px 14px 7px 28px"
+    menu_icon_margin = "margin-right: 6px" if is_rtl else "margin-left: 6px"
     return f"""
 * {{
     font-family: "{family}";
@@ -336,13 +353,13 @@ QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabl
     background: {alpha(p.panel_alt, 0.45)};
 }}
 QComboBox {{
-    padding-right: 28px;
+    {combo_pad_side}: 28px;
 }}
 QComboBox::drop-down {{
     border: none;
     width: 26px;
     subcontrol-origin: padding;
-    subcontrol-position: center right;
+    subcontrol-position: {combo_drop_pos};
 }}
 QComboBox::down-arrow {{
     image: url("{_chevron_svg(dim)}");
@@ -640,7 +657,7 @@ QMenu {{
     padding: 6px;
 }}
 QMenu::item {{
-    padding: 7px 28px 7px 14px;
+    padding: {menu_item_pad};
     border-radius: 8px;
     color: {p.text};
 }}
@@ -656,7 +673,7 @@ QMenu::separator {{
     margin: 5px 10px;
 }}
 QMenu::icon {{
-    margin-left: 6px;
+    {menu_icon_margin};
 }}
 
 /* ---------------------------------------------------------------- misc */

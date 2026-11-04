@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import math
 import os
 import secrets
 import string
@@ -15,12 +16,62 @@ from ..core.spec import (
     K_BOOL, K_CHOICE, K_FILES, K_FILE, K_INT, K_PASSWORD, K_SAVE, K_TEXT,
     Field, RunContext, RunResult, ToolError,
 )
-from ..core.utils import hash_file, human_size, unique_path
+from ..core.utils import hash_file, human_size, safe_filename, unique_path
 from ._helpers import as_path_list, ensure_dir, first_file, out_dir, require, save_target
 
-MAGIC = b"WGF1"      # internal stream cipher (fallback, no dependencies)
-MAGIC_AES = b"WGA1"  # AES-256-GCM (used when `cryptography` is installed)
+MAGIC = b"WGF1"      # legacy stream format (file_decrypt read-only support)
+MAGIC_AES = b"WGA1"  # AES-256-GCM (authenticated encryption)
 KDF_ITERATIONS = 240_000
+
+PASSPHRASE_WORDS = (
+    "acorn", "admiral", "almond", "alpine", "amber", "anchor", "anvil", "apple",
+    "apricot", "archway", "arctic", "armada", "arrow", "aspen", "atlas", "aurora",
+    "autumn", "avocado", "badger", "bamboo", "banjo", "banner", "barley", "basalt",
+    "beacon", "beaver", "belfry", "berry", "birch", "bison", "blizzard", "blossom",
+    "bonfire", "boulder", "bramble", "breeze", "bridge", "bronze", "brook", "buckle",
+    "cactus", "camera", "campfire", "canary", "candle", "canyon", "captain", "caravan",
+    "caribou", "cascade", "castle", "cavern", "cedar", "celeste", "chalet", "charcoal",
+    "cherry", "chestnut", "cipher", "citadel", "citrus", "cliff", "clover", "cobalt",
+    "coconut", "comet", "compass", "condor", "copper", "coral", "cosmos", "cotton",
+    "cougar", "cradle", "cranberry", "crater", "creek", "crimson", "crystal", "cypress",
+    "dagger", "dahlia", "daisy", "dancer", "dawn", "delta", "desert", "diamond",
+    "dolphin", "domino", "dragon", "driftwood", "droplet", "dynamo", "eagle", "eclipse",
+    "emerald", "ember", "empire", "encore", "engine", "enigma", "equinox", "estuary",
+    "evergreen", "fabric", "falcon", "feather", "fennel", "ferry", "festival", "fiddle",
+    "fjord", "flame", "flannel", "flint", "flora", "forest", "fortress", "fossil",
+    "fountain", "foxglove", "frost", "galaxy", "galleon", "garden", "garnet", "gazelle",
+    "geyser", "ginger", "glacier", "glider", "granite", "griffin", "grove", "guitar",
+    "halcyon", "hammer", "harbor", "harmony", "harvest", "hawthorn", "hazel", "heather",
+    "helmet", "herald", "hibiscus", "hickory", "hollow", "horizon", "Hummingbird".lower(), "hunter",
+    "iceberg", "indigo", "infinity", "island", "ivory", "jacket", "jaguar", "jasmine",
+    "jasper", "journal", "jubilee", "jungle", "juniper", "kayak", "kestrel", "kettle",
+    "kingdom", "kitten", "lagoon", "lantern", "lapwing", "larch", "laurel", "lavender",
+    "ledger", "legend", "lemon", "leopard", "liberty", "lighthouse", "lilac", "linden",
+    "lotus", "lumen", "lynx", "magnet", "magnolia", "mahogany", "mammoth", "mandarin",
+    "mango", "mantle", "maple", "marble", "marigold", "mariner", "meadow", "mercury",
+    "meridian", "meteor", "midnight", "mimosa", "mineral", "mirage", "monarch", "monsoon",
+    "morning", "mosaic", "mountain", "mulberry", "mustang", "narwhal", "nebula", "nectar",
+    "needle", "neptune", "nightfall", "nimbus", "nomad", "nutmeg", "oasis", "obsidian",
+    "ocean", "octave", "olive", "onyx", "opal", "orange", "orbit", "orchid",
+    "origami", "osprey", "otter", "outpost", "oyster", "paddle", "palace", "panther",
+    "papaya", "paradox", "paragon", "parsley", "pavilion", "peacock", "pebble", "pelican",
+    "pendulum", "peony", "pepper", "peregrine", "phantom", "phoenix", "pioneer", "planet",
+    "platinum", "plover", "plum", "polar", "poplar", "prairie", "prism", "pulsar",
+    "pumpkin", "pyramid", "python", "quartz", "quasar", "quiver", "radish", "rainbow",
+    "rambutan", "ranger", "rapids", "raven", "redwood", "reef", "relic", "ribbon",
+    "ridge", "ripple", "river", "rocket", "rosemary", "ruby", "saffron", "sailor",
+    "salmon", "sandstone", "sapphire", "saturn", "savanna", "scarlet", "scepter", "sequoia",
+    "seraph", "shadow", "shamrock", "shelter", "shimmer", "sierra", "silver", "skyline",
+    "solstice", "sonnet", "sparrow", "spectrum", "sphinx", "spruce", "starlight", "summit",
+    "sundial", "sunflower", "sunrise", "sunset", "swallow", "sycamore", "talisman", "tangerine",
+    "tempest", "temple", "terrace", "thistle", "thunder", "tiger", "timber", "topaz",
+    "tornado", "torrent", "trident", "trillium", "triumph", "tundra", "turbine", "twilight",
+    "umbrella", "unicorn", "upland", "urban", "valley", "velvet", "venture", "verbena",
+    "vertex", "vessel", "vibrant", "village", "violet", "voyager", "wagon", "walnut",
+    "wanderer", "warden", "waterfall", "whisper", "willow", "windmill", "winter", "wisteria",
+    "wizard", "wombat", "woodland", "wren", "yarrow", "yellow", "yonder", "zenith",
+    "zephyr", "zircon",
+)
 
 
 def _aesgcm():
@@ -68,19 +119,12 @@ def password_generate(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     count = int(v.get("count") or 5)
     results: List[str] = []
     if mode == "passphrase":
-        words = [
-            "apple", "bridge", "candle", "dragon", "ember", "forest", "garden", "harbor",
-            "island", "jungle", "kitten", "ladder", "magnet", "nectar", "orange", "pepper",
-            "quartz", "rocket", "silver", "temple", "umbrella", "violet", "winter", "yellow",
-            "zephyr", "anchor", "breeze", "copper", "dolphin", "engine", "fabric", "glacier",
-            "hollow", "ivory", "jacket", "kettle", "lumen", "meadow", "needle", "orbit",
-            "pilot", "quiet", "ripple", "sunset", "timber", "urban", "valley", "wagon",
-            "yonder", "zenith", "bamboo", "cactus", "daisy", "falcon", "ginger", "hazel",
-        ]
+        words = PASSPHRASE_WORDS
         n_words = int(v.get("words") or 5)
         for _ in range(count):
             chosen = [secrets.choice(words) for _ in range(n_words)]
             results.append("-".join(chosen) + str(secrets.randbelow(90) + 10))
+        entropy = n_words * math.log2(len(words)) + math.log2(90)
     else:
         length = max(6, int(v.get("length") or 20))
         alphabet = string.ascii_lowercase
@@ -100,17 +144,17 @@ def password_generate(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
             minimal.append(string.digits)
         if v.get("symbols", True):
             minimal.append("!@#$%^&*()-_=+")
+        if v.get("simple", True):
+            minimal = ["".join(ch for ch in pool if ch not in "0O1lI|`'\"") for pool in minimal]
+            minimal = [pool for pool in minimal if pool]
         for _ in range(count):
             chars = [secrets.choice(pool) for pool in minimal]
             while len(chars) < length:
                 chars.append(secrets.choice(alphabet))
             secrets.SystemRandom().shuffle(chars)
             results.append("".join(chars))
-    entropy = 0.0
-    if results:
-        sample = results[0]
-        unique_chars = len(set(sample)) or 1
-        entropy = len(sample) * (unique_chars.bit_length())
+        pool_size = max(2, len(set(alphabet)))
+        entropy = length * math.log2(pool_size)
     details = "\n".join(results)
     outputs: List[str] = []
     if str(v.get("save") or "").strip():
@@ -191,6 +235,9 @@ def file_encrypt(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
         raise ToolError(ctx.M("رمز باید حداقل ۴ کاراکتر باشد.", "Password must be at least 4 characters."))
     outputs: List[str] = []
     AESGCM, derive_aes = _aesgcm()
+    if AESGCM is None:
+        raise ToolError(ctx.M("برای رمزگذاری امن AES-256-GCM، بسته‌ی cryptography لازم است.",
+                              "The 'cryptography' package is required for AES-256-GCM encryption."))
     for index, path in enumerate(files):
         if not path.exists():
             raise ToolError(ctx.M(f"پیدا نشد: {path}", f"Not found: {path}"))
@@ -198,17 +245,10 @@ def file_encrypt(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
         data = path.read_bytes()
         folder = str(v.get("out_dir") or "").strip()
         target_dir = ensure_dir(folder) if folder and Path(folder).is_dir() else out_dir(ctx)
-        dest = unique_path(target_dir / f"{path.name}.wgenc")
-        if AESGCM is not None:
-            salt, nonce = os.urandom(16), os.urandom(12)
-            key = derive_aes(password, salt)
-            blob = MAGIC_AES + salt + nonce + AESGCM(key).encrypt(nonce, data, None)
-        else:
-            salt, nonce = os.urandom(16), os.urandom(16)
-            key = _derive_key(password, salt)
-            payload = _xor_stream(data, key, nonce)
-            tag = hmac.new(key, payload, hashlib.sha256).digest()
-            blob = MAGIC + salt + nonce + tag + payload
+        dest = unique_path(target_dir / f"{safe_filename(path.name)}.wgenc")
+        salt, nonce = os.urandom(16), os.urandom(12)
+        key = derive_aes(password, salt)
+        blob = MAGIC_AES + salt + nonce + AESGCM(key).encrypt(nonce, data, None)
         dest.write_bytes(blob)
         outputs.append(str(dest))
     return RunResult(
@@ -242,7 +282,8 @@ def file_decrypt(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
             raise ToolError(ctx.M(f"پیدا نشد: {path}", f"Not found: {path}"))
         ctx.progress(index, len(files), path.name)
         blob = path.read_bytes()
-        original_name = path.name[:-len(".wgenc")] if path.name.endswith(".wgenc") else path.stem
+        raw_name = path.name[:-len(".wgenc")] if path.name.endswith(".wgenc") else path.stem
+        original_name = safe_filename(raw_name)
         folder = str(v.get("out_dir") or "").strip()
         target_dir = ensure_dir(folder) if folder and Path(folder).is_dir() else out_dir(ctx)
         dest = unique_path(target_dir / original_name)
@@ -296,35 +337,33 @@ def text_encrypt(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     text = str(v.get("text") or "")
     password = str(v.get("password") or "")
     AESGCM, derive_aes = _aesgcm()
+    if AESGCM is None:
+        raise ToolError(ctx.M("برای رمزگذاری امن متن (AES-256-GCM)، بسته‌ی cryptography لازم است.",
+                              "The 'cryptography' package is required for AES-256-GCM text encryption."))
     if mode == "encrypt":
-        if AESGCM is not None:
-            salt, nonce = os.urandom(16), os.urandom(12)
-            key = derive_aes(password, salt)
-            blob = MAGIC_AES + salt + nonce + AESGCM(key).encrypt(nonce, text.encode("utf-8"), None)
-        else:
-            salt, nonce = os.urandom(16), os.urandom(8)
-            key = _derive_key(password, salt)
-            blob = MAGIC + salt + nonce + _xor_stream(text.encode("utf-8"), key, nonce)
+        salt, nonce = os.urandom(16), os.urandom(12)
+        key = derive_aes(password, salt)
+        blob = MAGIC_AES + salt + nonce + AESGCM(key).encrypt(nonce, text.encode("utf-8"), None)
         return RunResult(message=ctx.M("متن رمزگذاری شد (کپی کنید):", "Encrypted text (copy it):"),
                          details=base64.urlsafe_b64encode(blob).decode())
     try:
         blob = base64.urlsafe_b64decode(str(v.get("text") or "").encode())
     except Exception:
         raise ToolError(ctx.M("رشته‌ی رمز نامعتبر است.", "Invalid encrypted string."))
-    if blob.startswith(MAGIC_AES) and AESGCM is not None:
+    if blob.startswith(MAGIC_AES):
         body = blob[len(MAGIC_AES):]
+        if len(body) < 28:
+            raise ToolError(ctx.M("رشته‌ی رمز ناقص یا دستکاری‌شده است.", "Truncated or corrupted ciphertext."))
         salt, nonce, cipher_text = body[:16], body[16:28], body[28:]
         try:
             plain = AESGCM(derive_aes(password, salt)).decrypt(nonce, cipher_text, None).decode("utf-8")
         except Exception:
             raise ToolError(ctx.M("رمز اشتباه است.", "Wrong password."))
     elif blob.startswith(MAGIC):
-        body = blob[len(MAGIC):]
-        salt, nonce, payload = body[:16], body[16:24], body[24:]
-        try:
-            plain = _xor_stream(payload, _derive_key(password, salt), nonce).decode("utf-8")
-        except UnicodeDecodeError:
-            raise ToolError(ctx.M("رمز اشتباه است.", "Wrong password."))
+        raise ToolError(ctx.M(
+            "قالب قدیمی بدون احراز هویت (WGF1) دیگر به دلایل امنیتی پذیرفته نمی‌شود.",
+            "Legacy unauthenticated WGF1 text tokens are rejected for security.",
+        ))
     else:
         raise ToolError(ctx.M("این رشته با وین‌جنیوس ساخته نشده است.", "Not a WinGenius string."))
     return RunResult(message=ctx.M("متن رمزگشایی شد:", "Decrypted text:"), details=plain)

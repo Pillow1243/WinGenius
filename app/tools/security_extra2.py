@@ -313,8 +313,8 @@ def steg_reveal(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
             message=ctx.M(f"پیام پنهان ({len(payload)} بایت):",
                           f"Hidden message ({len(payload)} bytes):"),
             details=text[:20000])
-    folder = Path(str(v.get("out_dir") or "")).strip() if str(v.get("out_dir") or "").strip() \
-        else out_dir(ctx, "revealed")
+    raw_out = str(v.get("out_dir") or "").strip()
+    folder = Path(raw_out) if raw_out else out_dir(ctx, "revealed")
     folder.mkdir(parents=True, exist_ok=True)
     target = unique_path(folder / f"{carrier.stem}_hidden.bin")
     target.write_bytes(payload)

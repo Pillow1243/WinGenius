@@ -342,7 +342,12 @@ class ToolPanel(QWidget):
             return
         if not self._confirm_execution():
             return
-        job = self._jobs.submit(self.spec, values, self.lang, settings.output_dir)
+        from ..core.execution import ExecutionPolicy
+
+        job = self._jobs.submit(
+            self.spec, values, self.lang, settings.output_dir,
+            policy=ExecutionPolicy.for_gui(confirmed=True, record_history=False, source="queue"),
+        )
         self.toastRequested.emit(t("tp.queued"), "success")
         if job is not None:
             self.queueRequested.emit(job.id)
@@ -580,16 +585,26 @@ class ToolPanel(QWidget):
         return None
 
     def _confirm_execution(self) -> bool:
-        """The foreground and queue buttons must enforce the same safety gate."""
-        if self.spec and self.spec.danger and settings.get("ui/confirm_danger"):
-            from PySide6.QtWidgets import QMessageBox
-            answer = QMessageBox.question(
-                self, t("err.title"), t("tp.confirm_danger"),
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            return answer == QMessageBox.StandardButton.Yes
-        return True
+        """The foreground and queue buttons enforce the dynamic 4-tier risk gate."""
+        if not self.spec or not settings.get("ui/confirm_danger"):
+            return True
+        from ..core.execution import classify_invocation
+
+        active_values = self._collect()
+        assessment = classify_invocation(self.spec.id, active_values)
+        if not assessment.requires_confirmation:
+            return True
+        from PySide6.QtWidgets import QMessageBox
+
+        reason = assessment.reason_for(self.lang)
+        tier = assessment.risk.label_for(self.lang)
+        prompt = f"{t('tp.confirm_danger')}\n\n[{tier}] {reason}" if reason else t("tp.confirm_danger")
+        answer = QMessageBox.question(
+            self, t("err.title"), prompt,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return answer == QMessageBox.StandardButton.Yes
 
     def _run(self) -> None:
         if not self.spec or self._runner is not None:
@@ -602,6 +617,8 @@ class ToolPanel(QWidget):
             return
         if not self._confirm_execution():
             return
+        from ..core.execution import ExecutionPolicy
+
         self._result_card.setVisible(False)
         self._progress.setVisible(True)
         self._progress.setRange(0, 0)
@@ -610,22 +627,33 @@ class ToolPanel(QWidget):
         self._cancel_button.setText(t("tp.cancel"))
         self._log_view.appendPlainText(f"▶ {self.spec.name_for(self.lang)}")
 
-        self._runner = ToolRunner(self.spec, values, self.lang, settings.output_dir, self)
-        self._runner.progressed.connect(self._on_progress)
-        self._runner.messaged.connect(self._on_message)
-        self._runner.succeeded.connect(self._on_success)
-        self._runner.failed.connect(self._on_error)
-        self._runner.cancelled.connect(self._on_cancelled)
-        self._runner.finished.connect(self._cleanup_runner)
-        self._runner.start()
+        runner = ToolRunner(
+            self.spec, values, self.lang, settings.output_dir, self,
+            policy=ExecutionPolicy.for_gui(confirmed=True, record_history=True),
+        )
+        self._runner = runner
+        self._retiring_runners = getattr(self, "_retiring_runners", set())
+        self._retiring_runners.add(runner)
+        runner.progressed.connect(self._on_progress)
+        runner.messaged.connect(self._on_message)
+        runner.succeeded.connect(self._on_success)
+        runner.failed.connect(self._on_error)
+        runner.cancelled.connect(self._on_cancelled)
+        runner.finished.connect(lambda r=runner: self._cleanup_runner(r))
+        runner.start()
 
-    def _cleanup_runner(self) -> None:
-        if self._runner is not None:
-            self._runner.deleteLater()
-        self._runner = None
-        self._run_button.setEnabled(True)
-        self._cancel_button.setText(t("tp.cancel"))
-        self._progress.setVisible(False)
+    def _cleanup_runner(self, finished_runner=None) -> None:
+        pool = getattr(self, "_retiring_runners", None)
+        target = finished_runner or self._runner
+        if pool is not None and target is not None:
+            pool.discard(target)
+        if target is not None:
+            target.deleteLater()
+        if finished_runner is None or finished_runner is self._runner:
+            self._runner = None
+            self._run_button.setEnabled(True)
+            self._cancel_button.setText(t("tp.cancel"))
+            self._progress.setVisible(False)
 
     def _on_progress(self, current: int, total: int, message: str) -> None:
         if total <= 0:
@@ -784,12 +812,15 @@ class ToolPanel(QWidget):
 
     def shutdown(self, timeout_ms: int = 4000) -> None:
         """Cancel a running tool and wait for its thread (called on app close)."""
-        runner = self._runner
-        if runner is None:
-            return
-        runner.cancel()
-        try:
-            runner.wait(timeout_ms)
-        except Exception:
-            pass
+        candidates = set(getattr(self, "_retiring_runners", set()) or set())
+        if self._runner is not None:
+            candidates.add(self._runner)
+        for runner in list(candidates):
+            try:
+                runner.cancel()
+                runner.wait(timeout_ms)
+            except Exception:
+                pass
+        if hasattr(self, "_retiring_runners"):
+            self._retiring_runners.clear()
         self._runner = None

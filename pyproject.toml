@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wingenius"
-version = "7.0.0"
+version = "7.1.0"
 description = "WinGenius — a Persian-first, all-in-one Windows toolbox (290 tools, 11 categories)"
 readme = "README.md"
 requires-python = ">=3.12"

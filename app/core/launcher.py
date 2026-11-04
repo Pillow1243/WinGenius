@@ -9,15 +9,17 @@ the journal, the vault and the rest of the app down with it. That is exactly wha
 happened on the GitHub Windows runner while the fuzz suite called `windows_applets`.
 
 So every "open this for me" path in WinGenius goes through here, and here we always
-spawn a **child** process: if the shell decides to die, it dies alone.
+spawn a **child** process with `shell=False` and environment-passed parameters (never
+`cmd /c start`, which interprets `&`, `|`, and `%VAR%` metacharacters).
 
 Tests and CI set `WINGENIUS_NO_LAUNCH=1`, which turns every launch into a dry run —
-no Notepad popping up in the middle of a test run, and no risk of leaving stray
-windows behind on a user's machine either.
+after target validation has passed.
 """
 from __future__ import annotations
 
 import os
+import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -29,10 +31,18 @@ NO_LAUNCH_ENV = "WINGENIUS_NO_LAUNCH"
 IS_WINDOWS = sys.platform.startswith("win")
 IS_MAC = sys.platform == "darwin"
 
+_ALLOWED_SCHEMES = {"http", "https", "mailto", "ms-settings", "shell"}
+_BLOCKED_SCHEMES = {
+    "javascript", "vbscript", "data", "file", "ms-msdt", "search-ms",
+    "ms-officecmd", "ms-word", "ms-excel", "ms-powerpoint", "mhtml",
+}
+_DRIVE_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]")
+_SCHEME_RE = re.compile(r"^([A-Za-z][A-Za-z0-9+.-]*):")
+
 
 def dry_run() -> bool:
     """True when launching is disabled for this process (tests, CI, dry runs)."""
-    return os.environ.get(NO_LAUNCH_ENV, "").strip() in {"1", "true", "yes", "on"}
+    return os.environ.get(NO_LAUNCH_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _detached_flags() -> int:
@@ -43,31 +53,59 @@ def _detached_flags() -> int:
     return flags
 
 
-def _spawn(command: list[str]) -> None:
-    subprocess.Popen(                              # noqa: S603 - fixed argv, no shell
+def _validate_target(target: str | Path) -> str:
+    text = str(target or "").strip()
+    if not text:
+        raise ValueError("empty launch target")
+    if any(ch in text for ch in ("\x00", "\r", "\n")):
+        raise ValueError("control characters are not permitted in launch targets")
+    if isinstance(target, Path) or _DRIVE_PATH_RE.match(text):
+        return text
+    if text.startswith(("\\\\", "//")):
+        raise ValueError("UNC network targets are blocked for safety")
+    match = _SCHEME_RE.match(text)
+    if match:
+        scheme = match.group(1).lower()
+        if scheme in _BLOCKED_SCHEMES or scheme not in _ALLOWED_SCHEMES:
+            raise ValueError(f"blocked URI scheme: {scheme}")
+    return text
+
+
+def _spawn(command: list[str], extra_env: dict[str, str] | None = None) -> None:
+    env = None
+    if extra_env:
+        env = dict(os.environ)
+        env.update(extra_env)
+    subprocess.Popen(                              # noqa: S603 - fixed argv, shell=False
         command,
         shell=False,
         close_fds=True,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        env=env,
         creationflags=_detached_flags(),
     )
 
 
 def open_target(target: str | Path) -> str:
-    """Open a file, folder, URL or `shell:`/`ms-settings:` target.
-
-    Returns a short description of what happened — `"launched"` or `"dry-run: …"` —
-    so callers can put it in the result message instead of guessing.
-    """
-    text = str(target)
+    """Open a file, folder, URL or `shell:`/`ms-settings:` target safely."""
+    text = _validate_target(target)
     if dry_run():
         return f"dry-run: {text}"
     if IS_WINDOWS:
-        # `cmd /c start "" <target>` is ShellExecute in a child process; the empty
-        # title argument keeps paths with spaces intact.
-        _spawn(["cmd", "/c", "start", "", text])
+        _spawn(
+            [
+                "powershell",
+                "-NoProfile",
+                "-NonInteractive",
+                "-WindowStyle",
+                "Hidden",
+                "-Command",
+                "Start-Process -FilePath $env:WG_LAUNCH_TARGET",
+            ],
+            extra_env={"WG_LAUNCH_TARGET": text},
+        )
         return "launched"
     if IS_MAC:
         _spawn(["open", text])
@@ -76,39 +114,57 @@ def open_target(target: str | Path) -> str:
     if not opener:
         raise RuntimeError(
             "xdg-open پیدا نشد؛ برای باز کردن فایل/پوشه در لینوکس آن را نصب کنید "
-            "(sudo apt install xdg-utils)")
+            "(sudo apt install xdg-utils)"
+        )
     _spawn([opener, text])
     return "launched"
 
 
 def open_folder(path: str | Path) -> str:
     """Open a folder in the system file manager."""
+    text = _validate_target(Path(path))
     if IS_WINDOWS and not dry_run():
-        _spawn(["explorer", str(path)])
+        _spawn(["explorer", os.path.normpath(text)])
         return "launched"
-    return open_target(path)
+    return open_target(Path(text))
 
 
 def reveal(path: str | Path) -> str:
     """Open the file manager with the given file selected."""
+    clean = _validate_target(Path(path))
     if IS_WINDOWS and not dry_run():
-        _spawn(["explorer", f"/select,{path}"])
+        norm = os.path.normpath(clean)
+        if "," in norm:
+            _spawn(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-WindowStyle",
+                    "Hidden",
+                    "-Command",
+                    "Start-Process explorer.exe -ArgumentList ('/select,\"' + $env:WG_REVEAL_TARGET + '\"')",
+                ],
+                extra_env={"WG_REVEAL_TARGET": norm},
+            )
+        else:
+            _spawn(["explorer", f"/select,{norm}"])
         return "launched"
     if IS_MAC and not dry_run():
-        _spawn(["open", "-R", str(path)])
+        _spawn(["open", "-R", clean])
         return "launched"
-    return open_folder(Path(path).parent)
+    return open_folder(Path(clean).parent)
 
 
 def run_shell(command: str) -> str:
-    """Run a shell command string detached (used for `cmd`/`powershell` applets)."""
+    """Run a trusted executable argv without invoking a command shell."""
+    text = str(command or "").strip()
+    if not text or any(ch in text for ch in ("\x00", "\r", "\n", "&", "|", ";", "`", "$")):
+        raise ValueError("unsafe shell command rejected")
+    argv = shlex.split(text, posix=not IS_WINDOWS)
+    if not argv:
+        raise ValueError("empty command")
     if dry_run():
-        return f"dry-run: {command}"
-    subprocess.Popen(                              # noqa: S602 - intentional shell use
-        command,
-        shell=True,
-        close_fds=True,
-        stdin=subprocess.DEVNULL,
-        creationflags=_detached_flags(),
-    )
+        return f"dry-run: {argv[0]}"
+    _spawn(argv)
     return "launched"

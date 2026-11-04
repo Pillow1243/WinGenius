@@ -15,9 +15,11 @@ from ..core.registry import tool
 from ..core.spec import (
     K_BOOL, K_CHOICE, K_DIR, K_INT, K_SAVE, K_TEXT, Field, RunContext, RunResult, ToolError,
 )
-from ..core.utils import human_size, run_cmd, unique_path
+from ..core.utils import human_size, run_cmd, safe_filename, unique_path
 from ._helpers import (IS_WINDOWS, ensure_dir, need_windows, out_dir, require, save_target,
                        validate_host)
+
+MAX_DOWNLOAD_BYTES = 2 * 1024 * 1024 * 1024  # 2 GiB safety ceiling
 
 
 # -------------------------------------------------------------------- network info
@@ -117,9 +119,7 @@ def wifi_passwords(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     ],
 )
 def net_diag(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
-    host = str(v.get("host") or "").strip()
-    if not host:
-        raise ToolError(ctx.M("آدرس را وارد کنید.", "Enter a host."))
+    host = validate_host(str(v.get("host") or "").strip(), ctx)
     mode = str(v.get("mode") or "ping")
     if mode == "dns":
         started = time.time()
@@ -285,23 +285,34 @@ def network_repair(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
 def download_file(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     requests = require("requests", "requests", ctx)
     url = str(v.get("url") or "").strip()
-    if not url.lower().startswith(("http://", "https://")):
+    if not url.lower().startswith(("http://", "https://")) or any(c in url for c in ("\r", "\n", "\x00")):
         raise ToolError(ctx.M("آدرس باید با http:// یا https:// شروع شود.",
                               "URL must start with http:// or https://"))
-    name = Path(url.split("?")[0].rstrip("/")).name or "download.bin"
+    raw_name = Path(url.split("?")[0].rstrip("/")).name or "download.bin"
+    name = safe_filename(raw_name, fallback="download.bin")
     dest = save_target(ctx, v.get("out", ""), name)
     try:
         with requests.get(url, stream=True, timeout=30, verify=bool(v.get("verify", True))) as response:
             response.raise_for_status()
             total = int(response.headers.get("Content-Length") or 0)
+            if total > MAX_DOWNLOAD_BYTES:
+                raise ToolError(ctx.M("حجم فایل بیش از حد مجاز (۲ گیگابایت) است.",
+                                      "File exceeds the 2 GiB download safety limit."))
             done = 0
             with open(dest, "wb") as fh:
                 for chunk in response.iter_content(chunk_size=256 * 1024):
                     if not chunk:
                         continue
-                    fh.write(chunk)
                     done += len(chunk)
+                    if done > MAX_DOWNLOAD_BYTES:
+                        raise ToolError(ctx.M("حجم دانلود از سقف مجاز گذشت.",
+                                              "Download exceeded the 2 GiB safety limit."))
+                    fh.write(chunk)
                     ctx.progress(done, total, f"{human_size(done)} / {human_size(total) if total else '?'}")
+    except ToolError:
+        if dest.exists():
+            dest.unlink(missing_ok=True)
+        raise
     except Exception as exc:
         if dest.exists():
             dest.unlink(missing_ok=True)
@@ -334,10 +345,10 @@ def site_check(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
             url = "https://" + url
         started = time.time()
         try:
-            response = requests.get(url, timeout=15, allow_redirects=True,
-                                    headers={"User-Agent": "WinGenius/1.0"})
-            elapsed = (time.time() - started) * 1000
-            rows.append(f"{response.status_code}  {elapsed:7.0f} ms  {url}")
+            with requests.get(url, timeout=15, allow_redirects=True, stream=True,
+                              headers={"User-Agent": "WinGenius/1.0"}) as response:
+                elapsed = (time.time() - started) * 1000
+                rows.append(f"{response.status_code}  {elapsed:7.0f} ms  {url}")
         except Exception as exc:
             elapsed = (time.time() - started) * 1000
             rows.append(f"{'ERR':>3}  {elapsed:7.0f} ms  {url}  ({type(exc).__name__}: {exc})")

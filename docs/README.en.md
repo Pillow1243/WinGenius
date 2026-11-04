@@ -1,6 +1,6 @@
-# WinGenius 7.0 — an all-in-one Windows toolbox
+# WinGenius 7.1 — an all-in-one Windows toolbox
 
-> **292 tools · 11 categories · a Persian-correct PDF engine · a real flow engine · encrypted vault · undo journal ·
+> **292 tools · 11 categories · unified ExecutionService & 4-tier dynamic risk guard · a Persian-correct PDF engine · a real flow engine · encrypted vault · undo journal ·
 > cron scheduler · macro engine · local JSON API.** Persian-first UI with a complete English mode
 > (`EN` button, top right — every label, message and tool description is translated).
 >
@@ -11,6 +11,17 @@
   <img src="screenshots/home_fa.png" width="46%" alt="Home — the radial category map" />
   <img src="screenshots/scheduler_en.png" width="46%" alt="Scheduler & macros (English UI)" />
 </p>
+
+## What's new in 7.1 — Security Hardening & Unified Execution Architecture
+
+Version 7.1 introduces `app/core/execution.py` (`ExecutionService`) so every surface — GUI, job queue,
+workflows/flows, macros, CLI, cron scheduler, folder watcher and loopback HTTP API — enforces a single
+4-tier dynamic risk model (`safe`, `confirm`, `destructive`, `elevated`) that inspects runtime parameter
+combinations and nested flow/macro steps. Headless CLI commands run cleanly without importing `PySide6`
+(`--yes` / `--dry-run` flags added), the loopback API defends against browser `Origin` CSRF and HTTP
+framing smuggling, archive extraction and `secure_delete` block symlink escapes and ZIP-bomb ratios,
+`text_encrypt` requires authenticated `AES-256-GCM` (`WGA1`), and secret outputs are scrubbed across logs,
+history, crash bundles and CLI/UI views. Full engineering report in [`audit_7_1.md`](audit_7_1.md).
 
 ## What's new in 7.0 — Persian PDFs done right
 
@@ -182,8 +193,8 @@ ruff check main.py app tests packaging  # lint gate (real-bug rules only)
 
 Everything runs headless (`QT_QPA_PLATFORM=offscreen`) on Linux, Windows and macOS,
 in CI (`.github/workflows/ci.yml`) on Python 3.12 and 3.13.
-Totals: **154 smoke · 638 functional · 111 output · 1259 UI · 57 security · 39 hardening regressions · 28 persian · 27 packaging
-= 2,313 checks** across **292 tools in 11 categories**. Coverage measures 75%; `pyproject.toml` enforces a 70% `fail_under` gate.
+Totals: **154 smoke · 642 functional · 112 output · 1259 UI · 57 security · 56 hardening regressions · 28 persian · 28 packaging
+= 2,336 checks** across **292 tools in 11 categories**. Coverage measures 75%; `pyproject.toml` enforces a 70% `fail_under` gate.
 
 ## Security notes
 
@@ -224,5 +235,5 @@ External archives, macros and arbitrary prose still require manual review.
 The API fails closed, destructive API tools are disabled by default, foreground
 and background confirmations match, and queued jobs retain their own context.
 Python plugins require explicit approval of their exact file hash; this is not
-a sandbox. Run `python -m pytest tests/hardening_test.py -q` (39 cases).
-See [hardening notes](hardening.md).
+a sandbox. Run `python -m pytest tests/hardening_test.py -q` (56 cases).
+See [hardening notes](hardening.md) and [7.1 audit report](audit_7_1.md).

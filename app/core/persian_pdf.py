@@ -79,14 +79,22 @@ def font_css(size_pt: float = 11.0, *, color: str = "#111111", extra: str = "") 
     )
 
 
+_FONT_ARCHIVE_CACHE: Dict[str, Any] = {}
+
+
 def font_archive():
-    """`pymupdf.Archive` pointing at the bundled fonts (or None when unavailable)."""
-    fitz = _fitz()
+    """Cached `pymupdf.Archive` pointing at the bundled fonts (or None when unavailable)."""
     folder = fonts_dir()
+    key = str(folder)
+    if key in _FONT_ARCHIVE_CACHE:
+        return _FONT_ARCHIVE_CACHE[key]
     if not folder.exists():
         return None
+    fitz = _fitz()
     try:
-        return fitz.Archive(str(folder))
+        arc = fitz.Archive(key)
+        _FONT_ARCHIVE_CACHE[key] = arc
+        return arc
     except Exception:
         return None
 

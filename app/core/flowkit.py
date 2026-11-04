@@ -184,22 +184,26 @@ def validate(workflow, lang: str = "fa") -> FlowReport:
                 "شرط هیچ جای‌نگهداری ندارد، پس همیشه یک نتیجه می‌دهد.",
                 "The condition contains no placeholder, so it always yields the same answer.", index))
 
-        if getattr(spec, "danger", False):
+        from .execution import classify_invocation
+
+        assessment = classify_invocation(spec, step.values)
+        if assessment.requires_confirmation:
+            tier = assessment.risk.label_for(lang)
             report.issues.append(FlowIssue(
                 "warning", "danger",
-                f"ابزار «{spec.name}» خطرناک است و در رابط کاربری تأیید می‌خواهد.",
-                f"'{spec.name_en}' is destructive and asks for confirmation in the UI.", index))
+                f"ابزار «{spec.name}» ({tier}) است و در رابط کاربری تأیید می‌خواهد.",
+                f"'{spec.name_en}' is {tier.lower()} and asks for confirmation in the UI.", index))
             if step.on_error == "continue":
                 report.issues.append(FlowIssue(
                     "warning", "danger_continue",
-                    "ابزار خطرناک با «ادامه در صورت خطا» ترکیب شده است.",
-                    "A destructive tool is combined with 'continue on error'.", index))
+                    "ابزار حساس/مخرب با «ادامه در صورت خطا» ترکیب شده است.",
+                    "A sensitive/destructive tool is combined with 'continue on error'.", index))
 
-        if step.retries and getattr(spec, "danger", False):
+        if step.retries and assessment.requires_confirmation:
             report.issues.append(FlowIssue(
                 "warning", "danger_retry",
-                "تلاش مجدد روی یک ابزار خطرناک می‌تواند همان کار را چند بار انجام دهد.",
-                "Retrying a destructive tool can repeat the same deletion.", index))
+                "تلاش مجدد روی یک ابزار حساس/مخرب می‌تواند همان تغییر را چند بار انجام دهد.",
+                "Retrying a sensitive/destructive tool can repeat the same mutation.", index))
 
     # the first step must have something to work on
     first = workflow.steps[0]
@@ -490,7 +494,7 @@ if os.environ.get("WG_HOME"):
 
 from app.core.workflows import Workflow, run_sync
 
-FLOW = json.loads(r"""{payload}""")
+FLOW = json.loads({payload_literal})
 
 LANG = {lang!r}
 OUT_DIR = {out_dir!r}
@@ -520,16 +524,18 @@ if __name__ == "__main__":
 
 def export_script(workflow, lang: str = "fa", out_dir: str = "",
                   version: str = "") -> str:
-    """Return a standalone Python script that runs this flow."""
+    """Return a standalone Python script that runs this flow (secrets scrubbed)."""
     from .paths import APP_VERSION
 
-    payload = json.dumps(workflow.as_dict(), ensure_ascii=False, indent=2)
+    sanitized = sanitize_flow_values(workflow)
+    payload_json = json.dumps(sanitized, ensure_ascii=False, indent=2)
     filename = re.sub(r"[^A-Za-z0-9_.-]+", "_", workflow.id or "flow") + ".py"
+    clean_title = workflow.name_for(lang).replace('"""', "'''").replace("\\", "/")
     return SCRIPT_TEMPLATE.format(
         version=version or APP_VERSION,
-        title=workflow.name_for(lang).replace('"', "'"),
+        title=clean_title,
         filename=filename,
-        payload=payload.replace("\\", "\\\\").replace('"""', '\\"\\"\\"'),
+        payload_literal=repr(payload_json),
         lang="en" if lang == "en" else "fa",
         out_dir=out_dir or "",
     )

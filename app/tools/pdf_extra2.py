@@ -147,9 +147,9 @@ def pdf_forms_fill(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     known = set((reader.get_fields() or {}).keys())
     unknown = [key for key in pairs if key not in known]
     writer = PdfWriter()
-    for page in reader.pages:
-        writer.add_page(page)
-    writer.update_page_form_field_values(writer.pages[0], pairs, auto_regenerate=False)
+    writer.append(reader)
+    for page in writer.pages:
+        writer.update_page_form_field_values(page, pairs, auto_regenerate=False)
     target = save_target(ctx, str(v.get("out") or ""), f"{source.stem}_filled.pdf")
     with target.open("wb") as handle:
         writer.write(handle)

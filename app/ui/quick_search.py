@@ -129,6 +129,7 @@ class QuickSearch(QWidget):
             ("api", "terminal", t("cmd.api"), ""),
             ("jobs", "list", t("cmd.jobs"), "Ctrl+J"),
             ("doctor", "heart", t("cmd.doctor"), "Ctrl+D"),
+            ("update", "refresh", t("cmd.update"), ""),
             ("plugins", "puzzle", t("cmd.plugins"), ""),
             ("settings", "sliders", t("tb.settings"), "Ctrl+,"),
             ("cli", "terminal", t("cmd.cli"), ""),

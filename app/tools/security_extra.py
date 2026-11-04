@@ -58,7 +58,7 @@ SCAN_EXTENSIONS = {
     icon="lock", order=100,
     keywords=("password strength", "entropy", "قدرت رمز", "رمز قوی", "امنیت رمز"),
     fields=[
-        Field("password", K_TEXT, "رمز عبور", "Password", required=True,
+        Field("password", K_PASSWORD, "رمز عبور", "Password", required=True,
               help="رمز فقط در همین رایانه بررسی می‌شود و جایی ارسال نمی‌شود.",
               help_en="Checked locally — never sent anywhere."),
     ],
@@ -140,6 +140,13 @@ def password_audit(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     return RunResult(message=f"{color} {label} — {entropy:.0f} bit", details="\n".join(lines))
 
 
+def _mask_secret_match(raw: str) -> str:
+    clean = " ".join(raw.strip().splitlines())
+    if len(clean) <= 8:
+        return "*" * max(4, len(clean))
+    return f"{clean[:4]}…{'*' * 6}{clean[-2:]}"
+
+
 @tool(
     id="secret_scan", category="security", name="یافتن رمز و کلید در فایل‌ها",
     name_en="Scan for secrets",
@@ -177,12 +184,11 @@ def secret_scan(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
         for label, pattern in SECRET_PATTERNS:
             for match in re.finditer(pattern, text):
                 snippet = match.group(0)
-                if len(snippet) > 90:
-                    snippet = snippet[:90] + "…"
                 line_number = text[: match.start()].count("\n") + 1
                 if label == "Iranian national ID" and len(set(snippet)) < 3:
                     continue
-                findings.append(f"{path.relative_to(folder)}:{line_number}  [{label}]  {snippet}")
+                masked = _mask_secret_match(snippet)
+                findings.append(f"{path.relative_to(folder)}:{line_number}  [{label}]  {masked}")
     ctx.progress(len(files), len(files), "")
     if not findings:
         return RunResult(
@@ -252,10 +258,27 @@ def checksum_manifest(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
         raise ToolError(ctx.M("فایل فهرست خالی یا نامعتبر است.", "The manifest is empty or invalid."))
     ok = bad = missing = 0
     lines: List[str] = []
+    base = manifest.parent.resolve()
     for index, (expected, name) in enumerate(entries, start=1):
         ctx.progress(index, len(entries), name)
-        candidate = (manifest.parent / name) if not Path(name).is_absolute() else Path(name)
-        if not candidate.exists():
+        rel = Path(name)
+        if rel.is_absolute() or ".." in rel.parts:
+            bad += 1
+            lines.append(f"✗ {name} — {ctx.M('مسیر ناامن رد شد', 'unsafe path refused')}")
+            continue
+        raw_candidate = manifest.parent / rel
+        if raw_candidate.is_symlink():
+            bad += 1
+            lines.append(f"✗ {name} — {ctx.M('سیم‌لینک رد شد', 'symlink refused')}")
+            continue
+        candidate = raw_candidate.resolve()
+        try:
+            candidate.relative_to(base)
+        except ValueError:
+            bad += 1
+            lines.append(f"✗ {name} — {ctx.M('مسیر خارج از پوشه‌ی فهرست رد شد', 'outside manifest directory')}")
+            continue
+        if not candidate.is_file():
             missing += 1
             lines.append(f"? {name} — " + ctx.M("فایل نیست", "missing"))
             continue

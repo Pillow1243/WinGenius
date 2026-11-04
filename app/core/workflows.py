@@ -599,12 +599,15 @@ def _context_from_outputs(context: Dict[str, Any], outputs: List[str]) -> Dict[s
 def run_sync(workflow: Workflow, lang: str = "fa", output_dir: str = "",
              base_values: Optional[Dict[str, Any]] = None,
              on_step: Optional[Callable[[int, StepResult], None]] = None,
-             cancel_event: Optional[threading.Event] = None) -> WorkflowResult:
-    """Run a workflow on the current thread (used by the CLI and by tests).
+             cancel_event: Optional[threading.Event] = None,
+             policy: Any = None) -> WorkflowResult:
+    """Run a workflow on the current thread (used by the CLI, flows, and tests).
 
-    v6 semantics: a step may be skipped by `when`, fanned out by `foreach`,
-    retried, and allowed to fail without killing the flow (`on_error`).
+    v6/v7 semantics: a step may be skipped by `when`, fanned out by `foreach`,
+    retried per item, allowed to fail (`on_error`), and gated by `ExecutionPolicy`.
     """
+    from .execution import PolicyDeniedError, execution_service
+
     result = WorkflowResult(workflow_id=workflow.id)
     context = _initial_context({**(base_values or {}), "out_dir": output_dir or ""})
     for index, step in enumerate(workflow.steps):
@@ -634,14 +637,16 @@ def run_sync(workflow: Workflow, lang: str = "fa", output_dir: str = "",
             on_step(index, step_result)
         started = time.time()
         aggregated: List[str] = []
-        attempt = 0
         for values in value_sets:
+            attempt = 0
             failure = ""
+            message = ""
             while True:
                 ctx = RunContext(lang=lang, output_dir=output_dir,
-                                 cancel_event=cancel_event or threading.Event())
+                                 cancel_event=cancel_event or threading.Event(),
+                                 policy=policy)
                 try:
-                    run_result = spec.run(ctx, values) if spec.run else None
+                    run_result = execution_service.execute(spec, values, ctx, policy=policy)
                     if not isinstance(run_result, RunResult):
                         run_result = RunResult(message=str(run_result or ""))
                 except Cancelled:
@@ -649,6 +654,9 @@ def run_sync(workflow: Workflow, lang: str = "fa", output_dir: str = "",
                     result.status = "cancelled"
                     result.message = "cancelled"
                     return result
+                except PolicyDeniedError:
+                    # Security policy denials must never be retried or swallowed by on_error=continue.
+                    raise
                 except ToolError as exc:
                     failure = str(exc)
                     message = f"{spec.name_for(lang)}: {exc}"
@@ -707,12 +715,14 @@ class WorkflowRunner(QObject):
     failed = Signal(str)
 
     def __init__(self, workflow: Workflow, lang: str = "fa", output_dir: str = "",
-                 base_values: Optional[Dict[str, Any]] = None, parent=None) -> None:
+                 base_values: Optional[Dict[str, Any]] = None, parent=None,
+                 *, policy: Any = None) -> None:
         super().__init__(parent)
         self.workflow = workflow
         self.lang = lang
         self.output_dir = output_dir
         self.base_values = dict(base_values or {})
+        self.policy = policy
         self.context = _initial_context({**self.base_values, "out_dir": output_dir or ""})
         self.result = WorkflowResult(workflow_id=workflow.id)
         self._index = 0
@@ -733,6 +743,20 @@ class WorkflowRunner(QObject):
         self._cancelled = True
         if self._runner is not None:
             self._runner.cancel()
+
+    def shutdown(self, timeout_ms: int = 3000) -> None:
+        self.cancel()
+        for runner in list(self._runners):
+            try:
+                runner.cancel()
+                runner.wait(timeout_ms)
+            except Exception:
+                pass
+
+    def _release_runner(self, runner: ToolRunner) -> None:
+        if runner in self._runners:
+            self._runners.remove(runner)
+        runner.deleteLater()
 
     @property
     def running(self) -> bool:
@@ -757,12 +781,13 @@ class WorkflowRunner(QObject):
 
     def _launch(self, index: int, spec, step: Step) -> None:
         values = self._queue[self._queue_pos]
-        runner = ToolRunner(spec, values, self.lang, self.output_dir, self)
+        runner = ToolRunner(spec, values, self.lang, self.output_dir, self, policy=self.policy)
         runner.progressed.connect(lambda current, total, message, idx=index:
                                   self.stepProgress.emit(idx, current, total, message))
         runner.succeeded.connect(lambda run_result, idx=index: self._on_step_done(idx, run_result))
         runner.failed.connect(lambda message, _trace, idx=index: self._on_step_failed(idx, message))
         runner.cancelled.connect(lambda idx=index: self._on_step_cancelled(idx))
+        runner.finished.connect(lambda r=runner: self._release_runner(r))
         self._runner = runner
         self._runners.append(runner)
         runner.start()

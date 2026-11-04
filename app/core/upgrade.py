@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import sqlite3
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -71,6 +72,16 @@ def needs_upgrade(root: Optional[Path] = None) -> bool:
     return current_version(root) < DATA_VERSION
 
 
+def safe_copy_sqlite(src: Path, dst: Path) -> None:
+    """Create a transactionally consistent snapshot of a live SQLite database."""
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with sqlite3.connect(str(src)) as src_conn, sqlite3.connect(str(dst)) as dst_conn:
+            src_conn.backup(dst_conn)
+    except sqlite3.Error:
+        shutil.copy2(src, dst)
+
+
 # --------------------------------------------------------------------- backup
 def backup_data_dir(root: Optional[Path] = None, reason: str = "upgrade") -> Optional[Path]:
     """Copy the data folder next to itself; keeps the newest MAX_BACKUPS."""
@@ -82,10 +93,12 @@ def backup_data_dir(root: Optional[Path] = None, reason: str = "upgrade") -> Opt
     try:
         target.mkdir(parents=True, exist_ok=False)
         for item in base.iterdir():
-            if item.name in {BACKUP_DIR, "api_token.txt"}:
+            if item.name in {BACKUP_DIR, "api_token.txt"} or item.is_symlink():
+                continue
+            if item.name.endswith((".sqlite3-wal", ".sqlite3-shm")):
                 continue
             if item.is_dir():
-                shutil.copytree(item, target / item.name, dirs_exist_ok=True)
+                shutil.copytree(item, target / item.name, symlinks=False, dirs_exist_ok=True)
             elif item.name in PROFILE_JSON:
                 # Do not create a fresh plaintext-secret copy before scrubbing.
                 try:
@@ -93,6 +106,8 @@ def backup_data_dir(root: Optional[Path] = None, reason: str = "upgrade") -> Opt
                 except ValueError:
                     raw = []  # malformed input cannot be safely exported
                 atomic_json_write(target / item.name, sanitize_document(raw))
+            elif item.suffix == ".sqlite3":
+                safe_copy_sqlite(item, target / item.name)
             else:
                 shutil.copy2(item, target / item.name)
     except OSError:

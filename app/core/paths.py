@@ -11,7 +11,7 @@ from pathlib import Path
 
 APP_NAME = "WinGenius"
 APP_NAME_FA = "وین‌جنیوس"
-APP_VERSION = "7.0.0"
+APP_VERSION = "7.1.0"
 APP_TAGLINE = "دستیار همه‌کاره ویندوز"
 APP_TAGLINE_EN = "Your all-in-one Windows assistant"
 

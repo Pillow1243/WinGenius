@@ -14,7 +14,7 @@ from ..core.spec import (
     K_BOOL, K_CHOICE, K_DIR, K_INT, K_SAVE, K_TEXT, Field, RunContext, RunResult, ToolError,
 )
 from ..core.utils import ensure_dir, human_size, list_files, natural_key, unique_path
-from ._helpers import out_dir, reject_disk_root
+from ._helpers import out_dir, reject_disk_root, save_target
 
 CATEGORY_MAP = {
     "documents": {".pdf", ".doc", ".docx", ".txt", ".md", ".rtf", ".odt", ".xls", ".xlsx",
@@ -241,7 +241,7 @@ def permissions_report(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     requested = str(v.get("out") or "").strip()
     outputs: List[str] = []
     if requested:
-        dest = ensure_dir(Path(requested).parent) / Path(requested).name
+        dest = save_target(ctx, requested, f"{folder.name}_permissions.csv")
         dest.write_text("\n".join(rows), encoding="utf-8-sig")
         outputs.append(str(dest))
     return RunResult(message=ctx.M(f"{len(files)} فایل · {problems} مورد بدون دسترسی کامل",

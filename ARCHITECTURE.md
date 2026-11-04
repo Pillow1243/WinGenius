@@ -7,23 +7,23 @@ its `ToolSpec`.
 
 ```
 main.py
-  └─ app/bootstrap.py ── QApplication, theme, logging, single instance
-       ├─ app/core/cli.py         headless flags (--run / --list / --doctor / --serve …)
-       │    └─ app/core/registry.py   load_all() → 42 tool modules / 290 ToolSpecs / 11 categories
-       │         └─ app/core/spec.py    ToolSpec, Field, RunContext, RunResult, ToolError
-       │              └─ _guarded():  language, logging, exception → ToolError
+  └─ app/bootstrap.py ── headless CLI fast-path first; QApplication, theme, logging, single instance
+       ├─ app/core/cli.py         pure-Python headless flags (--run / --yes / --dry-run / --serve …)
+       │    └─ app/core/execution.py  ExecutionService + 4-tier dynamic risk classifier & policy guard
+       │         └─ app/core/registry.py   load_all() → 46 tool modules / 292 ToolSpecs / 11 categories
+       │              └─ app/core/spec.py    ToolSpec, Field, RunContext (+ policy), RunResult, ToolError
        └─ app/ui/main_window.py   shell + panels (Qt Widgets, offscreen-testable)
-            ├─ app/core/worker.py     QThread execution, cooperative cancel via RunContext
-            ├─ app/core/jobs.py       bounded parallel queue
+            ├─ app/core/worker.py     QThread execution via ExecutionService, cooperative cancel
+            ├─ app/core/jobs.py       bounded parallel queue with per-job ExecutionPolicy
             ├─ app/core/journal.py    SQLite undo log + internal trash
-            ├─ app/core/vault.py      WGV2 encrypted container (scrypt + AES-256-GCM)
-            ├─ app/core/indexer.py    SQLite FTS5 full-text index
-            ├─ app/core/scheduler.py  cron expressions, QTimer + single catch-up run
-            ├─ app/core/macro.py      small conditional DSL
-            ├─ app/core/workflows.py  flow engine: steps, {prev}, when/foreach/retries
+            ├─ app/core/vault.py      WGV2 encrypted container (scrypt + AES-256-GCM, 0600 perms)
+            ├─ app/core/indexer.py    SQLite FTS5 full-text index (escaped queries, secret exclusions)
+            ├─ app/core/scheduler.py  cron expressions (tool, workflow & macro targets)
+            ├─ app/core/macro.py      conditional DSL routed through ExecutionService
+            ├─ app/core/workflows.py  flow engine: steps, {prev}, when/foreach/retries + policy guard
             ├─ app/core/flowkit.py    flow lint/explain/build/export (no Qt needed)
-            ├─ app/core/api_server.py loopback JSON API (token + rate limiter)
-            └─ app/core/plugins.py    user .py files loaded with importlib
+            ├─ app/core/api_server.py loopback JSON API (token, Origin CSRF guard, HTTP framing checks)
+            └─ app/core/plugins.py    SHA-256 approved user .py plugins with trust/untrust lifecycle
 ```
 
 ## Layers and rules
@@ -48,6 +48,13 @@ Consequences worth remembering:
 * **Cancellation is cooperative.** `RunContext.progress()` raises `Cancelled`;
   long loops must call it (or `check_cancel()`). `ToolRunner.cancel()` only sets
   an `Event` — it cannot kill a blocking OS call.
+* **Unified Execution & Dynamic Risk (`v7.1`).** Every caller (`ToolRunner`, `JobQueue`,
+  `WorkflowRunner`, `MacroRunner`, `cli`, `api_server`, scheduler, and folder watcher) routes
+  tool execution through `app/core/execution.py` (`ExecutionService`), which evaluates runtime
+  parameters and nested `flow_run`/`macro_run` steps into four risk tiers (`safe`, `confirm`,
+  `destructive`, `elevated`), enforces caller-specific `ExecutionPolicy` thresholds, prevents
+  nested privilege escalation via `RunContext.policy`, and scrubs secrets from outputs, logs,
+  and history.
 * **Undo, not deletion.** Destructive tools journal their file operations;
   `vault_remove`, `pdf_delete_pages`, `trash_cleanup` and `services_manager` are
   additionally marked `danger=True` and ask for confirmation in the UI.

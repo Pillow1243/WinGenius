@@ -390,7 +390,7 @@ def jsonl_tool(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     icon="terminal", order=54,
     keywords=("curl", "http", "requests", "fetch", "convert", "curl", "تبدیل", "کد", "درخواست"),
     fields=[
-        Field("command", K_MULTILINE, "دستور curl", "curl command", required=True,
+        Field("command", K_MULTILINE, "دستور curl", "curl command", required=True, sensitive=True,
               placeholder="curl -X POST https://api.example.com -H 'Content-Type: application/json' -d '{\"a\":1}'"),
         Field("target", K_CHOICE, "خروجی", "Output", default="python",
               choices=[("python", "پایتون (requests)", "Python (requests)"),
@@ -466,77 +466,81 @@ def curl_to_code(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
         raise ToolError(ctx.M("در این دستور آدرس (URL) پیدا نشد.", "No URL was found in the command."))
     if not method:
         method = "POST" if (data or form) else "GET"
+    method = re.sub(r"[^A-Z]", "", method.upper()) or "GET"
     body = "\n".join(data)
     target = str(v.get("target") or "python")
     if target == "python":
         lines = ["import requests", ""]
-        lines.append(f'url = "{url}"')
+        lines.append(f"url = {json.dumps(url)}")
         if headers:
             lines.append("headers = {")
             for name, value in headers:
-                lines.append(f'    "{name}": "{value}",')
+                lines.append(f"    {json.dumps(name)}: {json.dumps(value)},")
             lines.append("}")
         else:
             lines.append("headers = {}")
         if form:
             lines.append("files = {")
             for name, value in form:
-                lines.append(f'    "{name}": "{value}",')
+                lines.append(f"    {json.dumps(name)}: {json.dumps(value)},")
             lines.append("}")
             lines.append("")
-            lines.append(f'response = requests.{method.lower()}(url, headers=headers, files=files,'
-                         f'{" auth=" + str(auth) + "," if auth else ""}'
-                         f'{" verify=False," if insecure else ""} timeout=30)')
+            lines.append(f"response = requests.{method.lower()}(url, headers=headers, files=files,"
+                         f"{' auth=' + repr(auth) + ',' if auth else ''}"
+                         f"{' verify=False,' if insecure else ''} timeout=30)")
         elif body:
             payload = body
             try:
-                json.loads(body)
-                lines.append("payload = " + body)
+                parsed_json = json.loads(body)
+                lines.append("payload = " + repr(parsed_json))
                 lines.append("")
-                lines.append(f'response = requests.{method.lower()}(url, headers=headers,'
-                             f' json=payload,{"" if not auth else " auth=" + str(auth) + ","}'
-                             f'{" cookies=" + str(cookies) + "," if cookies else ""}'
-                             f'{" verify=False," if insecure else ""} timeout=30)')
+                lines.append(f"response = requests.{method.lower()}(url, headers=headers,"
+                             f" json=payload,{'' if not auth else ' auth=' + repr(auth) + ','}"
+                             f"{' cookies=' + repr(cookies) + ',' if cookies else ''}"
+                             f"{' verify=False,' if insecure else ''} timeout=30)")
             except (json.JSONDecodeError, TypeError):
-                lines.append(f'payload = """{payload}"""')
+                lines.append(f"payload = {repr(payload)}")
                 lines.append("")
-                lines.append(f'response = requests.{method.lower()}(url, headers=headers,'
-                             f' data=payload,{" auth=" + str(auth) + "," if auth else ""}'
-                             f'{" verify=False," if insecure else ""} timeout=30)')
+                lines.append(f"response = requests.{method.lower()}(url, headers=headers,"
+                             f" data=payload,{' auth=' + repr(auth) + ',' if auth else ''}"
+                             f"{' verify=False,' if insecure else ''} timeout=30)")
         else:
             lines.append("")
-            lines.append(f'response = requests.{method.lower()}(url, headers=headers,'
-                         f'{" auth=" + str(auth) + "," if auth else ""}'
-                         f'{" cookies=" + str(cookies) + "," if cookies else ""}'
-                         f'{" verify=False," if insecure else ""} timeout=30)')
+            lines.append(f"response = requests.{method.lower()}(url, headers=headers,"
+                         f"{' auth=' + repr(auth) + ',' if auth else ''}"
+                         f"{' cookies=' + repr(cookies) + ',' if cookies else ''}"
+                         f"{' verify=False,' if insecure else ''} timeout=30)")
         lines.append("response.raise_for_status()")
         lines.append("print(response.status_code, response.headers.get('content-type'))")
         lines.append("print(response.text[:2000])")
         code = "\n".join(lines)
         suffix = ".py"
     elif target == "javascript":
-        options = [f'  method: "{method}",']
+        options = [f"  method: {json.dumps(method)},"]
         if headers:
             options.append("  headers: {")
             for name, value in headers:
-                options.append(f'    "{name}": "{value}",')
+                options.append(f"    {json.dumps(name)}: {json.dumps(value)},")
             options.append("  },")
         if body:
             options.append(f"  body: {json.dumps(body)},")
         if auth:
-            options.append(f'  // basic auth: {auth[0]}:{auth[1]}')
+            options.append(f"  // basic auth configured for user {json.dumps(auth[0])}")
         code = ("const response = await fetch(" + json.dumps(url) + ", {\n"
                 + "\n".join(options) + "\n});\n"
                 "if (!response.ok) throw new Error(`HTTP ${response.status}`);\n"
                 "console.log(await response.text());")
         suffix = ".js"
     else:
+        def _ps_quote(s: str) -> str:
+            return "'" + s.replace("'", "''") + "'"
+
         lines = ["$headers = @{"]
         for name, value in headers:
-            lines.append(f'    "{name}" = "{value}"')
+            lines.append(f"    {_ps_quote(name)} = {_ps_quote(value)}")
         lines.append("}")
-        lines.append(f'$response = Invoke-WebRequest -Uri "{url}" -Method {method} '
-                     f'-Headers $headers' + (f' -Body \'{body}\'' if body else "")
+        lines.append(f"$response = Invoke-WebRequest -Uri {_ps_quote(url)} -Method {_ps_quote(method)} "
+                     f"-Headers $headers" + (f" -Body {_ps_quote(body)}" if body else "")
                      + (" -SkipCertificateCheck" if insecure else ""))
         lines.append("$response.StatusCode")
         lines.append("$response.Content")
@@ -548,7 +552,17 @@ def curl_to_code(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
         target_path = save_target(ctx, requested, f"request{suffix}")
         target_path.write_text(code, encoding="utf-8")
         saved.append(str(target_path))
+    from urllib.parse import urlsplit, urlunsplit
+
+    try:
+        sp = urlsplit(url)
+        safe_netloc = sp.hostname or sp.netloc
+        if sp.port:
+            safe_netloc = f"{safe_netloc}:{sp.port}"
+        display_url = urlunsplit((sp.scheme, safe_netloc, sp.path, "", "")) if sp.scheme else url
+    except Exception:
+        display_url = url
     return RunResult(
-        message=ctx.M(f"دستور curl به کد {target} تبدیل شد ({method} {url}).",
-                      f"curl converted to {target} code ({method} {url})."),
+        message=ctx.M(f"دستور curl به کد {target} تبدیل شد ({method} {display_url}).",
+                      f"curl converted to {target} code ({method} {display_url})."),
         details=code, outputs=saved)
