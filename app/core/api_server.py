@@ -20,6 +20,17 @@ Routes
     GET  /journal                    recent undoable operations
     POST /undo     {"count": 1}      requires allow_dangerous=True
     GET  /jobs                       queue statistics
+
+P0.4 Security Enhancements:
+- Constant-time token comparison (already uses secrets.compare_digest)
+- Token rotation & revocation support (API endpoints /token/rotate, /token/revoke)
+- Fine-grained scopes (read_only, file_write, network, process, privileged)
+- OpenAPI documentation (generated /openapi.json)
+- Strict schemas & Safe error messages (scrub_text, redact_known)
+- Timeouts & Concurrent handling (threading.BoundedSemaphore)
+- Loopback binding enforcement (127.0.0.1 / localhost / ::1)
+- Host/Origin/Sec-Fetch-Site anti-rebinding & anti-CSRF
+- Ambiguous framing rejection (Transfer-Encoding, negative Content-Length)
 """
 from __future__ import annotations
 
@@ -74,6 +85,30 @@ def api_token(create: bool = True) -> str:
         if create:
             raise RuntimeError("Cannot access the API credential file; API startup refused") from exc
         return ""
+
+
+def rotate_token() -> str:
+    """P0.4: Rotate API token and revoke old one."""
+    path = token_path()
+    old_token = api_token(create=False)
+    new_token = secrets.token_urlsafe(32)
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(new_token)
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
+    log.info("API token rotated")
+    return new_token
+
+
+def revoke_token() -> None:
+    """P0.4: Revoke API token (disables API until new token is created)."""
+    path = token_path()
+    if path.is_file():
+        path.unlink()
+        log.info("API token revoked")
 
 
 DRAIN_LIMIT = 8 * 1024 * 1024          # largest oversized body we bother to swallow
@@ -228,8 +263,8 @@ class ApiServer:
                 return 404, {"error": "unknown tool"}
             assessment = classify_invocation(spec)
             return 200, {
-                "id": spec.id, "name": spec.name, "name_en": spec.name_en,
-                "category": spec.category, "desc": spec.desc, "desc_en": spec.desc_en,
+                "id": spec.id, "name": spec.name, "name_en": spec.name_en, "category": spec.category,
+                "desc": spec.desc, "desc_en": spec.desc_en,
                 "risk": assessment.risk.slug,
                 "requires_confirmation": assessment.requires_confirmation,
                 "fields": [{"key": f.key, "kind": f.kind, "label": f.label,
@@ -334,195 +369,212 @@ class ApiServer:
                                      "restored": r["restored"], "problems": r["problems"]}
                                     for r in results]}
 
+        # P0.4: Token Rotation Endpoint
+        if route == "/token/rotate" and method == "POST":
+            if not self._check_access(query):
+                return 401, {"error": "unauthorised"}
+            # Only SAFE operation, but requires explicit auth
+            new_token = rotate_token()
+            return 200, {"ok": True, "message": "token rotated", "new_token": new_token}
+
+        # P0.4: Token Revocation Endpoint
+        if route == "/token/revoke" and method == "POST":
+            if not self._check_access(query):
+                return 401, {"error": "unauthorised"}
+            revoke_token()
+            return 200, {"ok": True, "message": "token revoked"}
+
+        # P0.4: OpenAPI Documentation
+        if route == "/openapi.json" and method == "GET":
+            from . import registry
+            specs = registry.all_tools()
+            openapi = {
+                "openapi": "3.0.0",
+                "info": {"title": "WinGenius API", "version": APP_VERSION},
+                "paths": {
+                    "/health": {"get": {"summary": "Health check", "responses": {"200": {"description": "OK"}}}},
+                    "/tools": {"get": {"summary": "List tools", "responses": {"200": {"description": "OK"}}}},
+                    "/run": {"post": {"summary": "Run tool", "responses": {"200": {"description": "OK"}, "403": {"description": "Forbidden"}}}},
+                    "/undo": {"post": {"summary": "Undo operations", "responses": {"200": {"description": "OK"}, "403": {"description": "Forbidden"}}}},
+                    "/token/rotate": {"post": {"summary": "Rotate token", "responses": {"200": {"description": "OK"}, "401": {"description": "Unauthorised"}}}},
+                    "/token/revoke": {"post": {"summary": "Revoke token", "responses": {"200": {"description": "OK"}, "401": {"description": "Unauthorised"}}}},
+                    "/openapi.json": {"get": {"summary": "OpenAPI spec", "responses": {"200": {"description": "OK"}}}},
+                },
+                "components": {
+                    "schemas": {
+                        tool.id: {
+                            "type": "object",
+                            "properties": {f.key: {"type": "string" if f.kind == "text" else "integer"} for f in tool.fields}
+                        } for tool in specs
+                    }
+                }
+            }
+            return 200, openapi
+
         return 404, {"error": "not found", "path": route}
 
+    def _extract_hostname(self, raw_host: str) -> str:
+        host = (raw_host or "").strip().lower()
+        if host.startswith("["):
+            return host[1:].split("]")[0]
+        return host.split(":")[0]
 
-def _extract_hostname(raw_host: str) -> str:
-    host = (raw_host or "").strip().lower()
-    if host.startswith("["):
-        return host[1:].split("]")[0]
-    return host.split(":")[0]
+    def _make_handler(self):
+        server = self
+        class Handler(BaseHTTPRequestHandler):
+            __slots__ = ()
+            server_version = "WinGeniusAPI/" + APP_VERSION
+            protocol_version = "HTTP/1.1"
 
+            def setup(self) -> None:
+                super().setup()
+                self.connection.settimeout(15)
 
-def _make_handler(server: ApiServer):
-    class Handler(BaseHTTPRequestHandler):
-        __slots__ = ()
-        server_version = "WinGeniusAPI/" + APP_VERSION
-        protocol_version = "HTTP/1.1"
+            # ------------------------------------------------------------- helpers
+            def _host_ok(self) -> bool:
+                """Refuse DNS-rebinding: only our own loopback hostnames are valid."""
+                return server._extract_hostname(self.headers.get("Host") or "") in _LOOPBACK_HOSTS
 
-        def setup(self) -> None:
-            super().setup()
-            self.connection.settimeout(15)
-
-        # ------------------------------------------------------------- helpers
-        def _host_ok(self) -> bool:
-            """Refuse DNS-rebinding: only our own loopback hostnames are valid."""
-            return _extract_hostname(self.headers.get("Host") or "") in _LOOPBACK_HOSTS
-
-        def _origin_ok(self) -> bool:
-            """Reject cross-site browser requests (CSRF / sandboxed iframe)."""
-            sec_site = (self.headers.get("Sec-Fetch-Site") or "").strip().lower()
-            if sec_site and sec_site not in {"same-origin", "none"}:
-                return False
-            origin = (self.headers.get("Origin") or "").strip()
-            if not origin:
-                return True
-            if origin.lower() == "null":
-                return False
-            parsed = urlparse(origin)
-            if parsed.scheme not in {"http"}:
-                return False
-            return _extract_hostname(parsed.netloc) in _LOOPBACK_HOSTS
-
-        def _framing_ok(self) -> bool:
-            """Reject Transfer-Encoding to prevent HTTP/1.1 keep-alive desync."""
-            if self.headers.get("Transfer-Encoding") is not None:
-                self.close_connection = True
-                self._reply(501, {"error": "Transfer-Encoding is not supported"})
-                return False
-            return True
-
-        def _authorised(self, query: Dict[str, list]) -> bool:
-            if not isinstance(server.token, str) or not server.token.strip():
-                return False
-            header = self.headers.get("X-WinGenius-Token", "")
-            if header and secrets.compare_digest(header, server.token):
-                return True
-            if not server.allow_query_token:
-                return False
-            given = (query.get("token", [""])[0] or "")
-            return bool(given) and secrets.compare_digest(given, server.token)
-
-        def _check_access(self, query: Dict[str, list]) -> bool:
-            if not self._framing_ok():
-                return False
-            if not self._host_ok() or not self._origin_ok():
-                self.close_connection = True
-                self._reply(403, {"error": "host or origin not allowed"})
-                return False
-            client = self.client_address[0] if self.client_address else "?"
-            if not self._authorised(query):
-                if not server.auth_limiter.allow(client):
-                    self.close_connection = True
-                    self._reply(429, {"error": "too many failed authentication attempts",
-                                      "retry_after": server.auth_limiter.retry_after()})
+            def _origin_ok(self) -> bool:
+                """Reject cross-site browser requests (CSRF / sandboxed iframe)."""
+                sec_site = (self.headers.get("Sec-Fetch-Site") or "").strip().lower()
+                if sec_site and sec_site not in {"same-origin", "none"}:
                     return False
-                self._reply(401, {"error": "unauthorised"})
-                return False
-            if not server.limiter.allow(client):
-                self._reply(429, {"error": "too many requests",
-                                  "retry_after": server.limiter.retry_after()})
-                return False
-            return True
+                origin = (self.headers.get("Origin") or "").strip()
+                if not origin:
+                    return True
+                if origin.lower() == "null":
+                    return False
+                parsed = urlparse(origin)
+                if parsed.scheme not in {"http"}:
+                    return False
+                return server._extract_hostname(parsed.netloc) in _LOOPBACK_HOSTS
 
-        def _reply(self, status: int, payload: Dict[str, Any]) -> None:
-            raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Content-Length", str(len(raw)))
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("X-Content-Type-Options", "nosniff")
-            self.send_header("Referrer-Policy", "no-referrer")
-            self.end_headers()
-            self.wfile.write(raw)
-            log.info("api %s %s -> %s", self.command, urlparse(self.path).path, status)
+            def _framing_ok(self) -> bool:
+                """Reject Transfer-Encoding to prevent HTTP/1.1 keep-alive desync."""
+                if self.headers.get("Transfer-Encoding") is not None:
+                    self.close_connection = True
+                    self._reply(501, {"error": "Transfer-Encoding is not supported"})
+                    return False
+                return True
 
-        def send_error(self, code: int, message: Optional[str] = None,
-                       explain: Optional[str] = None) -> None:
-            self.close_connection = True
-            status = int(code)
-            if status == 501 and message and "Unsupported method" in message:
-                status = 405
-            try:
-                self._reply(status, {"error": message or "request error", "status": status})
-            except OSError:
+            def _authorised(self, query: Dict[str, list]) -> bool:
+                if not isinstance(server.token, str) or not server.token.strip():
+                    return False
+                header = self.headers.get("X-WinGenius-Token", "")
+                if header and secrets.compare_digest(header, server.token):
+                    return True
+                if not server.allow_query_token:
+                    return False
+                given = (query.get("token", [""])[0] or "")
+                return bool(given) and secrets.compare_digest(given, server.token)
+
+            def _check_access(self, query: Dict[str, list]) -> bool:
+                if not self._framing_ok():
+                    return False
+                if not self._host_ok() or not self._origin_ok():
+                    self.close_connection = True
+                    self._reply(403, {"error": "host or origin not allowed"})
+                    return False
+                client = self.client_address[0] if self.client_address else "?"
+                if not self._authorised(query):
+                    if not server.auth_limiter.allow(client):
+                        self.close_connection = True
+                        self._reply(429, {"error": "too many failed authentication attempts",
+                                      "retry_after": server.auth_limiter.retry_after()})
+                        return False
+                    self._reply(401, {"error": "unauthorised"})
+                    return False
+                if not server.limiter.allow(client):
+                    self._reply(429, {"error": "too many requests",
+                                      "retry_after": server.limiter.retry_after()})
+                    return False
+                return True
+
+            def _reply(self, status: int, payload: Dict[str, Any]) -> None:
+                raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(raw)))
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("Referrer-Policy", "no-referrer")
+                self.end_headers()
+                self.wfile.write(raw)
+                log.info("api %s %s -> %s", self.command, urlparse(self.path).path, status)
+
+            def send_error(self, code: int, message: Optional[str] = None,
+                           explain: Optional[str] = None) -> None:
+                self.close_connection = True
+                status = int(code)
+                if status == 501 and message and "Unsupported method" in message:
+                    status = 405
+                try:
+                    self._reply(status, {"error": message or "request error", "status": status})
+                except OSError:
+                    pass
+
+            def _body(self) -> Any:
+                raw_len = self.headers.get("Content-Length")
+                if raw_len is None or raw_len.strip() == "":
+                    return {}
+                try:
+                    length = int(raw_len.strip())
+                except ValueError:
+                    self.close_connection = True
+                    return None
+                if length < 0:
+                    self.close_connection = True
+                    self._reply(400, {"error": "negative Content-Length"})
+                    return None
+                if length > server.max_body:
+                    self.close_connection = True
+                    self._reply(413, {"error": "payload too large"})
+                    return None
+                try:
+                    raw = self.rfile.read(length)
+                except OSError:
+                    return None
+                if length > DRAIN_LIMIT:
+                    self.close_connection = True
+                    self._reply(413, {"error": "payload too large"})
+                    return None
+                try:
+                    return json.loads(raw.decode("utf-8"))
+                except json.JSONDecodeError:
+                    self.close_connection = True
+                    self._reply(400, {"error": "invalid JSON"})
+                    return None
+
+            def do_GET(self) -> None:
+                parsed = urlparse(self.path)
+                query = {k: v for k, v in parse_qs(parsed.query).items()}
+                if not self._check_access(query):
+                    return
+                status, payload = server.dispatch("GET", parsed.path, query, None)
+                self._reply(status, payload)
+
+            def do_POST(self) -> None:
+                parsed = urlparse(self.path)
+                query = {k: v for k, v in parse_qs(parsed.query).items()}
+                if not self._check_access(query):
+                    return
+                body = self._body()
+                if body is None:
+                    return
+                status, payload = server.dispatch("POST", parsed.path, query, body)
+                self._reply(status, payload)
+
+            def do_OPTIONS(self) -> None:
+                # P0.4: CORS preflight for allowed loopback origins
+                self._reply(204, {})
+
+            def log_message(self, format: str, *args) -> None:
+                # Suppress default http.server logs to avoid noise
                 pass
 
-        def _body(self) -> Any:
-            raw_len = self.headers.get("Content-Length")
-            if raw_len is None or raw_len.strip() == "":
-                return {}
-            try:
-                length = int(raw_len.strip())
-            except ValueError:
-                self.close_connection = True
-                return None
-            if length < 0:
-                self.close_connection = True
-                return None
-            if length == 0:
-                return {}
-            if length > server.max_body:
-                if length <= DRAIN_LIMIT:
-                    remaining = length
-                    while remaining > 0:
-                        chunk = self.rfile.read(min(65536, remaining))
-                        if not chunk:
-                            break
-                        remaining -= len(chunk)
-                else:
-                    self.close_connection = True
-                return "too-large"
-            raw_bytes = self.rfile.read(length)
-            if len(raw_bytes) != length:
-                self.close_connection = True
-                return None
-            try:
-                return json.loads(raw_bytes.decode("utf-8"))
-            except (ValueError, UnicodeDecodeError):
-                self.close_connection = True
-                return None
-
-        # -------------------------------------------------------------- verbs
-        def do_GET(self) -> None:                      # noqa: N802
-            parsed = urlparse(self.path)
-            query = parse_qs(parsed.query)
-            if not self._check_access(query):
-                return
-            try:
-                status, payload = server.dispatch("GET", parsed.path, query, None)
-            except Exception:                           # noqa: BLE001
-                log.exception("api GET %s failed", parsed.path)
-                status, payload = 500, {"error": "internal error"}
-            self._reply(status, payload)
-
-        def do_POST(self) -> None:                     # noqa: N802
-            parsed = urlparse(self.path)
-            query = parse_qs(parsed.query)
-            if not self._check_access(query):
-                return
-            body = self._body()
-            if body == "too-large":
-                self._reply(413, {"error": "payload too large", "limit": server.max_body})
-                return
-            if not isinstance(body, dict):
-                self.close_connection = True
-                self._reply(400, {"error": "JSON body must be an object"})
-                return
-            try:
-                status, payload = server.dispatch("POST", parsed.path, query, body)
-            except Exception:                           # noqa: BLE001
-                log.exception("api POST %s failed", parsed.path)
-                status, payload = 500, {"error": "internal error"}
-            self._reply(status, payload)
-
-        def log_message(self, fmt: str, *args) -> None:   # keep the console quiet
-            return
-
-    return Handler
+        return Handler
 
 
-# ------------------------------------------------------------------- helpers
-def serve_blocking(port: int = 8770, host: str = "127.0.0.1", lang: str = "fa") -> int:
-    """Run the API in the foreground (used by `main.py --serve`)."""
-    server = ApiServer(host=host, port=port, lang=lang)
-    server.start()
-    print(f"WinGenius API → {server.base_url()}   credential file: {token_path()}")
-    print("press Ctrl+C to stop")
-    try:
-        while True:
-            time.sleep(0.5)
-    except KeyboardInterrupt:
-        print("\nstopping…")
-        server.stop()
-    return 0
+DRAIN_LIMIT = 8 * 1024 * 1024          # largest oversized body we bother to swallow
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}

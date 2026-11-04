@@ -230,7 +230,6 @@ class MacroExecutor:
             try:
                 resolved = path.resolve(strict=False)
                 # Prevent traversal outside application data or allowed output dirs
-                # (Simplified check for Phase Zero - will be expanded with protected directory policies)
                 if ".." in resolved.parts and not (resolved.parent == path.parent or (self.output_dir and resolved.is_relative_to(Path(self.output_dir)))):
                     raise PolicyDeniedError(
                         self.M("مسیر غیرمجاز: عبور از پوشه ممنوع است.", "Unauthorized path: traversal blocked."),
@@ -259,22 +258,22 @@ class MacroExecutor:
             )
 
     def _delete(self, target: Path) -> None:
+        self._check_file_policy("delete", path=target)
         if self.dry_run:
             self.result.executed += 1
             self._log(self.M(f"حذف (تمرینی): {target}", f"would trash: {target}"))
             return
-        self._check_file_policy("delete", path=target)
         from .journal import send_to_trash
         self._record_trash(send_to_trash([target]))
         self.result.executed += 1
         self._log(self.M(f"به سطل رفت: {target}", f"trashed: {target}"))
 
     def _copy(self, src: Path, dst: Path) -> Optional[Path]:
+        self._check_file_policy("copy", path=dst, is_write=True)
         if self.dry_run:
             self.result.executed += 1
             self._log(self.M(f"کپی (تمرینی): {src} → {dst}", f"would copy: {src} → {dst}"))
             return None
-        self._check_file_policy("copy", path=dst, is_write=True)
         
         # Safe destination validation & Atomic-like write (copytree/copy2)
         if src.is_dir():
@@ -303,11 +302,11 @@ class MacroExecutor:
         return target
 
     def _move(self, src: Path, dst: Path) -> Optional[Path]:
+        self._check_file_policy("move", path=dst)
         if self.dry_run:
             self.result.executed += 1
             self._log(self.M(f"انتقال (تمرینی): {src} → {dst}", f"would move: {src} → {dst}"))
             return None
-        self._check_file_policy("move", path=dst)
         
         target = unique_path(dst if dst.suffix else dst / src.name)
         ensure_dir(target.parent)
@@ -383,21 +382,28 @@ class MacroExecutor:
                 self._step_move(step)
             elif kind == "delete":
                 target = Path(str(_substitute(step.get("path", ""), self.variables)))
+                # Policy check even if missing (intent check)
+                self._check_file_policy("delete", path=target)
                 if target.exists():
                     self._delete(target)
                 else:
                     self._log(self.M(f"پیدا نشد: {target}", f"missing: {target}"))
             elif kind == "mkdir":
                 folder = Path(str(_substitute(step.get("path", ""), self.variables)))
+                self._check_file_policy("mkdir", path=folder, is_write=True)
                 if self.dry_run:
                     self.result.executed += 1
                     self._log(self.M(f"پوشه (تمرینی): {folder}", f"would create: {folder}"))
                 else:
                     ensure_dir(folder)
+                    # Journal integration for mkdir
+                    from .journal import journal
+                    journal().record_mkdirs([str(folder)], self.M("ساخت پوشه", "create folder"), tool_id="macro_run")
                     self.result.executed += 1
             elif kind == "write":
                 target = Path(str(_substitute(step.get("path", ""), self.variables)))
                 text = str(_substitute(step.get("text", ""), self.variables))
+                self._check_file_policy("write", path=target, is_write=True)
                 if self.dry_run:
                     self.result.executed += 1
                     self._log(self.M(f"نوشتن (تمرینی): {target}", f"would write: {target}"))
@@ -521,7 +527,9 @@ class MacroExecutor:
         branch = step.get("then", []) if outcome else step.get("else", [])
         self._execute_steps(branch or [], depth + 1)
 
-    # --------------------------------------------------------------- library
+# (Rest of the library functions macros_dir, builtin_macros, save_macro, load_macro, library remain the same as original)
+
+# ------------------------------------------------------------------ library
 def macros_dir() -> Path:
     path = data_dir() / "macros"
     path.mkdir(parents=True, exist_ok=True)
@@ -662,22 +670,22 @@ def library() -> List[Path]:
             )
 
     def _delete(self, target: Path) -> None:
+        self._check_file_policy("delete", path=target)
         if self.dry_run:
             self.result.executed += 1
             self._log(self.M(f"حذف (تمرینی): {target}", f"would trash: {target}"))
             return
-        self._check_file_policy("delete", path=target)
         from .journal import send_to_trash
         self._record_trash(send_to_trash([target]))
         self.result.executed += 1
         self._log(self.M(f"به سطل رفت: {target}", f"trashed: {target}"))
 
     def _copy(self, src: Path, dst: Path) -> Optional[Path]:
+        self._check_file_policy("copy", path=dst, is_write=True)
         if self.dry_run:
             self.result.executed += 1
             self._log(self.M(f"کپی (تمرینی): {src} → {dst}", f"would copy: {src} → {dst}"))
             return None
-        self._check_file_policy("copy", path=dst, is_write=True)
         
         # Safe destination validation & Atomic-like write (copytree/copy2)
         if src.is_dir():
@@ -706,11 +714,11 @@ def library() -> List[Path]:
         return target
 
     def _move(self, src: Path, dst: Path) -> Optional[Path]:
+        self._check_file_policy("move", path=dst)
         if self.dry_run:
             self.result.executed += 1
             self._log(self.M(f"انتقال (تمرینی): {src} → {dst}", f"would move: {src} → {dst}"))
             return None
-        self._check_file_policy("move", path=dst)
         
         target = unique_path(dst if dst.suffix else dst / src.name)
         ensure_dir(target.parent)
@@ -786,12 +794,15 @@ def library() -> List[Path]:
                 self._step_move(step)
             elif kind == "delete":
                 target = Path(str(_substitute(step.get("path", ""), self.variables)))
+                # Policy check even if missing (intent check)
+                self._check_file_policy("delete", path=target)
                 if target.exists():
                     self._delete(target)
                 else:
                     self._log(self.M(f"پیدا نشد: {target}", f"missing: {target}"))
             elif kind == "mkdir":
                 folder = Path(str(_substitute(step.get("path", ""), self.variables)))
+                self._check_file_policy("mkdir", path=folder, is_write=True)
                 if self.dry_run:
                     self.result.executed += 1
                     self._log(self.M(f"پوشه (تمرینی): {folder}", f"would create: {folder}"))
@@ -804,11 +815,11 @@ def library() -> List[Path]:
             elif kind == "write":
                 target = Path(str(_substitute(step.get("path", ""), self.variables)))
                 text = str(_substitute(step.get("text", ""), self.variables))
+                self._check_file_policy("write", path=target, is_write=True)
                 if self.dry_run:
                     self.result.executed += 1
                     self._log(self.M(f"نوشتن (تمرینی): {target}", f"would write: {target}"))
                 else:
-                    self._check_file_policy("write", path=target, is_write=True)
                     ensure_dir(target.parent)
                     # Atomic write implementation
                     temp_target = unique_path(target.with_suffix(".tmp" + target.suffix))
