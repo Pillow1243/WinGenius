@@ -90,6 +90,10 @@ def main() -> int:
     # ------------------------------------------------------------------- assets
     icon = ROOT / "app" / "assets" / "icon.ico"
     check("windows icon exists", icon.exists() and icon.stat().st_size > 1000, "app/assets/icon.ico")
+    fonts = ROOT / "app" / "assets" / "fonts"
+    check("bundled Vazirmatn family is complete",
+          all((fonts / f"Vazirmatn-{w}.ttf").exists() for w in ("Regular", "Medium", "SemiBold", "Bold", "ExtraBold"))
+          and (fonts / "OFL.txt").exists(), "app/assets/fonts incomplete")
     check("LICENSE exists", (ROOT / "LICENSE").exists(), "no LICENSE file")
     check("third-party notices exist", (ROOT / "THIRD-PARTY-NOTICES.md").exists(), "no notices")
     check("requirements.txt is present", (ROOT / "requirements.txt").exists(), "missing")

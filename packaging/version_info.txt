@@ -4,8 +4,8 @@
 #
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(6, 0, 0, 0),
-    prodvers=(6, 0, 0, 0),
+    filevers=(7, 0, 0, 0),
+    prodvers=(7, 0, 0, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -20,12 +20,12 @@ VSVersionInfo(
           '040904B0',
           [StringStruct('CompanyName', 'Pillow1243'),
            StringStruct('FileDescription', 'WinGenius — دستیار همه‌کاره‌ی ویندوز'),
-           StringStruct('FileVersion', '6.0.0.0'),
+           StringStruct('FileVersion', '7.0.0.0'),
            StringStruct('InternalName', 'WinGenius'),
            StringStruct('LegalCopyright', 'AGPL-3.0-or-later — see LICENSE'),
            StringStruct('OriginalFilename', 'WinGenius.exe'),
            StringStruct('ProductName', 'WinGenius'),
-           StringStruct('ProductVersion', '6.0.0.0')])
+           StringStruct('ProductVersion', '7.0.0.0')])
       ]),
     VarFileInfo([VarStruct('Translation', [1033, 1200])])
   ]

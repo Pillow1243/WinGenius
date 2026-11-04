@@ -1,9 +1,9 @@
 {
-  "version": "6.0.0",
-  "tools": 290,
+  "version": "7.0.0",
+  "tools": 292,
   "categories": 11,
   "category_counts": {
-    "pdf": 41,
+    "pdf": 43,
     "files": 40,
     "system": 39,
     "image": 33,
@@ -17,14 +17,15 @@
   },
   "suites": {
     "smoke": 154,
-    "functional": 637,
+    "functional": 638,
     "output": 111,
-    "ui": 1238,
+    "ui": 1259,
     "security": 57,
     "hardening": 39,
+    "persian": 28,
     "packaging": 27
   },
-  "checks": 2263,
+  "checks": 2313,
   "coverage": 75,
   "python": [
     "3.12",
