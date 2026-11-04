@@ -5,6 +5,7 @@ import io
 from pathlib import Path
 from typing import Any, Dict, List
 
+from ..core import persian_pdf
 from ..core.registry import tool
 from ..core.spec import (
     K_BOOL, K_CHOICE, K_DIR, K_FILE, K_FILES, K_FLOAT, K_INT, K_PASSWORD, K_SAVE, K_TEXT,
@@ -112,30 +113,43 @@ def pdf_to_images(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
 # ------------------------------------------------------------------ pdf → text
 @tool(
     id="pdf_to_text", category="pdf", name="PDF به متن", name_en="PDF → Text",
-    desc="متن قابل انتخاب PDF را در فایل TXT ذخیره می‌کند.",
-    desc_en="Extract selectable text into a TXT file.",
-    icon="text", order=20, keywords=("pdf to text", "استخراج متن", "متن پی دی اف"),
+    desc="متن قابل انتخاب PDF را با ترتیب درست فارسی (نیم‌فاصله، اعداد، جدول‌ها) در فایل TXT ذخیره می‌کند.",
+    desc_en="Extract selectable text into TXT with correct Persian order, half-spaces and tables.",
+    icon="text", order=20, keywords=("pdf to text", "استخراج متن", "متن پی دی اف", "فارسی"),
     fields=[
         Field("src", K_FILE, "فایل PDF", "PDF file", required=True, filt=PDF_FILTER),
         Field("per_page", K_BOOL, "جدا کردن متن هر صفحه", "Separate text per page", default=True),
+        Field("digits", K_CHOICE, "ارقام", "Digits", default="keep",
+              choices=[("keep", "بدون تغییر", "Keep"), ("fa", "فارسی ۱۲۳", "Persian ۱۲۳"),
+                       ("en", "لاتین 123", "Latin 123")]),
         Field("out", K_SAVE, "ذخیره در", "Save as", filt="Text (*.txt)"),
     ],
 )
 def pdf_to_text(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     src = first_file(v, "src", ctx)
-    reader = _open_reader(ctx, src)
-    total = len(reader.pages)
-    chunks: List[str] = []
-    empty = 0
-    for i, page in enumerate(reader.pages):
-        ctx.progress(i, total, ctx.M(f"صفحه {i + 1} از {total}", f"Page {i + 1} of {total}"))
-        try:
-            text = page.extract_text() or ""
-        except Exception:
-            text = ""
-        if not text.strip():
-            empty += 1
-        chunks.append(f"===== Page {i + 1} =====\n{text}" if v.get("per_page") else text)
+    doc = _open_doc(ctx, src)
+    try:
+        total = doc.page_count
+        digits = str(v.get("digits") or "keep")
+        chunks: List[str] = []
+        empty = 0
+        persian_pages = 0
+        for i in range(total):
+            ctx.progress(i, total, ctx.M(f"صفحه {i + 1} از {total}", f"Page {i + 1} of {total}"))
+            try:
+                content = persian_pdf.extract_page(doc, i, tables=True, images=False)
+                text = content.text
+                if content.rtl:
+                    persian_pages += 1
+            except Exception:
+                text = persian_pdf.normalize_persian(doc[i].get_text("text"))
+            if digits in ("fa", "en"):
+                text = persian_pdf.normalize_persian(text, digits=digits, zwnj=False, fix_reversed=False)
+            if not text.strip():
+                empty += 1
+            chunks.append(f"===== Page {i + 1} =====\n{text}" if v.get("per_page") else text)
+    finally:
+        doc.close()
     body = "\n\n".join(chunks)
     dest = save_target(ctx, v.get("out", ""), f"{src.stem}.txt")
     dest.write_text(body, encoding="utf-8")
@@ -145,54 +159,168 @@ def pdf_to_text(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
             "\n\nتوجه: این PDF متن قابل انتخاب ندارد (تصویری است)؛ برای استخراج متن به OCR نیاز است.",
             "\n\nNote: this PDF has no selectable text (scanned); OCR would be required.",
         )
+    elif persian_pages:
+        note = ctx.M(f"\n{persian_pages} صفحه‌ی فارسی/راست‌به‌چپ با ترتیب درست استخراج شد.",
+                     f"\n{persian_pages} RTL page(s) extracted in logical order.")
     return RunResult(
         message=ctx.M(f"متن استخراج شد ({len(body):,} کاراکتر).{note}", f"Text extracted ({len(body):,} chars).{note}"),
-        outputs=[str(dest)], open_target=str(dest),
+        outputs=[str(dest)], open_target=str(dest), details=body[:6000],
     )
+
+
+def _open_doc(ctx: RunContext, path: Path):
+    """PyMuPDF document with repaired Persian font maps (raises a friendly error)."""
+    _fitz(ctx)
+    try:
+        doc = persian_pdf.open_repaired(path)
+    except Exception as exc:
+        raise ToolError(ctx.M(
+            f"این فایل PDF باز نشد (شاید خراب یا رمزدار است):\n{exc}",
+            f"Could not open this PDF (damaged or encrypted?):\n{exc}",
+        ))
+    if doc.is_encrypted and doc.needs_pass:
+        doc.close()
+        raise ToolError(ctx.M(
+            "این PDF با رمز محافظت شده است. ابتدا از ابزار «حذف رمز PDF» استفاده کنید.",
+            "This PDF is password protected. Use 'Remove PDF password' first.",
+        ))
+    return doc
 
 
 # ------------------------------------------------------------------ pdf → docx
 @tool(
     id="pdf_to_docx", category="pdf", name="PDF به Word", name_en="PDF → Word",
-    desc="متن PDF را به یک فایل قابل ویرایش Word (.docx) تبدیل می‌کند.",
-    desc_en="Turn PDF text into an editable Word (.docx) document.",
-    icon="doc", order=30, keywords=("pdf to word", "pdf to docx", "پی دی اف به ورد"),
+    desc="PDF را به Word قابل ویرایش تبدیل می‌کند: پاراگراف‌های واقعی راست‌به‌چپ، تیترها، جدول‌ها، تصاویر و قلم فارسی.",
+    desc_en="Turn a PDF into an editable Word file: real RTL paragraphs, headings, tables, images and Persian fonts.",
+    icon="doc", order=30, keywords=("pdf to word", "pdf to docx", "پی دی اف به ورد", "فارسی", "راست به چپ"),
     fields=[
         Field("src", K_FILE, "فایل PDF", "PDF file", required=True, filt=PDF_FILTER),
         Field("out", K_SAVE, "ذخیره در", "Save as", filt="Word (*.docx)"),
         Field("page_break", K_BOOL, "شکستن صفحه در ابتدای هر صفحه", "Page break per PDF page", default=True),
+        Field("images", K_BOOL, "انتقال تصاویر", "Carry images over", default=True),
+        Field("tables", K_BOOL, "تشخیص جدول‌ها", "Detect tables", default=True),
+        Field("font", K_CHOICE, "قلم فارسی", "Persian font", default="Vazirmatn",
+              choices=[("Vazirmatn", "وزیرمتن (همراه برنامه)", "Vazirmatn (bundled)"),
+                       ("B Nazanin", "B Nazanin", "B Nazanin"), ("IRANSans", "ایران‌سنس", "IRANSans"),
+                       ("Tahoma", "Tahoma", "Tahoma")]),
     ],
 )
 def pdf_to_docx(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     docx = require("docx", "python-docx", ctx)
+    from docx.enum.text import WD_ALIGN_PARAGRAPH  # type: ignore
+    from docx.shared import Inches, Pt  # type: ignore
+
     src = first_file(v, "src", ctx)
-    reader = _open_reader(ctx, src)
+    doc = _open_doc(ctx, src)
+    font = str(v.get("font") or persian_pdf.FONT_FAMILY)
     document = docx.Document()
-    document.add_heading(src.stem, level=1)
-    total = len(reader.pages)
-    added = 0
-    for i, page in enumerate(reader.pages):
-        ctx.progress(i, total, ctx.M(f"صفحه {i + 1} از {total}", f"Page {i + 1} of {total}"))
-        if i and v.get("page_break"):
-            document.add_page_break()
-        try:
-            text = page.extract_text() or ""
-        except Exception:
-            text = ""
-        for block in text.split("\n"):
-            if block.strip():
-                document.add_paragraph(block.strip())
-                added += 1
+    persian_pdf.docx_prepare(document, font=font, size_pt=11)
+    section = document.sections[0]
+    try:
+        first = doc[0].rect
+        if first.width > first.height:
+            from docx.enum.section import WD_ORIENT  # type: ignore
+
+            section.orientation = WD_ORIENT.LANDSCAPE
+            section.page_width, section.page_height = section.page_height, section.page_width
+    except Exception:
+        pass
+    for side in ("left_margin", "right_margin"):
+        setattr(section, side, Inches(0.9))
+    usable_width = section.page_width - section.left_margin - section.right_margin
+
+    total = doc.page_count
+    paragraphs = tables = images = 0
+    rtl_pages = 0
+    try:
+        for i in range(total):
+            ctx.progress(i, total, ctx.M(f"صفحه {i + 1} از {total}", f"Page {i + 1} of {total}"))
+            if i and v.get("page_break", True):
+                document.add_page_break()
+            content = persian_pdf.extract_page(doc, i, tables=bool(v.get("tables", True)),
+                                               images=bool(v.get("images", True)))
+            if content.rtl:
+                rtl_pages += 1
+            scale = float(usable_width) / max(1.0, content.width - 2 * 36)
+            for item in content.items:
+                if isinstance(item, persian_pdf.Paragraph):
+                    if not item.text.strip():
+                        continue
+                    if item.heading:
+                        paragraph = document.add_heading("", level=min(3, item.heading))
+                    elif item.bullet:
+                        paragraph = document.add_paragraph(style="List Bullet")
+                    else:
+                        paragraph = document.add_paragraph()
+                    for span in item.spans:
+                        run = paragraph.add_run(span.text)
+                        size = span.size if not item.heading else None
+                        persian_pdf.docx_style_run(run, rtl=item.rtl, font=font,
+                                                   size_pt=min(36.0, max(7.0, size)) if size else None,
+                                                   bold=True if span.bold else None,
+                                                   italic=True if span.italic else None,
+                                                   color=span.color)
+                    persian_pdf.docx_set_rtl(paragraph, item.rtl, font=font)
+                    if item.align == "center":
+                        paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    elif item.align == "end":
+                        paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT if item.rtl else WD_ALIGN_PARAGRAPH.RIGHT
+                    else:
+                        paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT if item.rtl else WD_ALIGN_PARAGRAPH.LEFT
+                    paragraph.paragraph_format.space_after = Pt(6)
+                    paragraphs += 1
+                elif isinstance(item, persian_pdf.Table):
+                    if not item.rows:
+                        continue
+                    cols = max(len(row) for row in item.rows)
+                    table = document.add_table(rows=len(item.rows), cols=cols)
+                    table.style = "Table Grid"
+                    if item.rtl:
+                        persian_pdf.docx_table_rtl(table)
+                    for r_index, row in enumerate(item.rows):
+                        for c_index in range(cols):
+                            text = row[c_index] if c_index < len(row) else ""
+                            cell = table.cell(r_index, c_index)
+                            cell.text = ""
+                            paragraph = cell.paragraphs[0]
+                            run = paragraph.add_run(text)
+                            cell_rtl = persian_pdf.is_rtl(text) or (item.rtl and not text.strip())
+                            persian_pdf.docx_style_run(run, rtl=cell_rtl, font=font, size_pt=10,
+                                                       bold=True if r_index == 0 else None)
+                            persian_pdf.docx_set_rtl(paragraph, cell_rtl, font=font)
+                            paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT if cell_rtl else WD_ALIGN_PARAGRAPH.LEFT
+                    document.add_paragraph()
+                    tables += 1
+                elif isinstance(item, persian_pdf.ImageRef):
+                    try:
+                        width_pt = (item.bbox[2] - item.bbox[0]) * scale
+                        width_emu = int(min(float(usable_width), max(72.0, width_pt) * 12700))
+                        document.add_picture(io.BytesIO(item.data), width=width_emu)
+                        document.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        images += 1
+                    except Exception as exc:
+                        ctx.log(f"image skipped: {exc}")
+    finally:
+        doc.close()
     dest = save_target(ctx, v.get("out", ""), f"{src.stem}.docx")
-    if added == 0:
-        document.add_paragraph(ctx.M(
-            "(این PDF متن قابل استخراج نداشت.)", "(This PDF had no extractable text.)"
-        ))
+    if paragraphs == 0 and tables == 0:
+        paragraph = document.add_paragraph(ctx.M(
+            "(این PDF متن قابل استخراج نداشت — احتمالاً اسکن است؛ از ابزار OCR استفاده کنید.)",
+            "(This PDF had no extractable text — probably a scan; run the OCR tool.)"))
+        persian_pdf.docx_set_rtl(paragraph, ctx.lang == "fa", font=font)
     document.save(str(dest))
+    extras = []
+    if tables:
+        extras.append(ctx.M(f"{tables} جدول", f"{tables} table(s)"))
+    if images:
+        extras.append(ctx.M(f"{images} تصویر", f"{images} image(s)"))
+    if rtl_pages:
+        extras.append(ctx.M(f"{rtl_pages} صفحه‌ی راست‌به‌چپ", f"{rtl_pages} RTL page(s)"))
+    suffix = ("، " if ctx.lang == "fa" else ", ").join(extras)
     return RunResult(
         message=ctx.M(
-            f"فایل Word ساخته شد با {added} پاراگراف.\nتوجه: چیدمان و تصاویر PDF منتقل نمی‌شوند (تبدیل متنی).",
-            f"Word file created with {added} paragraphs.\nNote: layout and images are not carried over (text conversion).",
+            f"فایل Word ساخته شد: {paragraphs} پاراگراف" + (f"، {suffix}" if suffix else "") + ".",
+            f"Word file created: {paragraphs} paragraphs" + (f", {suffix}" if suffix else "") + ".",
         ),
         outputs=[str(dest)], open_target=str(dest),
     )
@@ -561,44 +689,25 @@ def pdf_decrypt(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     ],
 )
 def pdf_watermark(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
-    pypdf = _pypdf(ctx)
-    Canvas = require("reportlab.pdfgen.canvas", "reportlab", ctx).Canvas
     src = first_file(v, "src", ctx)
-    reader = _open_reader(ctx, src)
-    writer = pypdf.PdfWriter()
+    doc = _open_doc(ctx, src)
     text = str(v.get("text") or "CONFIDENTIAL")
-    total = len(reader.pages)
-    cache: Dict[tuple, Any] = {}
-    for index, page in enumerate(reader.pages):
-        ctx.progress(index, total, ctx.M(f"صفحه {index + 1} از {total}", f"Page {index + 1} of {total}"))
-        try:
-            width = float(page.mediabox.width)
-            height = float(page.mediabox.height)
-        except Exception:
-            width, height = 595.0, 842.0
-        key = (round(width, 1), round(height, 1))
-        if key not in cache:
-            buffer = io.BytesIO()
-            c = Canvas(buffer, pagesize=(width, height))
-            c.setFillColorRGB(0.55, 0.55, 0.60)
+    size = int(v.get("size") or 54)
+    opacity = float(v.get("opacity") or 0.14)
+    try:
+        total = doc.page_count
+        for index in range(total):
+            ctx.progress(index, total, ctx.M(f"صفحه {index + 1} از {total}", f"Page {index + 1} of {total}"))
+            page = doc[index]
             try:
-                c.setFillAlpha(float(v.get("opacity") or 0.14))
-            except Exception:
-                pass
-            c.setFont("Helvetica-Bold", int(v.get("size") or 54))
-            c.saveState()
-            c.translate(width / 2, height / 2)
-            c.rotate(45)
-            c.drawCentredString(0, 0, text)
-            c.restoreState()
-            c.save()
-            buffer.seek(0)
-            cache[key] = pypdf.PdfReader(buffer).pages[0]
-        page.merge_page(cache[key])
-        writer.add_page(page)
-    dest = save_target(ctx, v.get("out", ""), f"{src.stem}_watermarked.pdf")
-    with open(dest, "wb") as fh:
-        writer.write(fh)
+                persian_pdf.stamp_text(page, text, size_pt=size, opacity=opacity, angle=45.0)
+            except Exception as exc:
+                raise ToolError(ctx.M(f"واترمارک روی صفحه {index + 1} نوشته نشد: {exc}",
+                                      f"Could not stamp page {index + 1}: {exc}"))
+        dest = save_target(ctx, v.get("out", ""), f"{src.stem}_watermarked.pdf")
+        persian_pdf.save_pdf(doc, dest)
+    finally:
+        doc.close()
     return RunResult(
         message=ctx.M(f"واترمارک روی {total} صفحه اعمال شد.", f"Watermark applied to {total} pages."),
         outputs=[str(dest)], open_target=str(dest),
@@ -681,39 +790,52 @@ def pdf_info(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
 # -------------------------------------------------------------- page numbers
 @tool(
     id="pdf_page_numbers", category="pdf", name="شماره‌گذاری صفحه", name_en="Add page numbers",
-    desc="پایین هر صفحه شماره‌ی صفحه اضافه می‌کند.",
-    desc_en="Stamp page numbers at the bottom of each page.",
+    desc="پایین یا بالای هر صفحه شماره‌ی صفحه (لاتین یا فارسی) اضافه می‌کند.",
+    desc_en="Stamp page numbers (Latin or Persian digits) at the bottom or top of each page.",
     icon="hash", order=140, keywords=("page numbers", "شماره صفحه", "صفحه بندی"),
     fields=[
         Field("src", K_FILE, "فایل PDF", "PDF file", required=True, filt=PDF_FILTER),
         Field("start", K_INT, "شروع از شماره", "Start at", default=1, minimum=1, maximum=100000),
+        Field("position", K_CHOICE, "موقعیت", "Position", default="bottom-center",
+              choices=[("bottom-center", "پایین وسط", "Bottom centre"), ("bottom-right", "پایین راست", "Bottom right"),
+                       ("bottom-left", "پایین چپ", "Bottom left"), ("top-center", "بالا وسط", "Top centre")]),
+        Field("style", K_CHOICE, "قالب", "Format", default="n_of_total",
+              choices=[("n_of_total", "۳ / ۱۲", "3 / 12"), ("n", "فقط شماره", "Number only"),
+                       ("page_n", "صفحه ۳", "Page 3")]),
+        Field("digits", K_CHOICE, "ارقام", "Digits", default="auto",
+              choices=[("auto", "خودکار (فارسی برای سند فارسی)", "Auto (Persian for Persian docs)"),
+                       ("en", "لاتین 123", "Latin 123"), ("fa", "فارسی ۱۲۳", "Persian ۱۲۳")]),
         Field("out", K_SAVE, "ذخیره در", "Save as", filt="PDF (*.pdf)"),
     ],
 )
 def pdf_page_numbers(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
-    pypdf = _pypdf(ctx)
-    Canvas = require("reportlab.pdfgen.canvas", "reportlab", ctx).Canvas
     src = first_file(v, "src", ctx)
-    reader = _open_reader(ctx, src)
-    writer = pypdf.PdfWriter()
-    total = len(reader.pages)
+    doc = _open_doc(ctx, src)
     start = int(v.get("start") or 1)
-    for index, page in enumerate(reader.pages):
-        ctx.progress(index, total, "")
-        width = float(page.mediabox.width)
-        height = float(page.mediabox.height)
-        buffer = io.BytesIO()
-        c = Canvas(buffer, pagesize=(width, height))
-        c.setFont("Helvetica", 10)
-        c.setFillColorRGB(0.35, 0.35, 0.4)
-        c.drawCentredString(width / 2, max(14, height * 0.03), f"{start + index} / {start + total - 1}")
-        c.save()
-        buffer.seek(0)
-        page.merge_page(pypdf.PdfReader(buffer).pages[0])
-        writer.add_page(page)
-    dest = save_target(ctx, v.get("out", ""), f"{src.stem}_numbered.pdf")
-    with open(dest, "wb") as fh:
-        writer.write(fh)
+    position = str(v.get("position") or "bottom-center")
+    style = str(v.get("style") or "n_of_total")
+    digits = str(v.get("digits") or "auto")
+    try:
+        total = doc.page_count
+        if digits == "auto":
+            sample = " ".join(doc[i].get_text("text")[:2000] for i in range(min(3, total)))
+            digits = "fa" if persian_pdf.is_rtl(sample) else "en"
+        for index in range(total):
+            ctx.progress(index, total, "")
+            number, last = start + index, start + total - 1
+            if style == "n":
+                label = f"{number}"
+            elif style == "page_n":
+                label = f"صفحه {number}" if digits == "fa" else f"Page {number}"
+            else:
+                label = f"{number} / {last}"
+            if digits == "fa":
+                label = persian_pdf.to_persian_digits(label)
+            persian_pdf.stamp_line(doc[index], label, position=position, size_pt=10)
+        dest = save_target(ctx, v.get("out", ""), f"{src.stem}_numbered.pdf")
+        persian_pdf.save_pdf(doc, dest)
+    finally:
+        doc.close()
     return RunResult(
         message=ctx.M("شماره‌گذاری انجام شد.", "Page numbers added."),
         outputs=[str(dest)], open_target=str(dest),
@@ -782,10 +904,13 @@ def docx_to_pdf(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
         if soffice:
             break
     if not soffice:
+        if src.suffix.lower() in (".docx", ".xlsx", ".csv", ".txt", ".md"):
+            ctx.progress(2, 3, ctx.M("تبدیل داخلی (بدون آفیس)…", "Built-in conversion (no Office)…"))
+            return _office_to_pdf_builtin(ctx, src, dest)
         raise ToolError(ctx.M(
-            "برای تبدیل فایل‌های آفیس به PDF یا Microsoft Office نصب باشد یا LibreOffice.\n"
+            "برای تبدیل این نوع فایل به PDF یا Microsoft Office نصب باشد یا LibreOffice.\n"
             "راه سریع: فایل را در Word باز کنید و Save as PDF بزنید.",
-            "Install Microsoft Office or LibreOffice to convert Office files.\n"
+            "Install Microsoft Office or LibreOffice to convert this file type.\n"
             "Quick fix: open the file in Word and use 'Save as PDF'.",
         ))
     ctx.progress(2, 3, ctx.M("اجرای LibreOffice…", "Running LibreOffice…"))
@@ -804,6 +929,142 @@ def docx_to_pdf(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
         dest.write_bytes(produced.read_bytes())
     return RunResult(message=ctx.M("تبدیل با LibreOffice انجام شد.", "Converted with LibreOffice."),
                      outputs=[str(dest)], open_target=str(dest))
+
+
+def _docx_to_html(ctx: RunContext, src: Path) -> str:
+    """python-docx → simple HTML (headings, runs, lists, tables, direction)."""
+    docx = require("docx", "python-docx", ctx)
+    from docx.oxml.ns import qn  # type: ignore
+
+    document = docx.Document(str(src))
+    esc = persian_pdf.html_escape
+    parts: List[str] = []
+
+    def _para_html(paragraph, tag_override: str = "") -> str:
+        style = (paragraph.style.name if paragraph.style is not None else "") or ""
+        text = paragraph.text
+        rtl = persian_pdf.is_rtl(text) or paragraph._p.pPr is not None and paragraph._p.pPr.find(qn("w:bidi")) is not None
+        runs = []
+        for run in paragraph.runs:
+            chunk = esc(run.text).replace("\n", "<br/>")
+            if run.bold:
+                chunk = f"<b>{chunk}</b>"
+            if run.italic:
+                chunk = f"<i>{chunk}</i>"
+            if run.underline:
+                chunk = f"<u>{chunk}</u>"
+            runs.append(chunk)
+        body = "".join(runs) or esc(text)
+        if not body.strip():
+            return ""
+        tag = tag_override or "p"
+        if style.startswith("Heading") or style == "Title":
+            level = "".join(ch for ch in style if ch.isdigit()) or "1"
+            tag = f"h{min(3, int(level))}"
+        if "List" in style and not tag_override:
+            body = "• " + body
+        align = "right" if rtl else "left"
+        try:
+            from docx.enum.text import WD_ALIGN_PARAGRAPH  # type: ignore
+
+            if paragraph.alignment == WD_ALIGN_PARAGRAPH.CENTER:
+                align = "center"
+            elif paragraph.alignment == WD_ALIGN_PARAGRAPH.JUSTIFY:
+                align = "justify"
+        except Exception:
+            pass
+        return f'<{tag} dir="{"rtl" if rtl else "ltr"}" style="text-align:{align}">{body}</{tag}>'
+
+    body_el = document.element.body
+    for child in body_el.iterchildren():
+        if child.tag == qn("w:p"):
+            from docx.text.paragraph import Paragraph as DocxParagraph  # type: ignore
+
+            parts.append(_para_html(DocxParagraph(child, document)))
+        elif child.tag == qn("w:tbl"):
+            from docx.table import Table as DocxTable  # type: ignore
+
+            table = DocxTable(child, document)
+            rows_html = []
+            sample = " ".join(cell.text for row in table.rows[:2] for cell in row.cells)
+            rtl = persian_pdf.is_rtl(sample)
+            for row in table.rows:
+                cells = [cell for cell in row.cells]
+                if rtl:
+                    cells = list(reversed(cells))  # MuPDF lays tables out LTR; mirror for RTL
+                cells_html = "".join(
+                    f'<td dir="{"rtl" if persian_pdf.is_rtl(cell.text) else "ltr"}" '
+                    f'style="text-align:{"right" if persian_pdf.is_rtl(cell.text) else "left"}">'
+                    f'{esc(cell.text).replace(chr(10), "<br/>")}</td>' for cell in cells)
+                rows_html.append(f"<tr>{cells_html}</tr>")
+            parts.append(f'<table dir="{"rtl" if rtl else "ltr"}">{"".join(rows_html)}</table><p></p>')
+    return "".join(parts) or "<p>&nbsp;</p>"
+
+
+def _sheet_to_html(ctx: RunContext, src: Path) -> str:
+    esc = persian_pdf.html_escape
+    rows: List[List[str]] = []
+    if src.suffix.lower() == ".csv":
+        import csv
+
+        with open(src, encoding="utf-8-sig", errors="replace", newline="") as fh:
+            rows = [[str(cell) for cell in row] for row in csv.reader(fh)]
+        sheets = [(src.stem, rows)]
+    else:
+        openpyxl = require("openpyxl", "openpyxl", ctx)
+        workbook = openpyxl.load_workbook(str(src), read_only=True, data_only=True)
+        sheets = []
+        for sheet in workbook.worksheets:
+            data = [["" if cell is None else str(cell) for cell in row] for row in sheet.iter_rows(values_only=True)]
+            sheets.append((sheet.title, data[:2000]))
+    parts = []
+    for title, data in sheets:
+        data = [row for row in data if any(cell.strip() for cell in row)]
+        if not data:
+            continue
+        rtl = persian_pdf.is_rtl(" ".join(" ".join(row) for row in data[:5]))
+        parts.append(f'<h2 dir="{"rtl" if rtl else "ltr"}" style="text-align:{"right" if rtl else "left"}">{esc(title)}</h2>')
+        body = []
+        for r_index, row in enumerate(data):
+            cells = list(reversed(row)) if rtl else row
+            tag = "th" if r_index == 0 else "td"
+            body.append("<tr>" + "".join(
+                f'<{tag} dir="{"rtl" if persian_pdf.is_rtl(c) else "ltr"}" '
+                f'style="text-align:{"right" if persian_pdf.is_rtl(c) else "left"}">{esc(c)}</{tag}>' for c in cells) + "</tr>")
+        parts.append(f"<table>{''.join(body)}</table><p></p>")
+    return "".join(parts) or "<p>&nbsp;</p>"
+
+
+def _office_to_pdf_builtin(ctx: RunContext, src: Path, dest: Path) -> RunResult:
+    """No Office / LibreOffice: render Word, Excel, CSV, text and Markdown through MuPDF."""
+    fitz = _fitz(ctx)
+    suffix = src.suffix.lower()
+    if suffix == ".docx":
+        html = _docx_to_html(ctx, src)
+    elif suffix in (".xlsx", ".csv"):
+        html = _sheet_to_html(ctx, src)
+    elif suffix == ".md":
+        try:
+            import markdown as md_mod  # type: ignore
+
+            html = md_mod.markdown(src.read_text(encoding="utf-8", errors="replace"), extensions=["tables", "fenced_code"])
+            html = persian_pdf.direction_html(html)
+        except Exception:
+            html = persian_pdf.text_to_html(src.read_text(encoding="utf-8", errors="replace"))
+    else:
+        html = persian_pdf.text_to_html(src.read_text(encoding="utf-8", errors="replace"))
+    doc = fitz.open()
+    try:
+        pages = persian_pdf.flow_html_pages(doc, html, size_pt=11)
+        doc.set_metadata({"title": src.stem, "producer": "WinGenius", "creator": "WinGenius"})
+        persian_pdf.save_pdf(doc, dest)
+    finally:
+        doc.close()
+    return RunResult(
+        message=ctx.M(f"تبدیل داخلی انجام شد ({pages} صفحه). برای حفظ دقیق چیدمان اصلی، Word یا LibreOffice نصب کنید.",
+                      f"Built-in conversion done ({pages} page(s)). Install Word or LibreOffice for pixel-exact layout."),
+        outputs=[str(dest)], open_target=str(dest),
+    )
 
 
 # ------------------------------------------------------------------ pdf tools done

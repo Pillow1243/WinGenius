@@ -398,6 +398,32 @@ def csv_profile(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
 
 
 # ---------------------------------------------------------------------- cleanup
+def _persian_quotes(text: str) -> str:
+    """Straight/curly double quotes around Persian text → paired «…» guillemets.
+
+    Quotes are converted *in pairs* per paragraph, so an odd quote (an inch mark, a
+    stray character) is left untouched instead of producing a lone «.
+    """
+    from ..core import persian_pdf
+
+    out: List[str] = []
+    for paragraph in text.split("\n"):
+        if not persian_pdf.has_persian(paragraph):
+            out.append(paragraph)
+            continue
+        paragraph = paragraph.replace("“", '"').replace("”", '"').replace("„", '"')
+        if paragraph.count('"') >= 2 and paragraph.count('"') % 2 == 0:
+            parts = paragraph.split('"')
+            rebuilt = parts[0]
+            for index, part in enumerate(parts[1:], start=1):
+                rebuilt += ("«" if index % 2 == 1 else "»") + part
+            paragraph = rebuilt
+            paragraph = re.sub(r"«\s+", "«", paragraph)
+            paragraph = re.sub(r"\s+»", "»", paragraph)
+        out.append(paragraph)
+    return "\n".join(out)
+
+
 @tool(
     id="text_cleanup", category="convert", name="پاکسازی متن", name_en="Clean up text",
     desc="فاصله‌های اضافی، خط‌های تکراری، نیم‌فاصله و نقل‌قول‌های نادرست را درست می‌کند.",
@@ -413,11 +439,13 @@ def csv_profile(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
 def text_cleanup(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     text = str(v.get("text") or "")
     before = len(text)
-    text = text.replace("\u064a", "ی").replace("\u0643", "ک")
+    from ..core import persian_pdf
+
+    text = persian_pdf.normalize_persian(text) if persian_pdf.has_persian(text) else text
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r" *\n *", "\n", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
-    text = text.replace("“", "«").replace("”", "»").replace('"', "«", 1)
+    text = _persian_quotes(text)
     if int(v.get("dedupe") or 0):
         seen: set = set()
         unique: List[str] = []

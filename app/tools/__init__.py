@@ -47,6 +47,7 @@ _MODULES = (
     "auto_tools",
     "flow_tools",
     "pdf_extra3",
+    "pdf_persian",
     "image_extra3",
     "security_extra2",
     "network_extra2",

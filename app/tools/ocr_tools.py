@@ -155,35 +155,24 @@ def pdf_ocr(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
 
 
 def _write_text_pdf(ctx: RunContext, dest: Path, title: str, pages: List[str]) -> None:
-    """Build a simple, selectable PDF from OCR output (keeps the text searchable)."""
-    from reportlab.lib.pagesizes import A4
-    from reportlab.pdfgen import canvas
+    """Build a selectable, searchable PDF from OCR output — Persian shaped correctly."""
+    from ..core import persian_pdf
 
-    doc = canvas.Canvas(str(dest), pagesize=A4)
-    width, height = A4
-    doc.setTitle(title)
+    try:
+        import pymupdf as fitz  # type: ignore
+    except Exception:
+        fitz = require("fitz", "PyMuPDF", ctx)
+    esc = persian_pdf.html_escape
+    doc = fitz.open()
     for page_index, text in enumerate(pages, start=1):
-        doc.setFont("Helvetica", 10)
-        y = height - 50
-        doc.drawString(40, y, f"{title} - {ctx.M('صفحه', 'page')} {page_index}")
-        y -= 24
-        for line in (text or "").splitlines():
-            while len(line) > 95:
-                doc.drawString(40, y, line[:95])
-                line = line[95:]
-                y -= 14
-                if y < 50:
-                    doc.showPage()
-                    doc.setFont("Helvetica", 10)
-                    y = height - 50
-            doc.drawString(40, y, line)
-            y -= 14
-            if y < 50:
-                doc.showPage()
-                doc.setFont("Helvetica", 10)
-                y = height - 50
-        doc.showPage()
-    doc.save()
+        label = f"{esc(title)} — {esc(ctx.M('صفحه', 'page'))} {page_index}"
+        header = (f'<p dir="{"rtl" if persian_pdf.is_rtl(title) else "ltr"}" '
+                  f'style="color:#777; font-size:8.5pt; margin-bottom:10pt">{label}</p>')
+        body = persian_pdf.text_to_html(persian_pdf.normalize_persian(text or ""), size_pt=10.5)
+        persian_pdf.flow_html_pages(doc, header + body, size_pt=10.5)
+    doc.set_metadata({"title": title, "producer": "WinGenius OCR", "creator": "WinGenius"})
+    persian_pdf.save_pdf(doc, dest)
+    doc.close()
 
 
 @tool(

@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import difflib
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
+from ..core import persian_pdf
 from ..core.registry import tool
 from ..core.spec import (
     K_BOOL, K_CHOICE, K_DIR, K_FILE, K_FILES, K_INT, K_MULTILINE, K_SAVE, K_TEXT,
@@ -405,43 +407,51 @@ def pdf_extract_images(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     ],
 )
 def pdf_to_markdown(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
-    fitz = _fitz(ctx)
+    from .pdf_tools import _open_doc
+
     source = first_file(v, "src", ctx)
-    doc = fitz.open(str(source))
+    doc = _open_doc(ctx, source)
     lines: List[str] = [f"# {source.stem}", ""]
-    for page_index in range(doc.page_count):
-        ctx.progress(page_index + 1, doc.page_count, str(page_index + 1))
-        blocks = doc[page_index].get_text("dict").get("blocks", [])
-        sizes: List[float] = []
-        for block in blocks:
-            for line in block.get("lines", []):
-                for span in line.get("spans", []):
-                    if span.get("text", "").strip():
-                        sizes.append(float(span.get("size", 10)))
-        body = sorted(sizes)[len(sizes) // 2] if sizes else 10.0
-        for block in blocks:
-            for line in block.get("lines", []):
-                parts: List[str] = []
-                biggest = 0.0
-                for span in line.get("spans", []):
-                    text = span.get("text", "")
-                    if text.strip():
-                        biggest = max(biggest, float(span.get("size", 10)))
-                        parts.append(text)
-                text = "".join(parts).strip()
-                if not text:
-                    continue
-                if biggest >= body * 1.6:
-                    lines.append(f"## {text}")
-                elif biggest >= body * 1.25:
-                    lines.append(f"### {text}")
-                elif text.startswith(("•", "-", "*")):
-                    lines.append(f"- {text.lstrip('•-* ').strip()}")
-                else:
-                    lines.append(text)
-        lines.append("")
-    doc.close()
+    try:
+        for page_index in range(doc.page_count):
+            ctx.progress(page_index + 1, doc.page_count, str(page_index + 1))
+            content = persian_pdf.extract_page(doc, page_index, tables=True, images=False)
+            for item in content.items:
+                if isinstance(item, persian_pdf.Paragraph):
+                    text = item.text.strip()
+                    if not text:
+                        continue
+                    pieces = []
+                    for span in item.spans:
+                        chunk = span.text
+                        if span.bold and chunk.strip() and not item.heading:
+                            chunk = f"**{chunk.strip()}** " if chunk.endswith(" ") else f"**{chunk.strip()}**"
+                        pieces.append(chunk)
+                    text = "".join(pieces).strip()
+                    if item.heading:
+                        lines.append(f"{'#' * (item.heading + 1)} {text}")
+                        lines.append("")
+                    elif item.bullet:
+                        lines.append(f"- {text}")
+                    else:
+                        if lines and lines[-1].startswith("- "):
+                            lines.append("")
+                        lines.append(text)
+                        lines.append("")
+                elif isinstance(item, persian_pdf.Table) and item.rows:
+                    width = max(len(row) for row in item.rows)
+                    rows = [[cell.replace("|", "\\|").replace("\n", " ") for cell in row] + [""] * (width - len(row))
+                            for row in item.rows]
+                    lines.append("| " + " | ".join(rows[0]) + " |")
+                    lines.append("|" + "|".join([" --- "] * width) + "|")
+                    for row in rows[1:]:
+                        lines.append("| " + " | ".join(row) + " |")
+                    lines.append("")
+            lines.append("")
+    finally:
+        doc.close()
     markdown = "\n".join(lines)
+    markdown = re.sub(r"\n{3,}", "\n\n", markdown).rstrip() + "\n"
     dest = save_target(ctx, str(v.get("out") or ""), f"{source.stem}.md")
     dest.write_text(markdown, encoding="utf-8")
     return RunResult(message=ctx.M(f"Markdown ساخته شد ({len(markdown):,} کاراکتر).",
@@ -472,7 +482,7 @@ def pdf_compare(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
             raise ToolError(ctx.M(f"این یک پوشه است، نه PDF: {path}",
                                   f"That is a folder, not a PDF: {path}"))
     try:
-        first_doc, second_doc = fitz.open(str(left)), fitz.open(str(right))
+        first_doc, second_doc = persian_pdf.open_repaired(left), persian_pdf.open_repaired(right)
     except Exception as exc:                      # broken/encrypted/not a PDF
         raise ToolError(ctx.M(f"PDF باز نشد: {exc}", f"Could not open the PDF: {exc}"))
     pages = max(first_doc.page_count, second_doc.page_count)
@@ -481,8 +491,8 @@ def pdf_compare(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     changed = 0
     for index in range(pages):
         ctx.progress(index + 1, pages, str(index + 1))
-        first_text = first_doc[index].get_text() if index < first_doc.page_count else ""
-        second_text = second_doc[index].get_text() if index < second_doc.page_count else ""
+        first_text = persian_pdf.extract_page(first_doc, index, tables=False).text if index < first_doc.page_count else ""
+        second_text = persian_pdf.extract_page(second_doc, index, tables=False).text if index < second_doc.page_count else ""
         if first_text.strip() == second_text.strip():
             continue
         changed += 1
