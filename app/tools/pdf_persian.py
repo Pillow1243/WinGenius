@@ -38,7 +38,7 @@ def _fitz(ctx: RunContext):
           "(Acrobat، Chrome، Word) درست کار کند؛ حروف چسبان و نویسه‌های به‌هم‌ریخته (ѫ ѱ ӳ) از بین می‌روند."),
     desc_en=("Repairs the font maps of a PDF so copying, searching and extracting Persian text works in every "
              "viewer (Acrobat, Chrome, Word) — joined letters and garbage glyphs (ѫ ѱ ӳ) are gone."),
-    icon="text", order=23,
+    icon="wrench", order=23,
     keywords=("persian pdf", "copy paste", "garbled", "tounicode", "متن فارسی", "کپی", "به هم ریخته",
               "جستجو", "حروف جدا", "تعمیر"),
     fields=[
@@ -107,7 +107,7 @@ def pdf_fix_persian(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
           "به یک PDF تمیز تبدیل می‌کند — بدون نیاز به Word."),
     desc_en=("Turns plain text or Markdown into a clean PDF with the bundled Vazirmatn font, automatic RTL, "
              "headings, lists and tables — no Word required."),
-    icon="pdf", order=24,
+    icon="font", order=24,
     keywords=("text to pdf", "markdown to pdf", "persian pdf", "متن به pdf", "مارک داون", "فارسی", "وزیر"),
     fields=[
         Field("source", K_CHOICE, "ورودی", "Input", default="text",

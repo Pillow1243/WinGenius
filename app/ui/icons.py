@@ -977,7 +977,68 @@ def icon_bug(p, r, c, w):
                    QPointF(r.right() - r.width() * 0.14, r.top() + r.height() * ratio))
 
 
+def icon_persian(p, r, c, w):
+    """Right-to-left script mark: a «ب»-style bowl with its dot and an RTL arrow above."""
+    bowl = QPainterPath()
+    x0, x1 = r.left() + r.width() * 0.14, r.right() - r.width() * 0.14
+    top_y, base_y = r.top() + r.height() * 0.5, r.bottom() - r.height() * 0.3
+    bowl.moveTo(x1, top_y)
+    bowl.lineTo(x1, base_y - r.height() * 0.08)
+    bowl.cubicTo(x1, base_y + r.height() * 0.06, x1 - r.width() * 0.08, base_y + r.height() * 0.08,
+                 x1 - r.width() * 0.16, base_y + r.height() * 0.08)
+    bowl.lineTo(x0 + r.width() * 0.16, base_y + r.height() * 0.08)
+    bowl.cubicTo(x0 + r.width() * 0.06, base_y + r.height() * 0.08, x0, base_y + r.height() * 0.02, x0, base_y - r.height() * 0.08)
+    bowl.lineTo(x0, base_y - r.height() * 0.18)
+    p.drawPath(bowl)
+    p.setBrush(c)
+    p.drawEllipse(QPointF(r.center().x(), r.bottom() - r.height() * 0.08), w * 0.7, w * 0.7)
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    # direction arrow (right → left), the essence of RTL text handling
+    y = r.top() + r.height() * 0.24
+    p.drawLine(QPointF(x1 - r.width() * 0.06, y), QPointF(x0 + r.width() * 0.1, y))
+    p.drawLine(QPointF(x0 + r.width() * 0.1, y), QPointF(x0 + r.width() * 0.26, y - r.height() * 0.14))
+    p.drawLine(QPointF(x0 + r.width() * 0.1, y), QPointF(x0 + r.width() * 0.26, y + r.height() * 0.14))
+
+
+def icon_wrench(p, r, c, w):
+    """Repair: open-end wrench, head top-right, handle to bottom-left."""
+    p.save()
+    p.translate(r.center())
+    p.rotate(45)
+    s = r.width()
+    head = QRectF(-s * 0.21, -s * 0.46, s * 0.42, s * 0.42)
+    path = QPainterPath()
+    path.arcMoveTo(head, 125)
+    path.arcTo(head, 125, 290)                     # ring with the jaw opening on top
+    jaw_y = head.top() + s * 0.1
+    path.lineTo(s * 0.08, jaw_y)
+    path.lineTo(s * 0.08, head.top() + s * 0.2)
+    path.lineTo(-s * 0.08, head.top() + s * 0.2)
+    path.lineTo(-s * 0.08, jaw_y)
+    path.closeSubpath()
+    p.drawPath(path)
+    handle = QRectF(-s * 0.085, -s * 0.1, s * 0.17, s * 0.54)
+    p.drawRoundedRect(handle, s * 0.085, s * 0.085)
+    p.restore()
+
+
+def icon_font(p, r, c, w):
+    """Typography: a large A with a small a — the text_to_pdf / font tools."""
+    left, right = r.left() + r.width() * 0.12, r.left() + r.width() * 0.56
+    top, bottom = r.top() + r.height() * 0.16, r.bottom() - r.height() * 0.14
+    apex = QPointF((left + right) / 2, top)
+    p.drawLine(QPointF(left, bottom), apex)
+    p.drawLine(apex, QPointF(right, bottom))
+    p.drawLine(QPointF(left + (right - left) * 0.22, top + (bottom - top) * 0.64),
+               QPointF(right - (right - left) * 0.22, top + (bottom - top) * 0.64))
+    small = QRectF(r.right() - r.width() * 0.4, bottom - r.height() * 0.36, r.width() * 0.28, r.height() * 0.3)
+    p.drawEllipse(small.adjusted(0, small.height() * 0.1, 0, 0))
+    p.drawLine(QPointF(small.right(), small.top() + small.height() * 0.1), QPointF(small.right(), small.bottom()))
+
+
+
 ICONS: Dict[str, Callable] = {
+    "persian": icon_persian, "wrench": icon_wrench, "font": icon_font,
     "pdf": icon_pdf, "doc": icon_doc, "image": icon_image, "film": icon_film,
     "music": icon_music, "folder": icon_folder, "zip": icon_zip, "hash": icon_hash,
     "shield": icon_shield, "key": icon_key, "lock": icon_lock, "globe": icon_globe,

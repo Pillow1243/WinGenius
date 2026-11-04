@@ -76,9 +76,10 @@ def render(size: int, *, family: str, margin_ratio: float = 0.0) -> QImage:
     inset = s * 0.004
     p.drawRoundedRect(tile.adjusted(inset, inset, -inset, -inset), radius - inset, radius - inset)
 
-    # ---- the radial ring of the launcher
+    # ---- the radial ring of the launcher (simplified geometry for taskbar sizes)
+    small = size <= 48
     cx, cy = tile.center().x(), tile.center().y() + tile.height() * 0.015
-    ring_r = tile.width() * 0.335
+    ring_r = tile.width() * (0.385 if small else 0.335)
     ring_pen = QPen(QColor(255, 255, 255, 46), s * 0.012)
     ring_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
     p.setPen(ring_pen)
@@ -88,7 +89,7 @@ def render(size: int, *, family: str, margin_ratio: float = 0.0) -> QImage:
     for i in range(8):
         ang = -math.pi / 2 + i * math.pi / 4
         x, y = cx + ring_r * math.cos(ang), cy + ring_r * math.sin(ang)
-        node_r = tile.width() * (0.042 if i % 2 == 0 else 0.03)
+        node_r = tile.width() * ((0.042 if i % 2 == 0 else 0.03) * (0.8 if small else 1.0))
         halo = QRadialGradient(QPointF(x, y), node_r * 2.6)
         c = QColor(accents[i])
         halo.setColorAt(0.0, QColor(c.red(), c.green(), c.blue(), 110))
@@ -100,7 +101,7 @@ def render(size: int, *, family: str, margin_ratio: float = 0.0) -> QImage:
         p.drawEllipse(QPointF(x, y), node_r, node_r)
 
     # ---- centre disc
-    disc_r = tile.width() * 0.235
+    disc_r = tile.width() * (0.3 if small else 0.235)
     disc = QRadialGradient(QPointF(cx - disc_r * 0.3, cy - disc_r * 0.4), disc_r * 1.6)
     disc.setColorAt(0.0, QColor("#1E2A58"))
     disc.setColorAt(1.0, QColor("#0A0E24"))
@@ -137,6 +138,9 @@ def render(size: int, *, family: str, margin_ratio: float = 0.0) -> QImage:
     p.drawPath(path)
 
     # ---- genius spark (four-point star) at the top-right of the monogram
+    if size <= 24:
+        p.end()
+        return img.scaled(size, size, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
     sx, sy = cx + tw * 0.56, cy - cap * 0.78
     spark_r = disc_r * 0.26
     spark = QPainterPath()

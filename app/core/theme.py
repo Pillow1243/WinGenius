@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict
 
 from PySide6.QtGui import QColor, QFont, QFontDatabase
@@ -115,11 +116,48 @@ def build_palette(theme_key: str, accent: str) -> Palette:
 
 
 # ---------------------------------------------------------------------- fonts
+FONT_FAMILY = "Vazirmatn"
+MONO_FAMILIES = ("Cascadia Code", "Cascadia Mono", "Consolas", "JetBrains Mono", "Fira Code",
+                 "DejaVu Sans Mono", "Courier New")
+_FONT_FILES = ("Vazirmatn-Regular.ttf", "Vazirmatn-Medium.ttf", "Vazirmatn-SemiBold.ttf",
+               "Vazirmatn-Bold.ttf", "Vazirmatn-ExtraBold.ttf")
+_FONTS_READY = False
+
+# Typographic scale (pt). One source of truth for QSS and the custom painters.
+TYPE_SCALE: Dict[str, float] = {
+    "display": 18.0, "h1": 15.0, "h2": 12.5, "title": 11.5, "body": 10.5, "label": 9.5,
+    "small": 9.0, "caption": 8.5, "micro": 7.6,
+}
+
+
+def register_fonts() -> str:
+    """Load the bundled Vazirmatn family into Qt (idempotent) and return the UI family.
+
+    Vazirmatn ships with the app so Persian text renders with the same metrics on
+    every machine — no more Tahoma fallbacks, mismatched digits or clipped ascenders.
+    """
+    global _FONTS_READY
+    if _FONTS_READY:
+        return ui_font_family()
+    _FONTS_READY = True
+    try:
+        from .paths import resource_path
+        folder = resource_path("fonts")
+        for name in _FONT_FILES:
+            path = folder / name
+            if path.exists():
+                QFontDatabase.addApplicationFont(str(path))
+        QFont.insertSubstitutions(FONT_FAMILY, ["Segoe UI", "Tahoma", "Noto Sans Arabic", "DejaVu Sans"])
+    except Exception:
+        pass
+    return ui_font_family()
+
+
 def ui_font_family() -> str:
-    """Pick the best available UI font (Persian aware)."""
+    """Pick the best available UI font (Persian aware; the bundled family wins)."""
     available = set(QFontDatabase.families())
     for candidate in (
-        "Vazirmatn", "Vazir", "IRANSansX", "IRANSans", "Noto Sans Arabic",
+        FONT_FAMILY, "Vazir", "IRANSansX", "IRANSans", "Noto Sans Arabic",
         "Segoe UI Variable Text", "Segoe UI", "Tahoma", "DejaVu Sans",
     ):
         if candidate in available:
@@ -127,26 +165,94 @@ def ui_font_family() -> str:
     return QFont().family()
 
 
+def mono_font_family() -> str:
+    available = set(QFontDatabase.families())
+    for candidate in MONO_FAMILIES:
+        if candidate in available:
+            return candidate
+    return QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont).family()
+
+
 def make_font(size: float = 10, weight: int = 400, family: str | None = None, letter_spacing: float = 0) -> QFont:
     font = QFont(family or ui_font_family())
     font.setPointSizeF(size)
     font.setWeight(QFont.Weight(weight))
+    font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
+    font.setHintingPreference(QFont.HintingPreference.PreferNoHinting if size >= 12
+                              else QFont.HintingPreference.PreferVerticalHinting)
     if letter_spacing:
         font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, letter_spacing)
     return font
 
 
+def scaled(token: str) -> float:
+    """Size in pt for a TYPE_SCALE token."""
+    return TYPE_SCALE.get(token, TYPE_SCALE["body"])
+
+
 # ----------------------------------------------------------------- stylesheet
+def _svg_uri(svg: str) -> str:
+    """Write an SVG asset to the cache folder and return a QSS-friendly `url(...)` path.
+
+    Qt style sheets cannot read ``data:`` URIs, so the few vector glyphs the sheet
+    needs (check mark, chevron, radio dot) are materialised once per colour.
+    """
+    import hashlib
+    import tempfile
+
+    digest = hashlib.sha1(svg.encode("utf-8")).hexdigest()[:16]
+    try:
+        from .paths import cache_dir
+        folder = cache_dir() / "qss"
+    except Exception:
+        folder = Path(tempfile.gettempdir()) / "wingenius-qss"
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / f"{digest}.svg"
+        if not path.exists():
+            path.write_text(svg.strip(), encoding="utf-8")
+        return path.as_posix()
+    except Exception:
+        return ""
+
+
+def _check_svg(color: str) -> str:
+    return _svg_uri(
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18">'
+        f'<path d="M4 9.4l3.1 3.1L14 5.9" fill="none" stroke="{color}" stroke-width="2.2" '
+        f'stroke-linecap="round" stroke-linejoin="round"/></svg>'
+    )
+
+
+def _dot_svg(color: str) -> str:
+    return _svg_uri(
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18">'
+        f'<circle cx="9" cy="9" r="3.4" fill="{color}"/></svg>'
+    )
+
+
+def _chevron_svg(color: str) -> str:
+    return _svg_uri(
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16">'
+        f'<path d="M4 6.2l4 4 4-4" fill="none" stroke="{color}" stroke-width="1.8" '
+        f'stroke-linecap="round" stroke-linejoin="round"/></svg>'
+    )
+
+
 def stylesheet(p: Palette) -> str:
     dim = p.text_dim
+    family = ui_font_family()
+    mono = mono_font_family()
+    t = TYPE_SCALE
+    on_accent = "#FFFFFF"
     return f"""
 * {{
-    font-family: "{ui_font_family()}";
+    font-family: "{family}";
     outline: 0;
 }}
 QWidget {{
     color: {p.text};
-    font-size: 10.5pt;
+    font-size: {t["body"]}pt;
 }}
 QWidget#Root {{
     background: transparent;
@@ -155,34 +261,49 @@ QWidget#TitleBar {{
     background: transparent;
 }}
 QLabel#AppTitle {{
-    font-size: 12pt;
+    font-size: {t["title"]}pt;
     font-weight: 700;
     color: {p.text};
+    letter-spacing: 0.2px;
 }}
 QLabel#AppSubtitle {{
-    font-size: 8.5pt;
+    font-size: {t["caption"]}pt;
     color: {dim};
 }}
 QLabel#Hint {{
     color: {dim};
-    font-size: 9.5pt;
+    font-size: {t["label"]}pt;
 }}
 QLabel#SectionTitle {{
     color: {dim};
-    font-size: 8.5pt;
+    font-size: {t["caption"]}pt;
     font-weight: 700;
+    letter-spacing: 0.6px;
 }}
 QLabel#H1 {{
-    font-size: 15pt;
+    font-size: {t["h1"]}pt;
     font-weight: 700;
+}}
+QLabel#H2 {{
+    font-size: {t["h2"]}pt;
+    font-weight: 600;
 }}
 QLabel#FieldLabel {{
     color: {dim};
-    font-size: 9pt;
+    font-size: {t["label"]}pt;
+    font-weight: 500;
 }}
 QLabel#FieldHelp {{
     color: {alpha(dim, 0.85)};
-    font-size: 8pt;
+    font-size: {t["caption"]}pt;
+}}
+QLabel#Badge {{
+    background: {alpha(p.accent, 0.18)};
+    color: {p.accent};
+    border-radius: 9px;
+    padding: 1px 7px;
+    font-size: {t["micro"]}pt;
+    font-weight: 700;
 }}
 
 /* ------------------------------------------------------------- inputs */
@@ -190,14 +311,15 @@ QScrollArea, QScrollArea > QWidget > QWidget {{
     background: transparent;
     border: none;
 }}
-QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QPlainTextEdit, QTextEdit, QListWidget {{
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QPlainTextEdit, QTextEdit, QListWidget, QTreeWidget, QTableWidget {{
     background: {alpha(p.panel_alt, 0.92)};
     border: 1px solid {p.border};
     border-radius: 10px;
     padding: 7px 10px;
     selection-background-color: {p.accent};
-    selection-color: #FFFFFF;
+    selection-color: {on_accent};
     color: {p.text};
+    placeholder-text-color: {alpha(dim, 0.75)};
 }}
 QLineEdit:hover, QComboBox:hover, QSpinBox:hover, QDoubleSpinBox:hover,
 QPlainTextEdit:hover, QTextEdit:hover {{
@@ -208,13 +330,27 @@ QPlainTextEdit:focus, QTextEdit:focus, QListWidget:focus {{
     border: 1px solid {p.accent};
     background: {alpha(p.panel_alt, 1.0)};
 }}
-QLineEdit:disabled, QComboBox:disabled {{
+QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled {{
     color: {alpha(dim, 0.6)};
     border-color: {alpha(p.border, 0.5)};
+    background: {alpha(p.panel_alt, 0.45)};
+}}
+QComboBox {{
+    padding-right: 28px;
 }}
 QComboBox::drop-down {{
     border: none;
-    width: 22px;
+    width: 26px;
+    subcontrol-origin: padding;
+    subcontrol-position: center right;
+}}
+QComboBox::down-arrow {{
+    image: url("{_chevron_svg(dim)}");
+    width: 14px;
+    height: 14px;
+}}
+QComboBox::down-arrow:hover, QComboBox::down-arrow:on {{
+    image: url("{_chevron_svg(p.accent)}");
 }}
 QComboBox QAbstractItemView {{
     background: {p.panel};
@@ -222,8 +358,14 @@ QComboBox QAbstractItemView {{
     border-radius: 10px;
     padding: 4px;
     selection-background-color: {alpha(p.accent, 0.85)};
+    selection-color: {on_accent};
     color: {p.text};
     outline: 0;
+}}
+QComboBox QAbstractItemView::item {{
+    min-height: 26px;
+    padding: 2px 8px;
+    border-radius: 6px;
 }}
 QSpinBox::up-button, QSpinBox::down-button,
 QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {{
@@ -231,6 +373,30 @@ QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {{
     width: 16px;
     border-radius: 4px;
     margin: 1px 3px;
+}}
+QSpinBox::up-button:hover, QSpinBox::down-button:hover,
+QDoubleSpinBox::up-button:hover, QDoubleSpinBox::down-button:hover {{
+    background: {alpha(p.accent, 0.4)};
+}}
+QListWidget::item, QTreeWidget::item {{
+    padding: 5px 8px;
+    border-radius: 7px;
+}}
+QListWidget::item:hover, QTreeWidget::item:hover {{
+    background: {alpha(p.accent, 0.10)};
+}}
+QListWidget::item:selected, QTreeWidget::item:selected {{
+    background: {alpha(p.accent, 0.26)};
+    color: {p.text};
+}}
+QHeaderView::section {{
+    background: {alpha(p.panel_alt, 0.9)};
+    color: {dim};
+    border: none;
+    border-bottom: 1px solid {p.border};
+    padding: 6px 8px;
+    font-size: {t["caption"]}pt;
+    font-weight: 700;
 }}
 
 /* ------------------------------------------------------------ buttons */
@@ -249,6 +415,9 @@ QPushButton:hover {{
 QPushButton:pressed {{
     background: {alpha(p.accent, 0.28)};
 }}
+QPushButton:focus {{
+    border-color: {alpha(p.accent, 0.9)};
+}}
 QPushButton:disabled {{
     color: {alpha(dim, 0.55)};
     border-color: {alpha(p.border, 0.5)};
@@ -258,19 +427,23 @@ QPushButton#Primary {{
     background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
         stop:0 {p.accent}, stop:1 {p.accent2});
     border: none;
-    color: #FFFFFF;
+    color: {on_accent};
     padding: 10px 22px;
     border-radius: 12px;
-    font-size: 10.5pt;
+    font-size: {t["body"]}pt;
     font-weight: 700;
 }}
 QPushButton#Primary:hover {{
     background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
         stop:0 {_mix(p.accent, "#FFFFFF", 0.14)}, stop:1 {_mix(p.accent2, "#FFFFFF", 0.14)});
 }}
+QPushButton#Primary:pressed {{
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+        stop:0 {_mix(p.accent, "#000000", 0.12)}, stop:1 {_mix(p.accent2, "#000000", 0.12)});
+}}
 QPushButton#Primary:disabled {{
     background: {alpha(p.accent, 0.35)};
-    color: {alpha("#FFFFFF", 0.7)};
+    color: {alpha(on_accent, 0.7)};
 }}
 QPushButton#Danger {{
     background: {alpha(p.danger, 0.16)};
@@ -296,7 +469,7 @@ QPushButton#IconButton {{
     border: none;
     border-radius: 9px;
     padding: 4px;
-    font-size: 11pt;
+    font-size: {t["title"]}pt;
     color: {dim};
 }}
 QPushButton#IconButton:hover {{
@@ -308,7 +481,7 @@ QPushButton#Pill {{
     border: 1px solid {p.border};
     border-radius: 11px;
     padding: 4px 12px;
-    font-size: 8.8pt;
+    font-size: {t["small"]}pt;
     color: {dim};
     font-weight: 600;
 }}
@@ -321,26 +494,89 @@ QPushButton#Pill:checked {{
     border-color: {p.accent};
     background: {alpha(p.accent, 0.22)};
 }}
+QToolButton {{
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 9px;
+    padding: 5px;
+    color: {dim};
+}}
+QToolButton:hover {{
+    background: {alpha(p.accent, 0.14)};
+    color: {p.text};
+}}
 
-/* ----------------------------------------------------------- checkboxes */
-QCheckBox {{
+/* ------------------------------------------------- checkboxes & radios */
+QCheckBox, QRadioButton {{
     spacing: 8px;
     color: {p.text};
 }}
-QCheckBox::indicator {{
+QCheckBox::indicator, QRadioButton::indicator {{
     width: 18px;
     height: 18px;
     border-radius: 6px;
     border: 1px solid {p.border};
     background: {alpha(p.panel_alt, 0.9)};
 }}
-QCheckBox::indicator:hover {{
+QRadioButton::indicator {{
+    border-radius: 9px;
+}}
+QCheckBox::indicator:hover, QRadioButton::indicator:hover {{
     border-color: {alpha(p.accent, 0.8)};
 }}
 QCheckBox::indicator:checked {{
     background: {p.accent};
     border-color: {p.accent};
-    image: none;
+    image: url("{_check_svg(on_accent)}");
+}}
+QCheckBox::indicator:checked:disabled {{
+    background: {alpha(p.accent, 0.45)};
+    border-color: transparent;
+}}
+QRadioButton::indicator:checked {{
+    background: {p.accent};
+    border-color: {p.accent};
+    image: url("{_dot_svg(on_accent)}");
+}}
+
+/* ------------------------------------------------------------- sliders */
+QSlider::groove:horizontal {{
+    height: 6px;
+    border-radius: 3px;
+    background: {alpha(p.border, 0.7)};
+}}
+QSlider::sub-page:horizontal {{
+    border-radius: 3px;
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {p.accent}, stop:1 {p.accent2});
+}}
+QSlider::handle:horizontal {{
+    width: 16px;
+    height: 16px;
+    margin: -5px 0;
+    border-radius: 8px;
+    background: {on_accent if p.dark else p.panel};
+    border: 2px solid {p.accent};
+}}
+
+/* ---------------------------------------------------------------- tabs */
+QTabWidget::pane {{
+    border: 1px solid {p.border};
+    border-radius: 12px;
+    top: -1px;
+}}
+QTabBar::tab {{
+    background: transparent;
+    color: {dim};
+    padding: 7px 14px;
+    border-bottom: 2px solid transparent;
+    font-weight: 600;
+}}
+QTabBar::tab:hover {{
+    color: {p.text};
+}}
+QTabBar::tab:selected {{
+    color: {p.text};
+    border-bottom: 2px solid {p.accent};
 }}
 
 /* -------------------------------------------------------------- progress */
@@ -380,11 +616,47 @@ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
 QScrollBar:horizontal {{
     background: transparent;
     height: 10px;
+    margin: 2px;
 }}
 QScrollBar::handle:horizontal {{
     background: {alpha(dim, 0.45)};
     border-radius: 5px;
     min-width: 32px;
+}}
+QScrollBar::handle:horizontal:hover {{
+    background: {alpha(p.accent, 0.75)};
+}}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal,
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
+    background: none;
+    width: 0;
+}}
+
+/* ---------------------------------------------------------------- menus */
+QMenu {{
+    background: {alpha(p.panel, 0.985)};
+    border: 1px solid {p.border};
+    border-radius: 12px;
+    padding: 6px;
+}}
+QMenu::item {{
+    padding: 7px 28px 7px 14px;
+    border-radius: 8px;
+    color: {p.text};
+}}
+QMenu::item:selected {{
+    background: {alpha(p.accent, 0.2)};
+}}
+QMenu::item:disabled {{
+    color: {alpha(dim, 0.55)};
+}}
+QMenu::separator {{
+    height: 1px;
+    background: {alpha(p.border, 0.9)};
+    margin: 5px 10px;
+}}
+QMenu::icon {{
+    margin-left: 6px;
 }}
 
 /* ---------------------------------------------------------------- misc */
@@ -394,7 +666,7 @@ QToolTip {{
     border: 1px solid {p.border};
     border-radius: 8px;
     padding: 6px 10px;
-    font-size: 9pt;
+    font-size: {t["small"]}pt;
 }}
 QFrame#Sheet {{
     background: {alpha(p.panel, 0.985)};
@@ -406,15 +678,24 @@ QFrame#Card {{
     border: 1px solid {p.border};
     border-radius: 16px;
 }}
+QFrame#Card:hover {{
+    border-color: {alpha(p.accent, 0.45)};
+}}
 QFrame#Divider {{
     background: {alpha(p.border, 0.8)};
     max-height: 1px;
     border: none;
 }}
-QTextEdit#Log {{
-    font-family: "Consolas", "Cascadia Code", monospace;
-    font-size: 8.5pt;
+QTextEdit#Log, QPlainTextEdit#Log, QPlainTextEdit#Code, QLineEdit#Code {{
+    font-family: "{mono}";
+    font-size: {t["caption"]}pt;
     color: {dim};
     background: {alpha(p.bg2, 0.75)};
+}}
+QMessageBox, QDialog {{
+    background: {p.panel};
+}}
+QMessageBox QLabel {{
+    color: {p.text};
 }}
 """

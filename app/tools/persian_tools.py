@@ -64,7 +64,7 @@ def _emit(ctx: RunContext, v: Dict[str, Any], text: str, suffix: str = "_fixed")
     id="persian_fix", category="convert", name="اصلاح متن فارسی", name_en="Fix Persian text",
     desc="«ي/ك» عربی را به «ی/ک» تبدیل، نیم‌فاصله را مرتب و فاصله‌های اضافی و نویسه‌های پنهان را پاک می‌کند.",
     desc_en="Fix Arabic ي/ك to Persian ی/ک, clean zero-width characters, spacing and hidden marks.",
-    icon="text", order=200,
+    icon="persian", order=200,
     keywords=("فارسی", "اصلاح متن", "نیم فاصله", "persian fix", "arabic letters", "ی ك"),
     fields=[
         Field("source", K_CHOICE, "ورودی", "Input", default="text",
