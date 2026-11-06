@@ -164,7 +164,9 @@ class AutomationPanel(OverlaySheet):
         layout.addLayout(buttons)
 
         self._card_layout.insertWidget(2, form)
-        self.body_layout.addWidget(label("قانون‌های فعال", "SectionTitle"))
+        # kept as an attribute so retranslate() can update it (audit F-15)
+        self._rules_title = label("قانون‌های فعال", "SectionTitle")
+        self.body_layout.addWidget(self._rules_title)
 
     def _build_actions(self) -> None:
         self._scan_button = self.add_footer_button("بررسی فوری پوشه‌ها", self.scan_now)
@@ -185,6 +187,8 @@ class AutomationPanel(OverlaySheet):
         self._clear_button.setText("فرم تازه" if fa else "Reset form")
         self._scan_button.setText("بررسی فوری پوشه‌ها" if fa else "Scan now")
         self._close_footer.setText("بستن" if fa else "Close")
+        if getattr(self, "_rules_title", None) is not None:
+            self._rules_title.setText("قانون‌های فعال" if fa else "Active rules")
         self._recursive_check.setText("زیرپوشه‌ها" if fa else "Subfolders")
         self._enabled_check.setText("فعال" if fa else "Enabled")
         if self._action_combo.count() >= 2:

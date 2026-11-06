@@ -206,10 +206,10 @@ class JobsDrawer(QWidget):
         self._clear.clicked.connect(self._clear_finished)
         footer.addWidget(self._clear)
         footer.addStretch(1)
-        done = QPushButton(t("st.close"))
-        done.setObjectName("Primary")
-        done.clicked.connect(self.close_panel)
-        footer.addWidget(done)
+        self._done = QPushButton(t("st.close"))       # retranslated in apply_palette
+        self._done.setObjectName("Primary")
+        self._done.clicked.connect(self.close_panel)
+        footer.addWidget(self._done)
         card_layout.addLayout(footer)
 
         outer = QVBoxLayout(self)
@@ -240,6 +240,11 @@ class JobsDrawer(QWidget):
         self._title.setText(t("jb.title"))
         self._subtitle.setText(t("jb.subtitle"))
         self._clear.setText(t("jb.clear"))
+        if getattr(self, "_done", None) is not None:
+            self._done.setText(t("st.close"))
+        if getattr(self, "_resume", None) is not None:
+            self._resume.setText(t("jb.resume", len(self.manager.resumable())
+                                          if self.manager is not None else 0))
         self.refresh()
 
     def set_language(self, lang: str) -> None:
@@ -307,6 +312,10 @@ class JobsDrawer(QWidget):
     def _resume_queue(self) -> None:
         if self.manager is not None:
             self.manager.resume_pending()
+            # audit F-06: jobs whose secrets were dropped from disk stay paused;
+            # open their tool form so the user can re-enter the password and run.
+            for job in self.manager.waiting_secrets():
+                self.openToolRequested.emit(job.tool_id, dict(job.values or {}))
         self.refresh()
 
     def _clear_finished(self) -> None:

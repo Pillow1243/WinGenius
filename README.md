@@ -501,13 +501,18 @@ QT_QPA_PLATFORM=offscreen python scripts/make_icon.py             # آیکون �
 python packaging/make_showcase.py                                # docs/showcase.html
 ```
 
-آخرین نتیجه (headless، `QT_QPA_PLATFORM=offscreen`): **smoke ۱۵۴/۱۵۴** ·
-**functional ۶۴۲/۶۴۲** · **output ۱۱۲/۱۱۲** · **UI ۱٬۲۵۹ بررسی: ALL CHECKS PASSED** ·
-**security ۵۷/۵۷** · **hardening ۵۶/۵۶** · **persian ۲۸/۲۸** · **packaging ۲۸/۲۸** · **۲۹۲ ابزار، ۰ خطای بارگذاری** —
-جمعاً **۲٬۳۳۷ بررسی PASS** (2,337 checks — آخرین `python scripts/stats.py --run`).
-پوشش تست (coverage) روی `app/` (اندازه‌گیری خطی؛ نه branch coverage): **۷۵٪**؛ با کنار گذاشتن ماژول‌های
-فقط-ویندوزی (`winapi`, `windows_*`) که روی لینوکس اجرا نمی‌شوند، **۷۷٪**.
-ماژول‌های تازه‌ی ۵.۰: `pdf_sign_tools` ۷۷٪، `indexer` (با OCR) ۷۸٪، `core/tesseract` ۷۵٪.
+آخرین نتیجه (headless، `QT_QPA_PLATFORM=offscreen`): **smoke ۱۵۴** ·
+**functional ۶۴۱** · **output ۱۱۲** · **UI ۱٬۲۵۹ بررسی: ALL CHECKS PASSED** ·
+**security ۵۷** · **hardening ۵۶** · **persian ۲۸** · **packaging ۳۰** · **۲۹۲ ابزار، ۰ خطای بارگذاری** —
+جمعاً **۲٬۳۳۷ بررسی** (2,337 checks — آخرین `python scripts/stats.py --run`).
+این اعداد از `docs/stats.json` خوانده می‌شوند، نه دست‌نویس؛ هر عدد یک بررسیِ «رسیده‌شده» است
+(PASS + SKIP؛ مثلاً OCR بدون tesseract یا بررسیِ شبکه‌ی اختیاری SKIP می‌شود) و
+`python scripts/stats.py --check` هم‌خوانی آن‌ها را در CI تضمین می‌کند.
+
+پوشش تست (coverage) روی `app/` را **`python scripts/quality_gate.py`** اندازه می‌گیرد و مقدار
+واقعی در `docs/stats.json` ثبت می‌شود (`coverage`: اگر اندازه‌گیری نشده باشد `null` است).
+گیت در `pyproject.toml` روی **۷۰٪** است؛ عددِ پوشش فقط وقتی منتشر می‌شود که خودِ گیت اجرا شده باشد —
+در غیر این صورت هیچ درصدی در مستندات نوشته نمی‌شود.
 سه گروه «شکار باگ» هم اضافه شد: **`schema`** (همه‌ی ۲۹۲ ابزار را از نظر آیکون، دسته، نام/توضیح دوزبانه،
 فیلدها، مقادیر پیش‌فرض، جست‌وجو و نیت‌های برنامه‌ریز بازبینی می‌کند)،
 **`stress`** (فایل ۴ مگابایتی و ۵۱ رکورد در گاوصندوق، ۶۰ فایل در یک عملیات و بازگردانی،

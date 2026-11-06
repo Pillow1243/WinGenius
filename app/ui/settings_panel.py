@@ -383,7 +383,7 @@ class SettingsPanel(QWidget):
             exists = shortcut.exists()
         except OSError:
             exists = False
-        if settings.lang == "fa":
+        if self.lang == "fa":
             prefix = "نصب شده ✓ — " if exists else "نصب نشده — "
         else:
             prefix = "installed ✓ — " if exists else "not installed — "
@@ -398,7 +398,7 @@ class SettingsPanel(QWidget):
             return
         self._sendto_hint.setText("…")
         try:
-            result = tool.run(RunContext(lang=settings.lang), {"action": action})
+            result = tool.run(RunContext(lang=self.lang), {"action": action})
             self._sendto_hint.setText(result.message)
         except Exception as exc:
             self._sendto_hint.setText(str(exc)[:160])

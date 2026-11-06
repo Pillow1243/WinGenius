@@ -35,7 +35,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .execution import ExecutionPolicy, PolicyDeniedError, classify_invocation, execution_service
 from .logger import get_logger
-from .paths import APP_VERSION, data_dir
+from .paths import APP_VERSION, data_dir, secure_private_file
 from .privacy import redact_known, scrub_text, secret_strings
 
 log = get_logger("api")
@@ -51,10 +51,7 @@ def api_token(create: bool = True) -> str:
         if path.is_file():
             token = path.read_text(encoding="utf-8").strip()
             if token:
-                try:
-                    path.chmod(0o600)   # tighten a token written by an older build
-                except OSError:
-                    pass
+                secure_private_file(path)   # tighten a token written by an older build
                 return token
         if not create:
             return ""
@@ -65,10 +62,7 @@ def api_token(create: bool = True) -> str:
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             handle.write(token)
-        try:
-            path.chmod(0o600)
-        except OSError:                                  # Windows ACLs, best effort
-            pass
+        secure_private_file(path)                        # 0600 / owner-only ACL
         return token
     except OSError as exc:
         if create:

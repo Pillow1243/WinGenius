@@ -136,6 +136,7 @@ class SchedulerPanel(OverlaySheet):
         self._target_combo = QComboBox()
         self._target_combo.setMinimumHeight(34)
         self._target_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._target_combo.currentIndexChanged.connect(self._refresh_targets)
         layout.addWidget(label("هدف" if self.lang != "en" else "Target", "Hint"), 2, 1)
         layout.addWidget(self._target_combo, 3, 1, 1, 2)
 
@@ -144,12 +145,25 @@ class SchedulerPanel(OverlaySheet):
         self._catchup_check.setChecked(True)
         layout.addWidget(self._catchup_check, 3, 3)
 
+        # per-tool input form (audit F-07): a scheduled tool gets the same
+        # fields as its normal dialog, validated before saving
+        self._payload_label = label("ورودی‌های ابزار" if self.lang != "en" else "Tool inputs", "Hint")
+        layout.addWidget(self._payload_label, 4, 0)
+        self._payload_holder = QWidget()
+        self._payload_layout = QGridLayout(self._payload_holder)
+        self._payload_layout.setContentsMargins(0, 0, 0, 0)
+        self._payload_layout.setHorizontalSpacing(8)
+        self._payload_layout.setVerticalSpacing(4)
+        layout.addWidget(self._payload_holder, 5, 0, 1, 4)
+        self._payload_fields: list = []
+        self._payload_widgets: Dict[str, object] = {}
+
         self._cron_hint = label("", "Hint", wrap=True)
         self._cron_hint.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        layout.addWidget(self._cron_hint, 4, 0, 1, 4)
+        layout.addWidget(self._cron_hint, 6, 0, 1, 4)
         self._cron_next = label("", "Hint", wrap=True)
         self._cron_next.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        layout.addWidget(self._cron_next, 5, 0, 1, 4)
+        layout.addWidget(self._cron_next, 7, 0, 1, 4)
 
         buttons = QHBoxLayout()
         buttons.setSpacing(6)
@@ -166,7 +180,9 @@ class SchedulerPanel(OverlaySheet):
         buttons.addStretch(1)
         holder = QWidget()
         holder.setLayout(buttons)
-        layout.addWidget(holder, 6, 3)
+        # row 8: rows 6 and 7 hold the cron hint lines. Sharing a row with the
+        # buttons stretched the hint to the button height (audit F-07 layout).
+        layout.addWidget(holder, 8, 3)
         layout.setColumnStretch(1, 2)
         layout.setColumnStretch(2, 2)
         layout.setColumnStretch(3, 3)
@@ -218,6 +234,8 @@ class SchedulerPanel(OverlaySheet):
                 self._update_cron_hint()
             except RuntimeError:
                 pass
+        if hasattr(self, "_payload_label"):
+            self._payload_label.setText("ورودی‌های ابزار" if fa else "Tool inputs")
 
     def _refresh_presets(self) -> None:
         self._preset_combo.blockSignals(True)
@@ -241,6 +259,8 @@ class SchedulerPanel(OverlaySheet):
 
     def _refresh_targets(self) -> None:
         kind = self._kind_combo.currentData() or "workflow"
+        previous = self._target_combo.currentData()
+        self._target_combo.blockSignals(True)
         self._target_combo.clear()
         if kind == "workflow":
             for item in workflow_store.all():
@@ -249,6 +269,87 @@ class SchedulerPanel(OverlaySheet):
             for spec in all_tools():
                 label_text = spec.name_for(self.lang)
                 self._target_combo.addItem(f"{label_text}  ·  {spec.id}", spec.id)
+        self._target_combo.blockSignals(False)
+        if previous:
+            index = self._target_combo.findData(previous)
+            if index >= 0:
+                self._target_combo.setCurrentIndex(index)
+        self._rebuild_payload_form()
+
+    # ------------------------------------------------------- payload form (F-07)
+    def _rebuild_payload_form(self) -> None:
+        """Show the selected tool's own input fields (a mini version of its dialog)."""
+        from ..core.spec import K_BOOL, K_CHOICE, K_FLOAT, K_INT, K_PASSWORD
+
+        while self._payload_layout.count():
+            item = self._payload_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self._payload_fields = []
+        self._payload_widgets = {}
+        kind = self._kind_combo.currentData() or "workflow"
+        target = self._target_combo.currentData()
+        spec = None
+        if kind == "tool" and target:
+            from ..core.registry import get as get_tool
+
+            spec = get_tool(str(target))
+        if spec is None:
+            self._payload_holder.setVisible(False)
+            return
+        self._payload_holder.setVisible(True)
+        fa = self.lang != "en"
+        self._payload_label.setText("ورودی‌های ابزار" if fa else "Tool inputs")
+        self._payload_fields = list(spec.fields)
+        for row, field in enumerate(spec.fields):
+            caption = field.label_en if (fa is False and field.label_en) else (field.label or field.label_en)
+            if not fa and field.label_en:
+                caption = field.label_en
+            self._payload_layout.addWidget(label(caption, "Hint"), row, 0)
+            if field.kind == K_BOOL:
+                widget = QCheckBox()
+                widget.setChecked(bool(field.default))
+            elif field.kind == K_CHOICE:
+                widget = QComboBox()
+                for value, label_fa, label_en in field.choices:
+                    widget.addItem(label_en if fa is False else label_fa, value)
+                index = widget.findData(field.default)
+                if index >= 0:
+                    widget.setCurrentIndex(index)
+            else:
+                widget = QLineEdit()
+                widget.setMinimumHeight(30)
+                placeholder = field.placeholder_en if not fa and field.placeholder_en else field.placeholder
+                if placeholder:
+                    widget.setPlaceholderText(placeholder)
+                if field.kind == K_PASSWORD:
+                    widget.setEchoMode(QLineEdit.EchoMode.Password)
+                elif field.kind in (K_INT, K_FLOAT):
+                    widget.setText(str(field.default) if field.default is not None else "")
+            widget.setToolTip(field.help_for(self.lang))
+            self._payload_layout.addWidget(widget, row, 1)
+            self._payload_widgets[field.key] = widget
+
+    def _collect_payload(self) -> Dict[str, object]:
+        from ..core.spec import K_BOOL, K_CHOICE, K_FLOAT, K_INT
+
+        values: Dict[str, object] = {}
+        for field in self._payload_fields:
+            widget = self._payload_widgets.get(field.key)
+            if widget is None:
+                continue
+            if field.kind == K_BOOL:
+                values[field.key] = bool(widget.isChecked())
+            elif field.kind == K_CHOICE:
+                values[field.key] = widget.currentData()
+            elif field.kind in (K_INT, K_FLOAT):
+                text = widget.text().strip()
+                if text:
+                    values[field.key] = text          # validated as number later
+            else:
+                values[field.key] = widget.text().strip()
+        return values
 
     def set_language(self, lang: str) -> None:
         self.lang = lang

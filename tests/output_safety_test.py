@@ -212,25 +212,45 @@ def test_launch_uninstaller_blocks_shell_metacharacters(ctx):
 
 # ------------------------------------------------------------- item #6: Unix permissions
 def test_data_dir_and_sqlite_permissions(tmp_path, monkeypatch):
+    """The data tree must be owner-only (audit F-09).
+
+    POSIX expresses that as 0700/0600. Windows has no such mode — `stat` always
+    reports 0777 and `os.chmod` only flips the read-only bit — so there the
+    guarantee is an owner-only ACL applied through `paths._windows_acl`, which
+    this test asserts is actually invoked.
+    """
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.delenv("WINGENIUS_PORTABLE", raising=False)
     for flag in ("--portable",):
         monkeypatch.setattr(sys, "argv", [a for a in sys.argv if a != flag])
     from app.core import paths
 
+    hardened = []
+    if os.name == "nt":
+        monkeypatch.setattr(paths, "_windows_acl",
+                            lambda path, directory: hardened.append((str(path), directory)) or True)
+
     old_umask = os.umask(0o022)
     try:
         d = paths.data_dir()
-        assert stat.S_IMODE(d.stat().st_mode) == 0o700
         logs = paths.logs_dir()
-        assert stat.S_IMODE(logs.stat().st_mode) == 0o700
         from app.core import indexer
         conn = indexer._connect()
         conn.execute("CREATE TABLE IF NOT EXISTS t (x INTEGER)")
         conn.commit()
         conn.close()
         db = indexer.index_path()
-        assert stat.S_IMODE(db.stat().st_mode) == 0o600
+        if os.name == "nt":
+            # hardening must actually be attempted, for folders and for the db file
+            assert hardened, "Windows permission hardening never ran"
+            assert any(is_dir for _name, is_dir in hardened), "no folder ACL applied"
+            assert any(not is_dir for _name, is_dir in hardened), "no file ACL applied"
+            assert any(name.endswith(db.name) for name, is_dir in hardened if not is_dir), \
+                f"the index database was never hardened: {hardened}"
+        else:
+            assert stat.S_IMODE(d.stat().st_mode) == 0o700
+            assert stat.S_IMODE(logs.stat().st_mode) == 0o700
+            assert stat.S_IMODE(db.stat().st_mode) == 0o600
     finally:
         os.umask(old_umask)
 

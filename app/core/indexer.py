@@ -374,8 +374,13 @@ def build(folders: Iterable[str], patterns: str = "", recursive: bool = True,
                 counters["ocr"] += 1
             if position % 25 == 0:
                 conn.commit()
-        # Only prune missing paths under roots actually scanned, never while cancelled
-        # or when the root itself is missing (e.g. a disconnected drive).
+        # Prune records under roots actually scanned — never while cancelled or
+        # when the root itself is missing (e.g. a disconnected drive). A record
+        # is dropped when the file no longer exists OR when it is now excluded /
+        # sensitive under the *current* settings (audit F-02): a folder added to
+        # index/exclude_folders must not stay searchable in the FTS index.
+        # A *temporarily* unreadable file is NOT treated as missing: only a
+        # definitive "does not exist" prunes the row.
         if not (cancel and cancel()):
             roots = [Path(folder).resolve() for folder in folders
                      if Path(folder).is_dir() and not Path(folder).is_symlink()]
@@ -383,7 +388,19 @@ def build(folders: Iterable[str], patterns: str = "", recursive: bool = True,
                 indexed = Path(key)
                 in_scope = any(indexed.is_relative_to(root) if recursive else indexed.parent == root
                                for root in roots)
-                if in_scope and not indexed.exists():
+                if not in_scope:
+                    continue
+                try:
+                    gone = not indexed.exists()
+                except OSError:
+                    gone = False              # transient error: keep the record
+                if not gone:
+                    try:
+                        gone = _is_sensitive_file(indexed) or (
+                            bool(extra_excludes) and _excluded_by(indexed, extra_excludes))
+                    except OSError:
+                        gone = False          # transient error: keep the record
+                if gone:
                     conn.execute("DELETE FROM docs_fts WHERE path=?", (key,))
                     conn.execute("DELETE FROM docs WHERE path=?", (key,))
         conn.commit()

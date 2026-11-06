@@ -25,16 +25,26 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 STATS = ROOT / "docs" / "stats.json"
 
-# (key, script, regex that finds the reported PASS count)
+# (key, script, PASS-count regex, SKIP-count regex) — audit F-16: the published
+# numbers count every check the suite *reaches* (PASS + SKIP, where a SKIP is a
+# platform-gated check such as tesseract or an opt-in live network probe).
+# Counting PASS only made the published totals impossible to reproduce on any
+# machine that lacks one of those tools.
 SUITES = [
-    ("smoke", "tests/smoke_test.py", re.compile(r"PASS\s+(\d+)\s+FAIL")),
-    ("functional", "tests/functional_test.py", re.compile(r"RESULT:\s*(\d+)\s+passed")),
-    ("output", "tests/output_test.py", re.compile(r"OUTPUT CHECK\s+PASS\s+(\d+)")),
-    ("ui", "tests/ui_test.py", re.compile(r"(\d+)\s+UI checks executed")),
-    ("security", "tests/security_test.py", re.compile(r"SECURITY CHECK\s+PASS\s+(\d+)")),
-    ("hardening", "tests/hardening_test.py", re.compile(r"(\d+) passed")),
-    ("persian", "tests/persian_pdf_test.py", re.compile(r"(\d+) passed")),
-    ("packaging", "packaging/verify_package.py", re.compile(r"(\d+)\s*/\s*\d+[^\n]*checks passed")),
+    ("smoke", "tests/smoke_test.py",
+     re.compile(r"PASS\s+(\d+)\s+FAIL"), re.compile(r"PASS\s+\d+\s+FAIL\s+\d+\s+SKIP\s+(\d+)")),
+    ("functional", "tests/functional_test.py",
+     re.compile(r"RESULT:\s*(\d+)\s+passed"), re.compile(r"RESULT:\s*\d+\s+passed,\s*\d+\s+failed,\s*(\d+)\s+skipped")),
+    ("output", "tests/output_test.py",
+     re.compile(r"OUTPUT CHECK\s+PASS\s+(\d+)"), re.compile(r"OUTPUT CHECK\s+PASS\s+\d+\s+FAIL\s+\d+\s+SKIP\s+(\d+)")),
+    ("ui", "tests/ui_test.py",
+     re.compile(r"(\d+)\s+UI checks executed"), re.compile(r"(\d+)\s+UI checks skipped")),
+    ("security", "tests/security_test.py",
+     re.compile(r"SECURITY CHECK\s+PASS\s+(\d+)"), re.compile(r"SECURITY CHECK\s+PASS\s+\d+\s+FAIL\s+\d+\s+SKIP\s+(\d+)")),
+    ("hardening", "tests/hardening_test.py", re.compile(r"(\d+) passed"), None),
+    ("persian", "tests/persian_pdf_test.py", re.compile(r"(\d+) passed"), None),
+    ("packaging", "packaging/verify_package.py",
+     re.compile(r"(\d+)\s*/\s*\d+[^\n]*checks passed"), None),
 ]
 
 _TOOL_DECORATOR = re.compile(r"^\s*@tool\(", re.M)
@@ -48,15 +58,22 @@ def environment() -> dict:
     return env
 
 
-def collect(diagnostics: dict | None = None) -> dict:
-    """Run every suite and return {key: reported check count}.
+def collect(diagnostics: dict | None = None, skips: dict | None = None,
+            only: set | None = None) -> dict:
+    """Run every suite and return {key: total checks reached}.
+
+    "Total" is PASS + SKIP (see `SUITES`), which is the number the docs quote.
+    `skips`, when given, receives {key: skipped count}. `only`, when given,
+    restricts the run to those suite keys.
 
     `diagnostics`, when given, receives each suite's raw output so a mismatch can
     explain itself (which checks were skipped, what failed) instead of only saying
     "642 != 641".
     """
     counts: dict[str, int] = {}
-    for key, script, pattern in SUITES:
+    for key, script, pattern, skip_pattern in SUITES:
+        if only is not None and key not in only:
+            continue
         command = ([sys.executable, "-m", "pytest", "-o", "addopts=", "-q", script]
                    if key in ("hardening", "persian") else [sys.executable, script])
         proc = subprocess.run(command, cwd=ROOT, env=environment(),
@@ -67,8 +84,16 @@ def collect(diagnostics: dict | None = None) -> dict:
         match = pattern.search(output)
         if proc.returncode != 0 or not match:
             raise SystemExit(f"{script} failed (rc={proc.returncode}):\n{output[-1500:]}")
-        counts[key] = int(match.group(1))
-        print(f"  {key:11s} {counts[key]:5d}")
+        passed = int(match.group(1))
+        skipped = 0
+        if skip_pattern is not None:
+            skip_match = skip_pattern.search(output)
+            skipped = int(skip_match.group(1)) if skip_match else 0
+        counts[key] = passed + skipped
+        if skips is not None:
+            skips[key] = skipped
+        print(f"  {key:11s} {counts[key]:5d}" + (f"  (PASS {passed} + SKIP {skipped})"
+                                                  if skipped else ""))
     return counts
 
 
@@ -133,8 +158,32 @@ def category_counts() -> dict[str, int]:
     return dict(sorted(counts.items(), key=lambda item: (-item[1], item[0])))
 
 
-def run() -> int:
-    counts = collect()
+def run(only: set | None = None) -> int:
+    """Re-measure the suites and rewrite docs/stats.json.
+
+    `only` limits the run to the named suites; the stored value of every other
+    suite is kept and listed under "unmeasured" so a machine that cannot run
+    one suite (e.g. a Qt-less box) can still refresh the rest without pretending
+    it measured everything.
+    """
+    previous = {}
+    if STATS.is_file():
+        try:
+            previous = json.loads(STATS.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            previous = {}
+    skips: dict[str, int] = {}
+    counts = collect(skips=skips, only=only)
+    unmeasured: list[str] = []
+    for key, _script, _pattern, _skip in SUITES:
+        if key in counts:
+            continue
+        stored = (previous.get("suites") or {}).get(key)
+        if stored is None:
+            raise SystemExit(f"no stored value for suite {key!r}; run it before publishing")
+        counts[key] = int(stored)
+        skips[key] = int((previous.get("skips") or {}).get(key, 0))
+        unmeasured.append(key)
     declared = static_tool_count()
     live = live_tool_count()
     if declared != live:
@@ -146,15 +195,20 @@ def run() -> int:
         "tools": live,
         "categories": len(by_category),
         "category_counts": by_category,
-        "suites": counts,
+        "suites": dict(sorted(counts.items())),
+        "skips": dict(sorted(skips.items())),
         "checks": sum(counts.values()),
         # Never a hand-copied constant: read the real coverage.py data when the
         # quality gate produced it, otherwise report null ("not measured").
         "coverage": measured_coverage(),
         "python": ["3.12", "3.13"],
         "notes": ("Single source of truth for the numbers quoted in README, docs and the "
-                  "showcase. Regenerate with: python scripts/stats.py --run"),
+                  "showcase. Regenerate with: python scripts/stats.py --run. "
+                  "A suite's number counts every check it reaches: PASS + SKIP."),
     }
+    if unmeasured:
+        # audit F-16: say out loud what was not re-measured on this machine
+        stats["unmeasured"] = sorted(unmeasured)
     STATS.write_text(json.dumps(stats, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"  TOTAL       {stats['checks']:5d}  -> {STATS}")
 
@@ -170,6 +224,15 @@ def check() -> int:
     errors: list[str] = []
     if stats["checks"] != sum(stats["suites"].values()):
         errors.append("checks != sum(suites)")
+    skips = stats.get("skips") or {}
+    for key, skipped in skips.items():
+        if key not in stats["suites"]:
+            errors.append(f"skips mentions unknown suite {key!r}")
+        elif int(skipped) > int(stats["suites"][key]):
+            errors.append(f"{key}: {skipped} skips exceed its {stats['suites'][key]} checks")
+    for key in stats.get("unmeasured") or []:
+        if key not in stats["suites"]:
+            errors.append(f"unmeasured mentions unknown suite {key!r}")
     if stats["version"] != app_version():
         errors.append(f"version {stats['version']} != {app_version()}")
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
@@ -265,9 +328,12 @@ def main() -> int:
     group.add_argument("--check", action="store_true", help="verify stored numbers only")
     group.add_argument("--verify", action="store_true",
                        help="run the suites and verify the stored numbers still reproduce")
+    parser.add_argument("--only", default="",
+                        help="comma-separated suite keys to re-measure with --run")
     args = parser.parse_args()
+    only = {part.strip() for part in (args.only or "").split(",") if part.strip()} or None
     if args.run:
-        return run()
+        return run(only)
     return verify() if args.verify else check()
 
 

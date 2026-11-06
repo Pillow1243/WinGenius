@@ -245,28 +245,40 @@ def security_headers(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
              f"status   {resp_status}",
              ""]
     missing: List[str] = []
+    weak: List[str] = []
     for key, label, weight, fa, en in SECURITY_HEADERS:
         maximum += weight
-        present = key in headers
-        if present:
-            score += weight
-            value = headers[key]
-            lines.append(f"✓ {label:26} {value[:110]}")
-        else:
+        value = headers.get(key)
+        if value is None:
             missing.append(fa if ctx.lang != "en" else en)
             lines.append(f"✖ {label:26} " + ("غایب" if ctx.lang != "en" else "missing"))
-    if not url.lower().startswith("https"):
+            continue
+        points, note = _header_value_score(key, value, headers, ctx.lang)
+        score += points
+        if points >= weight:
+            lines.append(f"✓ {label:26} {value[:90]}")
+        elif points > 0:
+            weak.append(fa if ctx.lang != "en" else en)
+            lines.append(f"◐ {label:26} {value[:70]}  — "
+                         + (note if note else ("ضعیف" if ctx.lang != "en" else "weak")))
+        else:
+            weak.append(fa if ctx.lang != "en" else en)
+            lines.append(f"! {label:26} {value[:70]}  — "
+                         + (note if note else ("نامعتبر" if ctx.lang != "en" else "invalid")))
+    is_https = resp_url.lower().startswith("https://")
+    if not is_https:
         lines.append("")
-        lines.append(("! سایت روی HTTPS نیست؛ همه‌ی امتیازهای بالاتر بی‌فایده‌اند."
+        lines.append(("! سایت روی HTTPS نیست؛ امتیاز و سطح نهایی محدود می‌شود."
                       if ctx.lang != "en" else
-                      "! The site is not on HTTPS; the score above is meaningless."))
-    if cookies:
-        insecure = [cookie.name for cookie in cookies if not cookie.secure]
+                      "! The site is not on HTTPS; score and grade are capped."))
+    cookie_notes = _cookie_report(cookies, ctx.lang)
+    if cookie_notes:
         lines.append("")
-        lines.append(("کوکی‌ها: " if ctx.lang != "en" else "Cookies: ")
-                     + (f"{len(cookies)}" ) + (f" · بدون Secure: {', '.join(insecure)}"
-                                               if insecure else " · همه Secure"))
+        lines.extend(cookie_notes)
     percent = score * 100 / max(1, maximum)
+    if not is_https:
+        # plain HTTP can never earn a top grade regardless of headers
+        percent = min(percent, 39.0)
     if percent >= 95:
         grade = "A+"
     elif percent >= 85:
@@ -285,7 +297,123 @@ def security_headers(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     if missing:
         verdict += ("\nکم است: " + "، ".join(missing)) if ctx.lang != "en" else \
             ("\nMissing: " + ", ".join(missing))
+    if weak:
+        verdict += ("\nحاضر اما ضعیف/نامعتبر: " + "، ".join(weak)) if ctx.lang != "en" else \
+            ("\nPresent but weak/invalid: " + ", ".join(weak))
+    verdict += ctx.M("\n(ارزیابی heuristic؛ ممیزی کامل امنیتی سایت نیست.)",
+                     "\n(heuristic check — not a full security audit of the site.)")
     return RunResult(message=verdict, details="\n".join(lines))
+
+
+def _csp_has_unsafe(value: str) -> List[str]:
+    """Directives that make a CSP weak: wildcard sources, unsafe-inline/eval."""
+    problems = []
+    for directive in value.split(";"):
+        parts = directive.split()
+        if not parts:
+            continue
+        name = parts[0].lower()
+        sources = {p.lower() for p in parts[1:]}
+        if name in ("default-src", "script-src", "style-src"):
+            if "*" in sources:
+                problems.append(f"{name} *")
+            if "'unsafe-inline'" in sources:
+                problems.append(f"{name} 'unsafe-inline'")
+            if "'unsafe-eval'" in sources:
+                problems.append(f"{name} 'unsafe-eval'")
+    return problems
+
+
+def _header_value_score(key: str, value: str, headers: Dict[str, str], lang: str) -> tuple:
+    """Score one header by its effective value, not mere presence (audit F-08).
+
+    Returns (points, note) where note explains a weak/invalid value.
+    """
+    fa = lang != "en"
+
+    def N(fa_text: str, en_text: str) -> str:
+        return fa_text if fa else en_text
+
+    if key == "content-security-policy":
+        weight = 25
+        problems = _csp_has_unsafe(value)
+        has_frame = any(d.strip().lower().startswith("frame-ancestors")
+                        for d in value.split(";"))
+        if not problems:
+            return weight, ""
+        # a restrictive frame-ancestors partly compensates a weak default-src
+        return (10 if has_frame else 5), N("دارای wildcard/unsafe: " + ", ".join(problems),
+                                           "wildcard/unsafe sources: " + ", ".join(problems))
+    if key == "strict-transport-security":
+        weight = 20
+        max_age = 0
+        for part in value.split(";"):
+            part = part.strip().lower()
+            if part.startswith("max-age="):
+                try:
+                    max_age = int(part.split("=", 1)[1])
+                except ValueError:
+                    max_age = 0
+        if max_age >= 15_768_000:            # >= ~6 months
+            return weight, ""
+        if max_age > 0:
+            return 8, N(f"max-age={max_age} کوتاه است", f"max-age={max_age} is short")
+        return 0, N("max-age=0 یعنی غیرفعال", "max-age=0 means disabled")
+    if key == "x-content-type-options":
+        return (10, "") if value.strip().lower() == "nosniff" else \
+            (0, N(f"مقدار نامعتبر: {value.strip()}", f"invalid value: {value.strip()}"))
+    if key == "x-frame-options":
+        allowed = {"deny", "sameorigin"}
+        if value.strip().lower() in allowed:
+            return 10, ""
+        # frame-ancestors in a CSP is the modern alternative
+        csp = headers.get("content-security-policy", "")
+        if any(d.strip().lower().startswith("frame-ancestors") and "'none'" in d.lower() or
+               (d.strip().lower().startswith("frame-ancestors") and "'self'" in d.lower())
+               for d in csp.split(";")):
+            return 10, ""
+        return 0, N(f"مقدار نامعتبر: {value.strip()}", f"invalid value: {value.strip()}")
+    if key == "referrer-policy":
+        safe_values = {"no-referrer", "same-origin", "strict-origin",
+                       "strict-origin-when-cross-origin"}
+        normalized = value.strip().lower()
+        if normalized in safe_values:
+            return 10, ""
+        if normalized == "unsafe-url":
+            return 0, N("unsafe-url کل URL را افشا می‌کند", "unsafe-url leaks the full URL")
+        return 4, N(f"مقدار konservativ نیست: {normalized}", f"not privacy-preserving: {normalized}")
+    if key == "permissions-policy":
+        # presence with at least one disabled feature counts; an allow-all is weak
+        if "*" in value and "=()" not in value:
+            return 3, N("همه‌ی доступ featureها باز است", "allows everything")
+        return 10, ""
+    if key == "cross-origin-opener-policy":
+        normalized = value.strip().lower()
+        if normalized in ("same-origin", "same-origin-allow-popups"):
+            return 5, ""
+        return 1, N(f"مقدار ضعیف: {normalized}", f"weak value: {normalized}")
+    return 0, ""
+
+
+def _cookie_report(cookies, lang: str) -> List[str]:
+    """Per-cookie Secure / HttpOnly / SameSite flags (audit F-08)."""
+    fa = lang != "en"
+    if not cookies:
+        return []
+    lines = [(f"کوکی‌ها ({len(cookies)}):" if fa else f"Cookies ({len(cookies)}):")]
+    for cookie in cookies:
+        flags = []
+        if cookie.secure:
+            flags.append("Secure")
+        else:
+            flags.append("!Secure" if fa is False else "!Secure")
+        jar = getattr(cookie, "_rest", {}) or {}
+        httponly = bool(jar.get("HttpOnly"))
+        flags.append("HttpOnly" if httponly else "!HttpOnly")
+        samesite = jar.get("SameSite") or ""
+        flags.append(f"SameSite={samesite}" if samesite else "!SameSite")
+        lines.append(f"  {cookie.name}: " + ", ".join(flags))
+    return lines
 
 
 # ------------------------------------------------------------------- timings

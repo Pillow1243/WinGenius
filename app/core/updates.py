@@ -619,6 +619,46 @@ def build_release_manifest(
     return manifest
 
 
+def public_key_from_private(private_key_b64: str) -> str:
+    """Derive the base64 raw Ed25519 public key for a base64 raw private key."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    raw_priv = base64.b64decode(str(private_key_b64).strip())
+    if len(raw_priv) != 32:
+        raise ValueError("Ed25519 raw private key must be exactly 32 bytes (base64-encoded).")
+    pub_raw = Ed25519PrivateKey.from_private_bytes(raw_priv).public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    return base64.b64encode(pub_raw).decode("ascii")
+
+
+def signing_key_matches_keyring(private_key_b64: str,
+                                keyring: Optional[Mapping[str, str]] = None) -> Tuple[bool, str]:
+    """Check that an update signing key pairs with a public key baked into the app.
+
+    Audit F-05: nothing verified that the key CI signs with is the key the
+    binary trusts, so a release could be signed with a key that no build can
+    ever verify. Returns `(ok, explanation)`; never returns or logs the key.
+    """
+    pins = dict(TRUSTED_RELEASE_PUBKEYS if keyring is None else keyring)
+    if not str(private_key_b64 or "").strip():
+        return False, "no signing key supplied"
+    try:
+        derived = public_key_from_private(private_key_b64)
+    except Exception:
+        return False, "signing key is not a valid base64 raw Ed25519 private key"
+    matches = [kid for kid, pub in pins.items() if pub == derived]
+    if matches:
+        return True, "signing key pairs with a pinned public key"
+    placeholder = [kid for kid, pub in pins.items() if pub == PLACEHOLDER_PUBKEY]
+    if placeholder and len(pins) == len(placeholder):
+        return False, ("only the shipped placeholder public key is pinned; "
+                       "pin the real release public key first")
+    return False, "signing key does not pair with any pinned public key"
+
+
 def sign_release_manifest(
     manifest: Mapping[str, Any],
     private_key_b64: str,

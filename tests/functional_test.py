@@ -1151,6 +1151,8 @@ def test_watcher(fixtures: dict) -> None:
     check("no trigger for a known file", local.scan_now() == [])
 
     (watch_dir / "new.txt").write_text("hello", encoding="utf-8")
+    # audit F-01: the first scan only arms the settle timer, even with settle=0
+    check("first sighting is only registered as pending", local.scan_now() == [])
     hits = local.scan_now()
     check("new file triggers the rule", len(hits) == 1 and hits[0][1].endswith("new.txt"), str(hits))
     check("the same file is not reported twice", local.scan_now() == [])
@@ -1163,7 +1165,8 @@ def test_watcher(fixtures: dict) -> None:
           ["new.txt", "old.txt"] or len(watcher_mod.read_folder(str(watch_dir), "*.txt")) == 2)
 
     local.reset()
-    check("reset() forgets fingerprints", len(local.scan_now()) >= 1)
+    check("reset() forgets fingerprints (pending first, hit on next scan)",
+          local.scan_now() == [] and len(local.scan_now()) >= 1)
 
     watcher_mod.mark_run(rule, str(watch_dir / "new.txt"), "auto")
     refreshed = watcher_mod.store.get(rule.id)
@@ -2895,7 +2898,12 @@ def test_v60_tools(fixtures: dict) -> None:
     thread.start()
     try:
         graded = run("security_headers", url=f"http://127.0.0.1:{port}/", timeout=5)
-        check("security_headers gives a perfect site an A", "A" in graded.message, graded.message)
+        # audit F-08: the header set is perfect but the site is plain HTTP, which is
+        # capped below A/A+ on purpose — assert the full header score instead.
+        check("security_headers scores every header on a perfect site",
+              "90/90" in graded.message, graded.message)
+        check("security_headers caps a plain-HTTP site", "A" not in graded.message.split("—")[-1],
+              graded.message)
         timing = run("http_timing", url=f"http://127.0.0.1:{port}/", request=True)
         check("http_timing measures DNS", "DNS" in timing.details, timing.details[:120])
         check("http_timing measures the first byte", "TTFB" in timing.details, timing.details[:160])

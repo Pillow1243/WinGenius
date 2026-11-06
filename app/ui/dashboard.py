@@ -316,15 +316,22 @@ class Dashboard(OverlaySheet):
         self.body_layout.addWidget(divider())
         self.body_layout.addWidget(label("میان‌برهای هوشمند" if self.lang != "en" else "Smart shortcuts",
                                          "SectionTitle"))
+        fa = self.lang != "en"
+        # The tooltip is user-facing text too: it was Persian-only, so an English
+        # UI showed Persian tooltips on every shortcut (audit F-15).
         shortcuts = [
-            ("plan", "دستیار برنامه‌ریز" if self.lang != "en" else "AI planner",
-             "یک جمله بنویسید، یک زنجیره‌ی ابزار بگیرید"),
-            ("workflows", "گردش‌کارها" if self.lang != "en" else "Workflows",
-             "چند ابزار را پشت سر هم اجرا کنید"),
-            ("automation", "خودکارسازی پوشه" if self.lang != "en" else "Folder automation",
-             "فایل تازه آمد؟ خودش اجرا شود"),
-            ("jobs", "صف کارها" if self.lang != "en" else "Job queue",
-             "اجراهای هم‌زمان و پس‌زمینه"),
+            ("plan", "دستیار برنامه‌ریز" if fa else "AI planner",
+             "یک جمله بنویسید، یک زنجیره‌ی ابزار بگیرید" if fa else
+             "Describe a task in one sentence and get a tool chain"),
+            ("workflows", "گردش‌کارها" if fa else "Workflows",
+             "چند ابزار را پشت سر هم اجرا کنید" if fa else
+             "Run several tools one after another"),
+            ("automation", "خودکارسازی پوشه" if fa else "Folder automation",
+             "فایل تازه آمد؟ خودش اجرا شود" if fa else
+             "A new file arrives — run something automatically"),
+            ("jobs", "صف کارها" if fa else "Job queue",
+             "اجراهای هم‌زمان و پس‌زمینه" if fa else
+             "Parallel and background runs"),
         ]
         grid = QGridLayout()
         grid.setSpacing(8)

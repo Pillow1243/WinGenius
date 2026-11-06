@@ -33,10 +33,24 @@ FIELD_NAMES_FA = ("دقیقه", "ساعت", "روز ماه", "ماه", "روز �
 FIELD_NAMES_EN = ("minute", "hour", "day", "month", "weekday")
 WEEKDAYS_FA = ("یکشنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنجشنبه", "جمعه", "شنبه")
 WEEKDAYS_EN = ("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")
+#: MON..SUN aliases accepted in the day-of-week field (audit F-04).
+WEEKDAY_ALIASES = {
+    "SUN": 0, "MON": 1, "TUE": 2, "WED": 3, "THU": 4, "FRI": 5, "SAT": 6,
+}
 
 
 class CronError(ValueError):
     """Raised for an expression the scheduler cannot understand."""
+
+
+def _parse_value(token: str, label: str) -> int:
+    token = token.strip()
+    if label == "weekday" and token.upper() in WEEKDAY_ALIASES:
+        return WEEKDAY_ALIASES[token.upper()]
+    try:
+        return int(token)
+    except ValueError as exc:
+        raise CronError(f"{label}: bad value '{token}'") from exc
 
 
 def _parse_field(expr: str, low: int, high: int, label: str) -> set:
@@ -58,17 +72,9 @@ def _parse_field(expr: str, low: int, high: int, label: str) -> set:
             start, end = low, high
         elif "-" in part:
             left, right = part.split("-", 1)
-            try:
-                start, end = int(left), int(right)
-            except ValueError as exc:
-                raise CronError(f"{label}: bad range '{part}'") from exc
-            if label == "weekday":                      # allow mon..sun aliases below
-                pass
+            start, end = _parse_value(left, label), _parse_value(right, label)
         else:
-            try:
-                start = end = int(part)
-            except ValueError as exc:
-                raise CronError(f"{label}: bad value '{part}'") from exc
+            start = end = _parse_value(part, label)
         max_value = 7 if label == "weekday" else high
         if start < low or end > max_value or start > end:
             raise CronError(f"{label}: {part} is outside {low}-{max_value}")
@@ -77,29 +83,46 @@ def _parse_field(expr: str, low: int, high: int, label: str) -> set:
     return values
 
 
-def parse_cron(expr: str) -> Dict[str, set]:
-    """Parse a 5-field cron expression into sets of integers."""
+def _parse_cron_full(expr: str) -> tuple:
+    """(fields, restricted) — `restricted` marks fields that were NOT `*`/`?`."""
     parts = str(expr).strip().split()
     if len(parts) != 5:
         raise CronError("need exactly 5 fields: minute hour day month weekday")
     parsed = {}
+    restricted = {}
     for index, (part, (low, high)) in enumerate(zip(parts, LIMITS, strict=True)):  # len(parts)==5 checked above
         label = FIELD_NAMES_EN[index]
         parsed[label] = _parse_field(part, low, high, label)
-    return parsed
+        restricted[label] = part.strip() not in ("*", "?")
+    return parsed, restricted
+
+
+def parse_cron(expr: str) -> Dict[str, set]:
+    """Parse a 5-field cron expression into sets of integers."""
+    return _parse_cron_full(expr)[0]
 
 
 def matches(expr: str, when: datetime) -> bool:
-    """True when `when` (minute precision) satisfies the expression."""
+    """True when `when` (minute precision) satisfies the expression.
+
+    Standard cron semantics (audit F-04): when *both* day-of-month and
+    day-of-week are restricted, a day matches if *either* of them does (OR);
+    when only one is restricted, that one alone decides (AND with the rest).
+    """
     try:
-        fields = parse_cron(expr)
+        fields, restricted = _parse_cron_full(expr)
     except CronError:
         return False
+    if restricted["day"] and restricted["weekday"]:
+        day_ok = (when.day in fields["day"]
+                  or (when.weekday() + 1) % 7 in fields["weekday"])
+    else:
+        day_ok = (when.day in fields["day"]
+                  and (when.weekday() + 1) % 7 in fields["weekday"])
     return (when.minute in fields["minute"]
             and when.hour in fields["hour"]
-            and when.day in fields["day"]
-            and when.month in fields["month"]
-            and (when.weekday() + 1) % 7 in fields["weekday"])
+            and day_ok
+            and when.month in fields["month"])
 
 
 def next_run(expr: str, after: Optional[datetime] = None,
@@ -168,15 +191,21 @@ def describe_cron(expr: str, lang: str = "fa") -> str:
         bits.append(("هر روز " if fa else "daily at ") + clock if daily else clock)
     else:
         bits.append((f"دقیقه {minute} ساعت {hour}" if fa else f"at minute {minute} of hour {hour}"))
-    if dow != "*":
+    if dow not in ("*", "?"):
         try:
             days = sorted(parse_cron(expr)["weekday"])
             names = WEEKDAYS_FA if fa else WEEKDAYS_EN
             joiner = "، " if fa else ", "
-            bits.append(" · " + joiner.join(names[d] for d in days))
+            day_text = joiner.join(names[d] for d in days)
         except CronError:
-            bits.append(f" · {dow}")
-    elif dom != "*":
+            day_text = dow
+        if dom not in ("*", "?"):
+            # both day fields restricted: cron ORs them (audit F-04)
+            bits.append((f" · روز {dom} ماه یا {day_text}" if fa
+                         else f" · day {dom} of month or {day_text}"))
+        else:
+            bits.append(" · " + day_text)
+    elif dom not in ("*", "?"):
         bits.append((f" · روز {dom} ماه" if fa else f" · day {dom}"))
     if month != "*":
         bits.append((f" · ماه {month}" if fa else f" · month {month}"))
@@ -281,6 +310,48 @@ class Schedule:
 
 def schedules_path() -> Path:
     return data_dir() / "schedules.json"
+
+
+def build_schedule_payload(tool_id: str, values: Dict[str, Any],
+                           lang: str = "fa") -> tuple:
+    """Validate tool input for a scheduled run. Returns (payload, errors).
+
+    Audit F-07: a schedule must never be saved with empty required input, with
+    a secret on disk, or with an operation that would need interactive
+    confirmation. Placeholder values such as ``{prev}`` are legitimate workflow
+    tokens and are left untouched.
+    """
+    from .execution import classify_invocation
+    from .privacy import is_sensitive, sanitize_values
+    from .registry import get as get_tool
+
+    fa = lang != "en"
+
+    def fail(msg_fa: str, msg_en: str) -> tuple:
+        return {}, [msg_fa if fa else msg_en]
+
+    spec = get_tool(tool_id)
+    if spec is None:
+        return fail(f"ابزار «{tool_id}» پیدا نشد.", f"tool '{tool_id}' not found")
+    values = dict(values or {})
+    errors: List[str] = []
+    for item in spec.validate_values(values, lang):
+        errors.append(str(item.get("error") or item))
+    if errors:
+        return {}, errors
+    secret_keys = [str(key) for key, value in values.items()
+                   if is_sensitive(str(key), tool_id) and str(value or "").strip()]
+    if secret_keys:
+        return fail(
+            "زمان‌بندی خودکار نمی‌تواند رمز/کلید ذخیره کند: " + "، ".join(secret_keys),
+            "scheduled runs never store secrets: " + ", ".join(secret_keys))
+    payload = sanitize_values(tool_id, values)
+    assessment = classify_invocation(spec, payload)
+    if assessment.requires_confirmation:
+        return fail(
+            f"«{spec.name_for(lang)}» برای اجرای خودکار نیازمند تأیید است و مسدود شد.",
+            f"'{spec.name_for(lang)}' requires confirmation and cannot be auto-scheduled.")
+    return payload, []
 
 
 class ScheduleStore:

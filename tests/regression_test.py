@@ -354,8 +354,13 @@ def test_queue_survives_restart_without_leaking_secrets(tmp_path):
     assert restored[0].tool_id == "vault_remove"
     assert restored[0].paused and second.has_resumable(), "restored jobs wait for a resume"
     second._start = lambda job: None
-    assert second.resume_pending() == 1
-    assert restored[0].paused is False
+    # audit F-06: a job whose secrets were dropped must NOT auto-resume
+    assert second.resume_pending() == 0
+    assert restored[0].paused and restored[0].needs_secrets
+    assert restored[0] in second.waiting_secrets()
+    assert second.provide_secrets(restored[0].id, {"password": "vault-pass-2026"})
+    assert restored[0].paused is False and restored[0].needs_secrets is False
+    assert "vault-pass-2026" not in queue.read_text(encoding="utf-8")
 
 
 def test_queue_survives_shutdown_and_ignores_corrupt_files(tmp_path):
