@@ -59,6 +59,11 @@ class Palette:
     def c(self, name: str) -> QColor:
         return QColor(getattr(self, name))
 
+    @property
+    def on_accent(self) -> str:
+        """Readable text colour for accent-coloured fills (WCAG-checked)."""
+        return accent_ink(self.accent, self.accent2)
+
 
 PALETTES: Dict[str, Palette] = {
     "aurora": Palette(
@@ -251,12 +256,36 @@ def _relative_luminance(hex_color: str) -> float:
     return 0.2126 * _chan(c.red()) + 0.7152 * _chan(c.green()) + 0.0722 * _chan(c.blue())
 
 
+def contrast_ratio(foreground: str, background: str) -> float:
+    """WCAG 2.1 contrast ratio between two colours (1.0 … 21.0)."""
+    a = _relative_luminance(foreground)
+    b = _relative_luminance(background)
+    high, low = max(a, b), min(a, b)
+    return (high + 0.05) / (low + 0.05)
+
+
+def accent_ink(*fills: str) -> str:
+    """Dark or light ink for text sitting on a coloured fill.
+
+    Picks whichever of the two candidates has the best *worst-case* contrast
+    across every fill (the primary button is a gradient, so the label has to stay
+    readable at both stops).  The old rule — "dark ink only above 0.62
+    luminance" — meant white text on all six shipped accents, which fails WCAG AA
+    (2.78:1 … 4.20:1).
+    """
+    candidates = ("#0B1020", "#FFFFFF")
+    usable = [fill for fill in fills if fill]
+    if not usable:
+        return "#0B1020"
+    return max(candidates, key=lambda ink: min(contrast_ratio(ink, fill) for fill in usable))
+
+
 def stylesheet(p: Palette, direction: str = "rtl") -> str:
     dim = p.text_dim
     family = ui_font_family()
     mono = mono_font_family()
     t = TYPE_SCALE
-    on_accent = "#101626" if _relative_luminance(p.accent) > 0.62 else "#FFFFFF"
+    on_accent = accent_ink(p.accent, p.accent2)
     is_rtl = str(direction or "rtl").lower() != "ltr"
     combo_pad_side = "padding-left" if is_rtl else "padding-right"
     combo_drop_pos = "center left" if is_rtl else "center right"
@@ -384,6 +413,10 @@ QComboBox QAbstractItemView::item {{
     padding: 2px 8px;
     border-radius: 6px;
 }}
+QSpinBox, QDoubleSpinBox {{
+    padding-left: 20px;
+    padding-right: 20px;
+}}
 QSpinBox::up-button, QSpinBox::down-button,
 QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {{
     background: {alpha(p.border, 0.6)};
@@ -394,6 +427,27 @@ QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {{
 QSpinBox::up-button:hover, QSpinBox::down-button:hover,
 QDoubleSpinBox::up-button:hover, QDoubleSpinBox::down-button:hover {{
     background: {alpha(p.accent, 0.4)};
+}}
+/* A styled button without a styled arrow draws an empty grey square: the two
+   little triangles are CSS borders, so they work without shipping an image. */
+QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {{
+    width: 0;
+    height: 0;
+    border-left: 3px solid transparent;
+    border-right: 3px solid transparent;
+    border-bottom: 4px solid {alpha(p.text, 0.75)};
+}}
+QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {{
+    width: 0;
+    height: 0;
+    border-left: 3px solid transparent;
+    border-right: 3px solid transparent;
+    border-top: 4px solid {alpha(p.text, 0.75)};
+}}
+QSpinBox::up-arrow:disabled, QSpinBox::down-arrow:disabled,
+QDoubleSpinBox::up-arrow:disabled, QDoubleSpinBox::down-arrow:disabled {{
+    border-bottom-color: {alpha(p.text_dim, 0.35)};
+    border-top-color: {alpha(p.text_dim, 0.35)};
 }}
 QListWidget::item, QTreeWidget::item {{
     padding: 5px 8px;

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from ..core.registry import tool
 from ..core.spec import (
@@ -22,6 +22,46 @@ def _vault(values: Dict[str, Any], ctx: RunContext) -> Vault:
     if not password:
         raise ToolError(ctx.M("رمز گاوصندوق لازم است.", "The vault password is required."))
     return Vault(Path(raw), password)
+
+
+#: A 6-character password was fine when the vault only held notes; it is not fine
+#: for an encrypted container, so the floor moved to 10 with a strength *warning*.
+MIN_PASSWORD = 10
+
+
+def _password_strength(password: str) -> int:
+    """0 = too short, 1 = weak, 2 = ok, 3 = strong. Never blocks on 2/3."""
+    if len(password) < MIN_PASSWORD:
+        return 0
+    classes = sum(bool(any(test(ch) for ch in password)) for test in (
+        str.islower, str.isupper, str.isdigit,
+        lambda ch: not ch.isalnum(),
+    ))
+    if len(password) >= 16 and classes >= 2:
+        return 3
+    if classes >= 2:
+        return 2
+    return 1
+
+
+def _password_problem(ctx: RunContext, password: str) -> Optional[ToolError]:
+    if _password_strength(password):
+        return None
+    return ToolError(ctx.M(
+        f"رمز حداقل {MIN_PASSWORD} نویسه باشد؛ یک عبارت عبور طولانی (مثلاً چهار کلمه) بهتر است.",
+        f"Use at least {MIN_PASSWORD} characters — a long passphrase (four words) is better.",
+    ))
+
+
+def _password_hint(ctx: RunContext, password: str) -> str:
+    """A one-line warning appended to the result for weak-but-accepted passwords."""
+    if _password_strength(password) > 1:
+        return ""
+    return ctx.M(
+        "\nهشدار: رمز ضعیف است (همه‌ی نویسه‌ها یک‌جنس‌اند). یک عبارت عبور طولانی‌تر بگذارید.",
+        "\nWarning: that password is weak (all characters are the same kind). "
+        "Consider a longer passphrase.",
+    )
 
 
 def _friendly(ctx: RunContext, exc: Exception) -> ToolError:
@@ -51,8 +91,9 @@ def _friendly(ctx: RunContext, exc: Exception) -> ToolError:
 def vault_create(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     if str(v.get("password") or "") != str(v.get("confirm") or ""):
         raise ToolError(ctx.M("رمز و تکرارش یکسان نیستند.", "The two passwords do not match."))
-    if len(str(v.get("password") or "")) < 6:
-        raise ToolError(ctx.M("رمز حداقل ۶ نویسه باشد.", "Use at least 6 characters."))
+    problem = _password_problem(ctx, str(v.get("password") or ""))
+    if problem is not None:
+        raise problem
     target = Path(str(v.get("vault")))
     if target.suffix.lower() != ".wgv":
         target = target.with_suffix(".wgv")
@@ -65,7 +106,8 @@ def vault_create(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     except VaultError as exc:
         raise _friendly(ctx, exc) from exc
     return RunResult(
-        message=ctx.M("گاوصندوق ساخته شد.", "Vault created."),
+        message=ctx.M("گاوصندوق ساخته شد.", "Vault created.")
+        + _password_hint(ctx, str(v.get("password") or "")),
         outputs=[str(target)],
         details=ctx.M(f"مسیر: {target}\nالگوریتم: AES-256-GCM · کلید از scrypt ({vault.strength()})\n"
                       f"هدر گاوصندوق هم با GCM احراز می‌شود و هر فایل جداگانه رمز می‌شود.",
@@ -158,7 +200,8 @@ def vault_list(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
         Field("vault", K_TEXT, "فایل گاوصندوق", "Vault file", required=True, filt="WinGenius Vault (*.wgv)"),
         Field("password", K_PASSWORD, "رمز", "Password", required=True),
         Field("names", K_TEXT, "نام‌ها", "Entry names", default="",
-              placeholder="a.txt, b.pdf  — خالی = همه"),
+              placeholder="a.txt, b.pdf  — خالی = همه",
+              placeholder_en="a.txt, b.pdf — empty = everything"),
         Field("out", K_DIR, "پوشه‌ی خروجی", "Output folder", default=""),
     ],
 )
@@ -186,8 +229,10 @@ def vault_extract(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
 @tool(
     id="vault_remove", category="security", name="حذف از گاوصندوق", name_en="Remove from vault",
     danger=True,
-    desc="یک یا چند مورد را از گاوصندوق حذف می‌کند (بدون امکان بازگردانی).",
-    desc_en="Deletes one or more entries from the vault (not recoverable).",
+    desc="یک یا چند مورد را از گاوصندوق حذف می‌کند؛ یک نسخه‌ی پشتیبان در ژورنال نگه می‌دارد "
+         "تا «واگرد» بتواند برگرداند.",
+    desc_en="Deletes entries from the vault, keeping a backup in the journal so "
+            "Undo can bring them back.",
     icon="trash", order=45, keywords=("vault", "remove", "گاوصندوق", "حذف"),
     fields=[
         Field("vault", K_TEXT, "فایل گاوصندوق", "Vault file", required=True, filt="WinGenius Vault (*.wgv)"),
@@ -196,6 +241,8 @@ def vault_extract(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     ],
 )
 def vault_remove(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
+    from ..core.journal import journal
+
     vault = _vault(v, ctx)
     try:
         vault.unlock()
@@ -203,9 +250,37 @@ def vault_remove(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
         raise _friendly(ctx, exc) from exc
     names = [item.strip() for item in str(v.get("names") or "").replace("،", ",").split(",")
              if item.strip()]
-    removed = vault.remove(names)
-    return RunResult(message=ctx.M(f"{removed} مورد حذف شد.", f"{removed} entry(ies) removed."),
-                     outputs=[str(vault.path)])
+    if not names:
+        raise ToolError(ctx.M("نام موردی را که باید حذف شود بنویسید.",
+                              "Type the name of the entry to remove."))
+    known = set(vault.names())
+    wanted = [name for name in names if name in known]
+    missing = [name for name in names if name not in known]
+    if not wanted:
+        raise ToolError(ctx.M(f"چنین موردی در گاوصندوق نیست: {'، '.join(missing)}",
+                              f"No such entry in the vault: {', '.join(missing)}"))
+    # Snapshot the .wgv container *before* touching it: undoing this operation
+    # restores the file, so a typo in the name list is no longer permanent.
+    undo_id = journal().record_file_backup(
+        vault.path,
+        f"حذف {len(wanted)} مورد از گاوصندوق",
+        f"removed {len(wanted)} vault entry(ies)",
+        tool_id="vault_remove",
+    )
+    removed = vault.remove(wanted)
+    if undo_id:
+        undo_note = ctx.M("\nبا «واگرد» قابل بازگردانی است.",
+                          "\nCan be undone with Undo.")
+    else:
+        undo_note = ctx.M("\n(گاوصندوق بزرگ‌تر از حد پشتیبان بود؛ این حذف برگشت‌پذیر نیست.)",
+                          "\n(vault was too large to back up; this deletion is not reversible.)")
+    missing_note = ""
+    if missing:
+        missing_note = ctx.M(f"\nپیدا نشد: {'، '.join(missing)}",
+                             f"\nnot found: {', '.join(missing)}")
+    return RunResult(
+        message=ctx.M(f"{removed} مورد حذف شد.", f"{removed} entry(ies) removed.") + undo_note + missing_note,
+        outputs=[str(vault.path)])
 
 
 @tool(
@@ -223,6 +298,9 @@ def vault_remove(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
 def vault_password(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     if str(v.get("new_password") or "") != str(v.get("confirm") or ""):
         raise ToolError(ctx.M("رمزهای تازه یکسان نیستند.", "The new passwords do not match."))
+    problem = _password_problem(ctx, str(v.get("new_password") or ""))
+    if problem is not None:
+        raise problem
     vault = _vault(v, ctx)
     try:
         vault.unlock()
@@ -230,7 +308,8 @@ def vault_password(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     except VaultError as exc:
         raise _friendly(ctx, exc) from exc
     return RunResult(message=ctx.M("رمز گاوصندوق عوض شد و همه‌چیز دوباره رمز شد.",
-                                   "Vault password changed; everything re-encrypted."),
+                                   "Vault password changed; everything re-encrypted.")
+                     + _password_hint(ctx, str(v.get("new_password") or "")),
                      outputs=[str(vault.path)])
 
 

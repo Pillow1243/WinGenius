@@ -11,8 +11,8 @@ from ..core.spec import (
     K_BOOL, K_CHOICE, K_DIR, K_FILE, K_FILES, K_FLOAT, K_INT, K_SAVE, K_TEXT,
     Field, RunContext, RunResult, ToolError,
 )
-from ..core.utils import human_size, parse_ranges, unique_path
-from ._helpers import ensure_dir, first_file, fmt_out_message, out_dir, require, save_target
+from ..core.utils import human_size
+from ._helpers import first_file, page_ranges, save_target
 from .pdf_tools import PDF_FILTER, _fitz, _open_doc, _open_reader, _pypdf
 
 
@@ -41,7 +41,7 @@ def pdf_delete_pages(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     src = first_file(v, "src", ctx)
     reader = _open_reader(ctx, src)
     total = len(reader.pages)
-    drop = set(parse_ranges(str(v.get("pages") or ""), total))
+    drop = set(page_ranges(ctx, str(v.get("pages") or ""), total))
     if not drop:
         raise ToolError(ctx.M("شماره‌ی صفحه‌ی معتبری وارد نشد.", "No valid page numbers given."))
     if len(drop) >= total:
@@ -85,7 +85,7 @@ def pdf_reorder_pages(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     src = first_file(v, "src", ctx)
     reader = _open_reader(ctx, src)
     total = len(reader.pages)
-    order = parse_ranges(str(v.get("order") or ""), total)
+    order = page_ranges(ctx, str(v.get("order") or ""), total)
     if not order:
         raise ToolError(ctx.M("الگوی ترتیب خالی است.", "The order pattern is empty."))
     pypdf = _pypdf(ctx)
@@ -303,7 +303,7 @@ def pdf_to_html(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     keywords=("find in pdf", "search pdf", "جستجو در پی دی اف", "پیدا کردن"),
     fields=[
         Field("src", K_FILE, "فایل PDF", "PDF file", required=True, filt=PDF_FILTER),
-        Field("query", K_TEXT, "عبارت", "Phrase", required=True, placeholder="متن مورد جست‌وجو"),
+        Field("query", K_TEXT, "عبارت", "Phrase", required=True, placeholder="متن مورد جست‌وجو", placeholder_en="text to find"),
         Field("ignore_case", K_BOOL, "بدون توجه به بزرگی/کوچکی حروف", "Ignore letter case", default=True),
     ],
 )
@@ -363,7 +363,7 @@ def pdf_find_text(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
         Field("title", K_TEXT, "عنوان", "Title"),
         Field("author", K_TEXT, "نویسنده", "Author"),
         Field("subject", K_TEXT, "موضوع", "Subject"),
-        Field("keywords", K_TEXT, "کلمات کلیدی", "Keywords", placeholder="با کاما جدا کنید"),
+        Field("keywords", K_TEXT, "کلمات کلیدی", "Keywords", placeholder="با کاما جدا کنید", placeholder_en="comma separated"),
         Field("out", K_SAVE, "فایل خروجی", "Output file", filt="PDF (*.pdf)"),
     ],
 )

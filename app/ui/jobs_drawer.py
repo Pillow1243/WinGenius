@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
 from ..core import theme
 from ..core.i18n import t
 from ..core.theme import Palette
-from ..core.utils import open_path, reveal_path
+from ..core.utils import open_path, reveal_path, ui_number
 from .widgets import Card, divider, label
 
 STATUS_COLORS = {"queued": "#8FA3BF", "running": "#18C8F5", "done": "#2BD9A0",
@@ -75,9 +75,11 @@ class JobRow(QFrame):
         title = label(job.title or job.tool_id, "RowTitle")
         title.setToolTip(job.tool_id)
         head.addWidget(title, 1)
+        digits = lambda text: ui_number(text, lang)  # noqa: E731 - display only
         meta = label(f"{_status_text(job.status, lang)}"
-                     + (f" · {job.elapsed:.1f}s" if job.elapsed else "")
-                     + (f" · {_ago(job.created, lang)}" if job.status in ("done", "failed", "cancelled") else ""),
+                     + (f" · {digits(f'{job.elapsed:.1f}s')}" if job.elapsed else "")
+                     + (f" · {digits(_ago(job.created, lang))}" if job.status in ("done", "failed", "cancelled") else "")
+                     + (f" · {t('jb.restored')}" if getattr(job, "paused", False) else ""),
                      "Hint")
         head.addWidget(meta)
         layout.addLayout(head)
@@ -96,6 +98,8 @@ class JobRow(QFrame):
         message = (job.error or job.message or "").strip().splitlines()
         detail = menu = None
         detail = message[0][:110] if message else ""
+        if not detail and getattr(job, "needs_secrets", False):
+            detail = t("jb.needs_secret")
         menu = QHBoxLayout()
         menu.setSpacing(6)
         self._message = label(detail, "FieldHelp")
@@ -190,6 +194,13 @@ class JobsDrawer(QWidget):
 
         card_layout.addWidget(divider())
         footer = QHBoxLayout()
+        # Only visible when the previous session left jobs behind (B8).
+        self._resume = QPushButton(t("jb.resume", 0))
+        self._resume.setObjectName("Primary")
+        self._resume.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._resume.clicked.connect(self._resume_queue)
+        self._resume.setVisible(False)
+        footer.addWidget(self._resume)
         self._clear = QPushButton(t("jb.clear"))
         self._clear.setObjectName("Ghost")
         self._clear.clicked.connect(self._clear_finished)
@@ -245,10 +256,16 @@ class JobsDrawer(QWidget):
             return
         jobs = self.manager.jobs()[:40]
         stats = self.manager.stats()
+        num = lambda value: ui_number(value, self.lang)  # noqa: E731 - display only
         self._stats.setText(
-            (f"{stats['active']} active · {stats['done']} done · {stats['failed']} failed")
+            (f"{num(stats['active'])} active · {num(stats['done'])} done · {num(stats['failed'])} failed")
             if self.lang == "en" else
-            (f"{stats['active']} فعال · {stats['done']} انجام‌شده · {stats['failed']} خطا"))
+            (f"{num(stats['active'])} فعال · {num(stats['done'])} انجام‌شده · {num(stats['failed'])} خطا"))
+        resumable = self.manager.has_resumable()
+        self._resume.setVisible(resumable)
+        if resumable:
+            self._resume.setText(t("jb.resume", len(self.manager.resumable())))
+        self._clear.setEnabled(bool(stats["done"] or stats["failed"] or stats["cancelled"]))
         while self._body_layout.count():
             item = self._body_layout.takeAt(0)
             widget = item.widget()
@@ -286,6 +303,11 @@ class JobsDrawer(QWidget):
         job = self.manager.get(job_id) if self.manager else None
         if job is not None:
             self.openToolRequested.emit(job.tool_id, dict(job.values or {}))
+
+    def _resume_queue(self) -> None:
+        if self.manager is not None:
+            self.manager.resume_pending()
+        self.refresh()
 
     def _clear_finished(self) -> None:
         if self.manager is not None:

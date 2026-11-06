@@ -78,7 +78,7 @@ def create_app(argv: List[str] | None = None) -> "QApplication":
     app.setOrganizationName(APP_NAME)
     app.setStyle("Fusion")
 
-    setup_logging(debug="--debug" in sys.argv)
+    setup_logging(debug="--debug" in (argv if argv is not None else sys.argv))
     try:
         report = upgrade.migrate(logger=log)
         if report.get("steps"):
@@ -221,7 +221,7 @@ def main(argv: List[str] | None = None) -> int:
         if incoming:
             log.info("send-to received %d item(s)", len(incoming))
             window._show_drop(incoming)
-    if "--self-test" in sys.argv:
+    if "--self-test" in argv:
         from PySide6.QtCore import QTimer
 
         QTimer.singleShot(2500, app.quit)

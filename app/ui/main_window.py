@@ -343,7 +343,28 @@ class MainWindow(QWidget):
         super().changeEvent(event)
         if event.type() == event.Type.WindowStateChange:
             self._maximized = self.isMaximized()
+            self._sync_max_button()
             self.update()
+
+    # ------------------------------------------------------------- window state
+    def toggle_maximized(self) -> None:
+        """Maximize / restore, keeping the custom shadow-margin in sync."""
+        if self.isMaximized():
+            self.showNormal()
+        else:
+            self.showMaximized()
+        self._sync_max_button()
+
+    def _sync_max_button(self) -> None:
+        button = getattr(self, "_max_button", None)
+        if button is None:
+            return
+        maximized = self.isMaximized()
+        key = "tb.restore" if maximized else "tb.maximize"
+        color = QColor(self.palette_ref.text_dim if hasattr(self, "palette_ref") else "#C9D4E6")
+        button.setIcon(_make_icon("restore" if maximized else "maximize", color, 34))
+        button.setToolTip(t(key))
+        button.setAccessibleName(t(key))
 
     # ---------------------------------------------------------------- helpers
     def _build_titlebar(self) -> None:
@@ -401,6 +422,13 @@ class MainWindow(QWidget):
         self._minimize_button.clicked.connect(self.showMinimized)
         layout.addWidget(self._minimize_button)
 
+        # A frameless window has no OS chrome, so without this button the only way
+        # to fill the screen was a double click on the title bar.
+        self._max_button = icon_button("maximize", t("tb.maximize"), 34)
+        self._max_button.setObjectName("MaxButton")
+        self._max_button.clicked.connect(self.toggle_maximized)
+        layout.addWidget(self._max_button)
+
         self._close_button = icon_button("x", t("tb.close"), 34)
         self._close_button.clicked.connect(self.close)
         layout.addWidget(self._close_button)
@@ -409,6 +437,8 @@ class MainWindow(QWidget):
         for sequence in ("Ctrl+K", "Ctrl+F", "Ctrl+Space"):
             shortcut = QShortcut(QKeySequence(sequence), self)
             shortcut.activated.connect(self.open_search)
+        max_shortcut = QShortcut(QKeySequence("F11"), self)
+        max_shortcut.activated.connect(self.toggle_maximized)
         settings_shortcut = QShortcut(QKeySequence("Ctrl+,"), self)
         settings_shortcut.activated.connect(self.open_settings)
         home_shortcut = QShortcut(QKeySequence("Ctrl+H"), self)
@@ -1367,6 +1397,7 @@ class MainWindow(QWidget):
         strong = QColor(self.palette_ref.text)
         self._settings_button.setIcon(_make_icon("sliders", dim, 34))
         self._minimize_button.setIcon(_make_icon("minus", dim, 34))
+        self._sync_max_button()
         self._close_button.setIcon(_make_icon("x", QColor(self.palette_ref.danger), 34))
         self._back_button.setIcon(_make_icon("back", strong, 34))
 
@@ -1377,15 +1408,18 @@ class MainWindow(QWidget):
         self._lang_button.setText(t("tb.lang"))
         self._settings_button.setToolTip(t("tb.settings"))
         self._minimize_button.setToolTip(t("tb.minimize"))
+        self._max_button.setToolTip(t("tb.restore") if self.isMaximized() else t("tb.maximize"))
         self._close_button.setToolTip(t("tb.close"))
         self._back_button.setToolTip(t("center.back"))
         self._settings_button.setAccessibleName(t("tb.settings"))
         self._minimize_button.setAccessibleName(t("tb.minimize"))
+        self._sync_max_button()
         self._close_button.setAccessibleName(t("tb.close"))
         self._back_button.setAccessibleName(t("center.back"))
         self._search_button.setAccessibleName(t("home.search"))
         self._lang_button.setAccessibleName(t("tb.lang"))
         self.quick_search.set_language(self.lang)
+        self.tool_panel.set_language(self.lang)
         self.settings_panel.set_language(self.lang)
         self.jobs_drawer.set_language(self.lang)
         self.drop_zone.set_language(self.lang)
@@ -1412,8 +1446,10 @@ class MainWindow(QWidget):
         set_language(lang)
         self._apply_theme(rebuild=False)
         self._rebuild_page()
-        if self._overlay == "tool" and self.tool_panel.spec is not None:
-            self.tool_panel.load(self.tool_panel.spec, lang, settings.output_dir)
+        # `_apply_theme()` already retranslates every panel, and
+        # `ToolPanel.set_language()` re-renders the open form *with the values the
+        # user has typed*. Reloading here as well reset the form to its defaults
+        # (a half-filled form was wiped by pressing the EN/فا button).
 
     def _show_toast(self, message: str, kind: str = "info") -> None:
         self.toast.set_palette_ref(self.palette_ref)

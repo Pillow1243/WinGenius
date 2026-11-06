@@ -1,7 +1,12 @@
 """Tiny two-language (Persian / English) string table for the shell UI."""
 from __future__ import annotations
 
+import re
 from typing import Any, Dict
+
+# Persian/Arabic letters only: Persian and Arabic-Indic *digits* are legitimate
+# inside numbers and labels, so they are deliberately excluded.
+ARABIC_LETTER = re.compile(r"[\u0621-\u064A\u066E-\u06D3\u067E\u0686\u0698\u06A9\u06AF\u06CC]")
 
 STRINGS: Dict[str, Dict[str, str]] = {
     # app shell
@@ -16,6 +21,8 @@ STRINGS: Dict[str, Dict[str, str]] = {
     "page.of": {"fa": "صفحه {0} از {1}", "en": "Page {0} of {1}"},
     # toolbar
     "tb.minimize": {"fa": "کوچک کردن", "en": "Minimize"},
+    "tb.maximize": {"fa": "بزرگ کردن", "en": "Maximize"},
+    "tb.restore": {"fa": "بازگرداندن اندازه", "en": "Restore down"},
     "tb.close": {"fa": "بستن", "en": "Close"},
     "tb.settings": {"fa": "تنظیمات", "en": "Settings"},
     "tb.lang": {"fa": "EN", "en": "فا"},
@@ -27,6 +34,12 @@ STRINGS: Dict[str, Dict[str, str]] = {
     "tp.browse": {"fa": "انتخاب…", "en": "Browse…"},
     "tp.browse_dir": {"fa": "انتخاب پوشه…", "en": "Choose folder…"},
     "tp.save_as": {"fa": "ذخیره در…", "en": "Save as…"},
+    # Placeholders show an *example path*; the button next to the field already
+    # says "Browse…", so repeating it inside the field was pure noise.
+    "tp.path_file": {"fa": "مثال: C:\\Users\\me\\Document.pdf", "en": "e.g. C:\\Users\\me\\Document.pdf"},
+    "tp.path_files": {"fa": "یک یا چند فایل — برای افزودن دوباره بزنید", "en": "one or more files — press Browse again to add"},
+    "tp.path_dir": {"fa": "مثال: C:\\Users\\me\\Output", "en": "e.g. C:\\Users\\me\\Output"},
+    "tp.path_save": {"fa": "مثال: C:\\Users\\me\\result.pdf", "en": "e.g. C:\\Users\\me\\result.pdf"},
     "tp.ready": {"fa": "آماده", "en": "Ready"},
     "tp.running": {"fa": "در حال اجرا…", "en": "Running…"},
     "tp.done": {"fa": "پایان یافت", "en": "Finished"},
@@ -34,6 +47,9 @@ STRINGS: Dict[str, Dict[str, str]] = {
     "tp.open_output": {"fa": "باز کردن خروجی", "en": "Open output"},
     "tp.show_in_folder": {"fa": "نمایش در پوشه", "en": "Show in folder"},
     "tp.copy": {"fa": "کپی", "en": "Copy"},
+    "tp.save_report": {"fa": "ذخیره‌ی گزارش", "en": "Save report"},
+    "tp.report_saved": {"fa": "گزارش ذخیره شد", "en": "Report saved"},
+    "tp.report_filter": {"fa": "گزارش (*.md *.txt)", "en": "Report (*.md *.txt)"},
     "tp.copied": {"fa": "کپی شد", "en": "Copied"},
     "tp.log": {"fa": "گزارش", "en": "Log"},
     "tp.clear": {"fa": "پاک کردن", "en": "Clear"},
@@ -64,6 +80,8 @@ STRINGS: Dict[str, Dict[str, str]] = {
     "st.accent": {"fa": "رنگ تأکیدی", "en": "Accent color"},
     "st.animations": {"fa": "انیمیشن‌ها", "en": "Animations"},
     "st.glow": {"fa": "درخشش نئونی", "en": "Neon glow"},
+    "st.persian_digits": {"fa": "نمایش ارقام فارسی (۰-۹) در شمارنده‌ها",
+                          "en": "Persian digits (۰-۹) in counters"},
     "st.confirm": {"fa": "تأیید قبل از عملیات خطرناک", "en": "Confirm dangerous actions"},
     "st.output": {"fa": "پوشه‌ی خروجی پیش‌فرض", "en": "Default output folder"},
     "st.open_result": {"fa": "باز کردن خودکار نتیجه", "en": "Open result automatically"},
@@ -94,6 +112,10 @@ STRINGS: Dict[str, Dict[str, str]] = {
     "jb.again": {"fa": "اجرای دوباره", "en": "Run again"},
     "jb.clear": {"fa": "پاک کردن تمام‌شده‌ها", "en": "Clear finished"},
     "jb.badge": {"fa": "{0} در حال اجرا", "en": "{0} running"},
+    "jb.resume": {"fa": "ادامه‌ی صف ({0})", "en": "Resume queue ({0})"},
+    "jb.restored": {"fa": "از نشست قبل", "en": "previous session"},
+    "jb.needs_secret": {"fa": "پس از بازکردن، رمز/کلیدش را دوباره وارد کن.",
+                        "en": "Re-enter its password/key before running."},
     # smart drop
     "dz.title": {"fa": "فایل را همین‌جا رها کنید", "en": "Drop files here"},
     "dz.hint": {"fa": "بر اساس نوع فایل، بهترین ابزارها را پیشنهاد دادیم.",

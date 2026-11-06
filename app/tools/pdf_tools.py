@@ -11,10 +11,10 @@ from ..core.spec import (
     K_BOOL, K_CHOICE, K_DIR, K_FILE, K_FILES, K_FLOAT, K_INT, K_PASSWORD, K_SAVE, K_TEXT,
     Field, RunContext, RunResult, ToolError,
 )
-from ..core.utils import human_size, parse_ranges, unique_path
+from ..core.utils import human_size, unique_path
 from ._helpers import (
     ensure_dir, files_or_raise, first_file, fmt_out_message, need_windows, out_dir,
-    require, save_target,
+    page_ranges, require, save_target,
 )
 
 PDF_FILTER = "PDF (*.pdf);;همه فایلها (*)"
@@ -464,7 +464,7 @@ def pdf_split(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
             part = part.strip()
             if not part:
                 continue
-            groups.append(parse_ranges(part, total_pages))
+            groups.append(page_ranges(ctx, part, total_pages))
     else:
         step = max(1, int(v.get("chunk") or 10))
         groups = [list(range(i, min(i + step, total_pages))) for i in range(0, total_pages, step)]
@@ -507,10 +507,7 @@ def pdf_rotate(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     src = first_file(v, "src", ctx)
     reader = _open_reader(ctx, src)
     total = len(reader.pages)
-    try:
-        targets = set(parse_ranges(str(v.get("pages") or ""), total))
-    except ValueError as exc:
-        raise ToolError(ctx.M(f"بازه‌ی صفحه‌ها نامعتبر است: {exc}", f"Invalid page range: {exc}"))
+    targets = set(page_ranges(ctx, str(v.get("pages") or ""), total))
     angle = int(v.get("angle") or 90)
     for index, page in enumerate(reader.pages):
         if index in targets:
@@ -732,10 +729,7 @@ def pdf_extract_pages(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     src = first_file(v, "src", ctx)
     reader = _open_reader(ctx, src)
     total = len(reader.pages)
-    try:
-        indices = parse_ranges(str(v.get("pages") or ""), total)
-    except ValueError as exc:
-        raise ToolError(ctx.M(f"بازه نامعتبر است: {exc}", f"Invalid range: {exc}"))
+    indices = page_ranges(ctx, str(v.get("pages") or ""), total)
     if not indices:
         raise ToolError(ctx.M("هیچ صفحه‌ای انتخاب نشد.", "No pages selected."))
     writer = pypdf.PdfWriter()

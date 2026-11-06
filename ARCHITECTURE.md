@@ -10,7 +10,7 @@ main.py
   └─ app/bootstrap.py ── headless CLI fast-path first; QApplication, theme, logging, single instance
        ├─ app/core/cli.py         pure-Python headless flags (--run / --yes / --dry-run / --serve …)
        │    └─ app/core/execution.py  ExecutionService + 4-tier dynamic risk classifier & policy guard
-       │         └─ app/core/registry.py   load_all() → 46 tool modules / 292 ToolSpecs / 11 categories
+       │         └─ app/core/registry.py   load_all() → 43 registered tool modules (45 files) / 292 ToolSpecs / 11 categories
        │              └─ app/core/spec.py    ToolSpec, Field, RunContext (+ policy), RunResult, ToolError
        └─ app/ui/main_window.py   shell + panels (Qt Widgets, offscreen-testable)
             ├─ app/core/worker.py     QThread execution via ExecutionService, cooperative cancel

@@ -77,14 +77,55 @@ CHECKSUMS_FILENAME = "SHA256SUMS.txt"
 # the client binary. Private signing keys MUST remain offline / in protected CI secrets
 # (`WINGENIUS_UPDATE_SIGNING_KEY`) and NEVER in the repository.
 # Generate/rotate keys with: `python scripts/sign_release.py --keygen`
+#: The value shipped in the repository. It decodes to 32 bytes, so it *looks* like a
+#: usable key, but no private key for it exists: a release must replace it before
+#: publishing, otherwise every signed manifest fails verification.
+PLACEHOLDER_PUBKEY = "9f3K6wR8mQ2vL7nX4pT1yB5cH0jD8sF2gA6eW3uZ9iM="
+
 TRUSTED_RELEASE_PUBKEYS: Dict[str, str] = {
-    "wingenius-release-2026-01": "9f3K6wR8mQ2vL7nX4pT1yB5cH0jD8sF2gA6eW3uZ9iM=",
+    "wingenius-release-2026-01": PLACEHOLDER_PUBKEY,
 }
 
 # Optional pinned Windows Authenticode SHA-1/SHA-256 certificate thumbprints (uppercase hex).
 # Authenticode alone establishes publisher identity only when this set is configured.
 # An empty set means that a pinned Ed25519 manifest is required by default.
 TRUSTED_AUTHENTICODE_THUMBPRINTS: frozenset[str] = frozenset()
+
+
+def keyring_status() -> Dict[str, Any]:
+    """Report whether the built-in update trust store can verify a real release.
+
+    `ready=False` means auto-update cannot work for anybody: either the shipped
+    placeholder key is still there, a key is malformed, or no key is pinned at all.
+    Packaging/CI uses this to warn before a release goes out.
+    """
+    placeholder = [kid for kid, pub in TRUSTED_RELEASE_PUBKEYS.items() if pub == PLACEHOLDER_PUBKEY]
+    invalid: List[str] = []
+    for kid, pub in TRUSTED_RELEASE_PUBKEYS.items():
+        try:
+            raw = base64.b64decode(pub, validate=True)
+        except Exception:
+            invalid.append(kid)
+            continue
+        if len(raw) != 32:
+            invalid.append(kid)
+    problems: List[str] = []
+    if not TRUSTED_RELEASE_PUBKEYS:
+        problems.append("no release public key is pinned")
+    if placeholder:
+        # Deliberately no key ids here: this string ends up in build logs, and the
+        # alert history should not turn into a key inventory.
+        problems.append(f"{len(placeholder)} pinned key(s) are still the shipped placeholder")
+    if invalid:
+        problems.append(f"{len(invalid)} pinned key(s) do not decode to 32 bytes")
+    return {
+        "keys": len(TRUSTED_RELEASE_PUBKEYS),
+        "placeholder": placeholder,
+        "invalid": invalid,
+        "authenticode": len(TRUSTED_AUTHENTICODE_THUMBPRINTS),
+        "problems": problems,
+        "ready": not problems,
+    }
 
 
 # ------------------------------------------------------------------ exceptions

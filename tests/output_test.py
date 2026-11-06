@@ -496,19 +496,19 @@ def group_crypto(fx: dict) -> None:
         check("file_decrypt refuses a wrong password", True, str(exc)[:40])
 
     vault_path = OUT / "demo.wgv"
-    run("vault_create", vault=str(vault_path), password="vault-pass", confirm="vault-pass",
+    run("vault_create", vault=str(vault_path), password="vault-pass-2026", confirm="vault-pass-2026",
         iterations="14")
-    vault = Vault(vault_path, "vault-pass")
+    vault = Vault(vault_path, "vault-pass-2026")
     vault.unlock()
     check("vault uses the authenticated v2 container",
           vault_path.read_bytes().startswith(MAGIC_V2), str(vault_path.read_bytes()[:4]))
     check("vault key derivation is scrypt", "scrypt" in vault.strength(), vault.strength())
 
-    run("vault_add", vault=str(vault_path), password="vault-pass", files=[str(source)])
-    check("vault_add stores the entry", "secret.txt" in Vault(vault_path, "vault-pass").names(),
-          str(Vault(vault_path, "vault-pass").names()))
+    run("vault_add", vault=str(vault_path), password="vault-pass-2026", files=[str(source)])
+    check("vault_add stores the entry", "secret.txt" in Vault(vault_path, "vault-pass-2026").names(),
+          str(Vault(vault_path, "vault-pass-2026").names()))
 
-    result = run("vault_extract", vault=str(vault_path), password="vault-pass",
+    result = run("vault_extract", vault=str(vault_path), password="vault-pass-2026",
                  names="secret.txt", out_dir=str(OUT / "vault_out"))
     restored = [Path(p) for p in (result.outputs or []) if Path(p).is_file()]
     check("vault_extract restores the file byte for byte",
@@ -521,7 +521,7 @@ def group_crypto(fx: dict) -> None:
     tampered = OUT / "tampered.wgv"
     tampered.write_bytes(bytes(raw))
     try:
-        Vault(tampered, "vault-pass").unlock()
+        Vault(tampered, "vault-pass-2026").unlock()
         check("vault rejects a tampered header", False, "header edit was accepted")
     except Exception:
         check("vault rejects a tampered header", True)

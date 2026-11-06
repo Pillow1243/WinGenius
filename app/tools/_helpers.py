@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Iterable, List, Optional
 
 from ..core.spec import RunContext, ToolError
-from ..core.utils import ensure_dir, unique_path
+from ..core.utils import RangeError, ensure_dir, parse_ranges, unique_path
 
 IS_WINDOWS = sys.platform.startswith("win")
 
@@ -186,6 +186,23 @@ def has_ffprobe() -> Optional[str]:
             if Path(name).exists():
                 return str(name)
     return None
+
+
+def page_ranges(ctx: RunContext, text: str, total: int, example: str = "1-3, 7",
+                example_en: str = "") -> List[int]:
+    """Parse a user-typed page list with one shared, translated error message.
+
+    Every tool that takes "which pages" (`pdf_extract_pages`, `pdf_delete_pages`,
+    `pdf_reorder_pages`, `pdf_redact`, …) goes through here so a typo produces the
+    same sentence everywhere instead of a raw English parser message.
+    """
+    try:
+        return parse_ranges(text, total)
+    except RangeError as exc:
+        raise ToolError(ctx.M(
+            f"«{exc.part}» شماره‌ی صفحه نیست. نمونه‌ی درست: {example}",
+            f"“{exc.part}” is not a page number. Example: {example_en or example}",
+        )) from None
 
 
 def fmt_out_message(ctx: RunContext, count: int, where: str) -> str:

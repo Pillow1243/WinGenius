@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import threading
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -95,19 +97,107 @@ def _run_ffmpeg(ctx: RunContext, args: List[str], duration: float = 0.0, label: 
         raise ToolError(ctx.M(f"ffmpeg ناموفق بود:\n{detail}", f"ffmpeg failed:\n{detail}"))
 
 
-def _duration(path: Path) -> float:
+_DURATION_RE = re.compile(r"Duration:\s*(\d+):(\d\d):(\d\d(?:\.\d+)?)")
+
+#: (path, mtime_ns, size) → (duration seconds, {"audio", "video"}).
+#: A flow can ask for the duration of the same file a dozen times (trim, speed,
+#: progress bars, merging); probing spawns a process, so remember the answer for
+#: as long as the file does not change.
+_PROBE_CACHE: "OrderedDict[tuple, tuple]" = OrderedDict()
+_PROBE_CACHE_MAX = 96
+
+
+def _probe_key(path: Path) -> tuple:
+    try:
+        stat = path.stat()
+        return (str(path), stat.st_mtime_ns, stat.st_size)
+    except OSError:
+        return (str(path), 0, 0)
+
+
+def _parse_ffmpeg_report(text: str) -> tuple:
+    """(duration, kinds) out of the banner `ffmpeg -i file` prints on stderr."""
+    duration = 0.0
+    match = _DURATION_RE.search(text or "")
+    if match:
+        hours, minutes, seconds = (float(group) for group in match.groups())
+        duration = hours * 3600.0 + minutes * 60.0 + seconds
+    kinds = set()
+    if "Audio:" in text:
+        kinds.add("audio")
+    if "Video:" in text:
+        kinds.add("video")
+    return duration, kinds
+
+
+def _probe_with_ffprobe(path: Path) -> Optional[tuple]:
     probe = has_ffprobe()
-    if probe:
-        try:
-            out = subprocess.run(
-                [probe, "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", str(path)],
-                capture_output=True, text=True, timeout=30,
-            )
-            data = json.loads(out.stdout or "{}")
-            return float(data.get("format", {}).get("duration") or 0)
-        except Exception:
-            return 0.0
-    return 0.0
+    if not probe:
+        return None
+    try:
+        out = subprocess.run(
+            [probe, "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", str(path)],
+            capture_output=True, text=True, timeout=30,
+        )
+        data = json.loads(out.stdout or "{}")
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    try:
+        duration = float(data.get("format", {}).get("duration") or 0)
+    except (TypeError, ValueError):
+        duration = 0.0
+    kinds = {str(item.get("codec_type") or "") for item in data.get("streams", [])
+             if isinstance(item, dict)}
+    kinds.discard("")
+    return duration, kinds
+
+
+def _probe_with_ffmpeg(path: Path) -> Optional[tuple]:
+    """Fallback for installs without ffprobe (imageio-ffmpeg ships ffmpeg only).
+
+    Without this every duration-dependent tool — contact sheets, progress bars,
+    audio merging, speed changes — silently behaved as if the file were 0 s long.
+    """
+    exe = has_ffmpeg()
+    if not exe:
+        return None
+    try:
+        out = subprocess.run([exe, "-hide_banner", "-i", str(path)],
+                             capture_output=True, text=True, timeout=30,
+                             encoding="utf-8", errors="replace")
+    except Exception:
+        return None
+    return _parse_ffmpeg_report((out.stderr or "") + (out.stdout or ""))
+
+
+def _probe(path: Path) -> tuple:
+    """(duration, kinds) for one media file — ffprobe first, ffmpeg as the fallback."""
+    key = _probe_key(path)
+    cached = _PROBE_CACHE.get(key)
+    if cached is not None:
+        _PROBE_CACHE.move_to_end(key)
+        return cached
+    result = _probe_with_ffprobe(path)
+    if not result or (not result[1] and result[0] <= 0):
+        fallback = _probe_with_ffmpeg(path)
+        if fallback and (not result or (fallback[1] or fallback[0] > 0)):
+            result = fallback
+    if result is None:
+        result = (0.0, set())
+    _PROBE_CACHE[key] = result
+    while len(_PROBE_CACHE) > _PROBE_CACHE_MAX:
+        _PROBE_CACHE.popitem(last=False)
+    return result
+
+
+def _duration(path: Path) -> float:
+    """Duration in seconds (0.0 when the file cannot be read)."""
+    try:
+        return float(_probe(Path(path))[0])
+    except Exception:
+        return 0.0
 
 
 def _stream_kinds(path: Path) -> set:
@@ -118,34 +208,10 @@ def _stream_kinds(path: Path) -> set:
     a user who simply picked a silent screen recording.  Asking first lets us say
     what is wrong in one line.
     """
-    probe = has_ffprobe()
-    if probe:
-        try:
-            out = subprocess.run([probe, "-v", "quiet", "-print_format", "json",
-                                  "-show_streams", str(path)],
-                                 capture_output=True, text=True, timeout=30)
-            data = json.loads(out.stdout or "{}")
-            kinds = {str(item.get("codec_type") or "") for item in data.get("streams", [])}
-            if kinds:
-                return kinds
-        except Exception:
-            pass
-    exe = has_ffmpeg()
-    if not exe:
-        return set()
     try:
-        out = subprocess.run([exe, "-hide_banner", "-i", str(path)],
-                             capture_output=True, text=True, timeout=30,
-                             encoding="utf-8", errors="replace")
-        text = (out.stderr or "") + (out.stdout or "")
+        return set(_probe(Path(path))[1])
     except Exception:
         return set()
-    kinds = set()
-    if "Audio:" in text:
-        kinds.add("audio")
-    if "Video:" in text:
-        kinds.add("video")
-    return kinds
 
 
 def _require_stream(ctx: RunContext, path: Path, need: str) -> None:

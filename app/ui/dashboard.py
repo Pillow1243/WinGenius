@@ -12,7 +12,7 @@ from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QPushButton, QSi
 from ..core.history import history
 from ..core.registry import get as get_tool
 from ..core.theme import Palette
-from ..core.utils import human_size
+from ..core.utils import human_size, ui_number
 from .overlay import OverlaySheet
 from .widgets import Card, divider, label
 
@@ -204,23 +204,29 @@ class Dashboard(OverlaySheet):
         # ------------------------------------------------------------- tiles
         grid = QGridLayout()
         grid.setSpacing(10)
+        average = (sum(entry.duration for entry in done) / max(1, len(done)))
+        fa = self.lang != "en"
         tiles = [
-            ("اجراهای ۲۴ ساعت" if self.lang != "en" else "Runs (24h)", str(len(today)),
-             ("ابزارهای انجام‌شده" if self.lang != "en" else "completed tools"), palette.accent),
-            ("نرخ موفقیت" if self.lang != "en" else "Success rate", f"{success_rate}%",
-             (f"{len(failed)} خطا" if self.lang != "en" else f"{len(failed)} failed"),
+            ("اجراهای ۲۴ ساعت" if fa else "Runs (24h)", str(len(today)),
+             ("ابزارهای انجام‌شده" if fa else "completed tools"), palette.accent),
+            ("نرخ موفقیت" if fa else "Success rate", f"{success_rate}%",
+             (f"{len(failed)} خطا" if fa else f"{len(failed)} failed"),
              palette.success if success_rate >= 80 else palette.warning),
-            ("ابزارهای استفاده‌شده" if self.lang != "en" else "Tools used",
+            ("ابزارهای استفاده‌شده" if fa else "Tools used",
              str(len({entry.tool_id for entry in entries})),
-             ("در تاریخچه" if self.lang != "en" else "in history"), "#A78BFA"),
-            ("میانگین زمان اجرا" if self.lang != "en" else "Avg run",
-             f"{(sum(entry.duration for entry in done) / max(1, len(done))):.1f}s",
-             ("برای اجراهای موفق" if self.lang != "en" else "for successful runs"), "#4ECDC4"),
-            ("جریان‌های آماده" if self.lang != "en" else "Ready flows", str(flow_count),
-             ("با حلقه و شرط" if self.lang != "en" else "with loops & conditions"), "#00D9A6"),
+             ("در تاریخچه" if fa else "in history"), "#A78BFA"),
+            ("میانگین زمان اجرا" if fa else "Avg run",
+             f"{average:.1f}s",
+             ("برای اجراهای موفق" if fa else "for successful runs"), "#4ECDC4"),
+            ("جریان‌های آماده" if fa else "Ready flows", str(flow_count),
+             ("با حلقه و شرط" if fa else "with loops & conditions"), "#00D9A6"),
         ]
+        # The panel used to hardcode two columns, so five tiles always left a hole.
+        columns = 3 if self.width() >= 660 else 2
         for index, (title, value, hint, color) in enumerate(tiles):
-            grid.addWidget(self._stat_tile(title, value, hint, color), index // 2, index % 2)
+            grid.addWidget(self._stat_tile(title, ui_number(value, self.lang),
+                                           ui_number(hint, self.lang), color),
+                           index // columns, index % columns)
         holder = QWidget()
         holder.setLayout(grid)
         self.body_layout.addWidget(holder)
@@ -239,11 +245,20 @@ class Dashboard(OverlaySheet):
 
                 colour = get_category(spec.category).color
             items.append((name, colour, count))
-        if items:
+        top = max((count for _name, _colour, count in items), default=0)
+        if items and top >= 2:
             chart = BarChart()
             chart.set_data(items, palette)
             self._chart = chart
             self.body_layout.addWidget(chart)
+        elif items:
+            # Every bar would be the same length (each tool used once), which says
+            # nothing.  Say that instead of drawing a fake ranking.
+            self.body_layout.addWidget(label(
+                ("هر ابزار تا حالا یک‌بار اجرا شده؛ برای رتبه‌بندی معنادار، چند ابزار را "
+                 "بیش از یک‌بار اجرا کنید." if self.lang != "en" else
+                 "Every tool has run once so far — run a few more times to get a ranking."),
+                "Hint", wrap=True))
         else:
             self.body_layout.addWidget(label(
                 "هنوز کاری اجرا نشده است؛ از دایره‌ی خانه یا دستیار شروع کنید."
@@ -282,7 +297,7 @@ class Dashboard(OverlaySheet):
                 row_layout = QHBoxLayout(row)
                 row_layout.setContentsMargins(0, 0, 0, 0)
                 row_layout.setSpacing(8)
-                stamp = time.strftime("%H:%M", time.localtime(operation.ts))
+                stamp = ui_number(time.strftime("%H:%M", time.localtime(operation.ts)), self.lang)
                 title = label(f"{operation.title(self.lang)} · {stamp}", "RowTitle")
                 title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
                 row_layout.addWidget(title, 1)
@@ -338,12 +353,15 @@ class Dashboard(OverlaySheet):
             if not getattr(self, "_cpu_primed", False):
                 psutil.cpu_percent(interval=None)
                 self._cpu_primed = True
-            entries.append(("CPU", float(psutil.cpu_percent(interval=None)), f"{psutil.cpu_count()} core"))
+            entries.append(("CPU", float(psutil.cpu_percent(interval=None)),
+                            ui_number(f"{psutil.cpu_count()} core", self.lang)))
             memory = psutil.virtual_memory()
-            entries.append(("RAM", float(memory.percent), human_size(memory.available)))
+            entries.append(("RAM", float(memory.percent),
+                            ui_number(human_size(memory.available), self.lang)))
             try:
                 disk = psutil.disk_usage(str(psutil.disk_partitions()[0].mountpoint))
-                entries.append(("Disk", float(disk.percent), human_size(disk.free)))
+                entries.append(("Disk", float(disk.percent),
+                                ui_number(human_size(disk.free), self.lang)))
             except Exception:
                 pass
             battery = getattr(psutil, "sensors_battery", lambda: None)()
