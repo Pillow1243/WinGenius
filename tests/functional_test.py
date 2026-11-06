@@ -2898,7 +2898,12 @@ def test_v60_tools(fixtures: dict) -> None:
     thread.start()
     try:
         graded = run("security_headers", url=f"http://127.0.0.1:{port}/", timeout=5)
-        check("security_headers gives a perfect site an A", "A" in graded.message, graded.message)
+        # audit F-08: the header set is perfect but the site is plain HTTP, which is
+        # capped below A/A+ on purpose — assert the full header score instead.
+        check("security_headers scores every header on a perfect site",
+              "90/90" in graded.message, graded.message)
+        check("security_headers caps a plain-HTTP site", "A" not in graded.message.split("—")[-1],
+              graded.message)
         timing = run("http_timing", url=f"http://127.0.0.1:{port}/", request=True)
         check("http_timing measures DNS", "DNS" in timing.details, timing.details[:120])
         check("http_timing measures the first byte", "TTFB" in timing.details, timing.details[:160])

@@ -79,6 +79,7 @@ def test_f06_secrets_scrubbed_from_memory_after_finish(tmp_path):
 
     load_all()
     manager = JobManager(path=tmp_path / "queue.json", restore=False)
+    manager._start = lambda job: None          # no worker thread in this test
     job = manager.submit(get("archive_decrypt"),
                          {"src": str(tmp_path / "a.zip"), "password": "super-secret-pw"})
     manager._on_success(job.id, RunResult(message="ok"))
