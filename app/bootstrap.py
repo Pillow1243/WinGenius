@@ -7,6 +7,7 @@ servers, SSH sessions, and containers without X11/Wayland display libraries.
 from __future__ import annotations
 
 import os
+import json
 import sys
 import traceback
 from pathlib import Path
@@ -135,7 +136,12 @@ def main(argv: List[str] | None = None) -> int:
     if "--allow-multi" not in argv:
         guard = single_instance.InstanceGuard()
         if not guard.acquire():
-            if guard.announce("show"):
+            incoming = []
+            if "--sendto" in argv:
+                incoming = [str(Path(item).resolve()) for item in argv[argv.index("--sendto") + 1:]
+                            if not item.startswith("--") and Path(item).exists()]
+            message = json.dumps({"action": "show", "pick": "--pick" in argv, "files": incoming})
+            if guard.announce(message):
                 log.info("another instance is running — asked it to come forward")
             else:
                 log.warning("another instance is running (no listener answered)")
@@ -154,17 +160,20 @@ def main(argv: List[str] | None = None) -> int:
     except Exception as exc:  # a broken plugin must never stop the app
         log.warning("plugin loading failed: %s", exc)
     log.info("%s %s starting with %d tools", APP_NAME, APP_VERSION, count())
-    try:
-        from .core.updates import confirm_post_update_health
-
-        confirm_post_update_health()
-    except Exception as exc:
-        log.warning("post-update health check skipped: %s", exc)
-
     from .ui.main_window import MainWindow
 
     window = MainWindow()
     window.show()
+    # Confirm only once the Qt event loop has actually displayed the window.
+    def _confirm_update_health() -> None:
+        try:
+            from .core.updates import confirm_post_update_health
+            confirm_post_update_health()
+        except Exception as exc:
+            log.warning("post-update health check skipped: %s", exc)
+
+    from PySide6.QtCore import QTimer
+    QTimer.singleShot(0, _confirm_update_health)
     if failures:
         window._show_toast(
             (f"{len(failures)} ماژول ابزار بارگذاری نشد؛ جزئیات در لاگ است."
@@ -178,7 +187,18 @@ def main(argv: List[str] | None = None) -> int:
             window.raise_()
             window.activateWindow()
 
-        guard.listen(_surface)
+        def _instance_message(message: dict) -> None:
+            _surface()
+            files = message.get("files", [])
+            if isinstance(files, list):
+                incoming = [str(Path(item)) for item in files
+                            if isinstance(item, str) and Path(item).exists()]
+                if incoming:
+                    window._show_drop(incoming)
+            if message.get("pick") is True:
+                window.open_search()
+
+        guard.listen(_surface, _instance_message)
         app.aboutToQuit.connect(guard.release)
     if settings.get("app/first_run"):
         settings.set("app/first_run", False)

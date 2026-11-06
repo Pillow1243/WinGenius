@@ -279,13 +279,18 @@ class JobManager(QObject):
             self._jobs.pop(job_id, None)
         self.changed.emit()
 
-    def shutdown(self, timeout_ms: int = 4000) -> None:
+    def shutdown(self, timeout_ms: int = 4000) -> bool:
         self._closed = True
+        self.cancel_all()
+        stopped = True
         for runner in list(self._runners.values()):
             try:
                 runner.cancel()
-                runner.wait(timeout_ms)
+                if not runner.wait(timeout_ms):
+                    stopped = False
             except Exception:
-                pass
-        self._runners.clear()
-        self._running.clear()
+                stopped = False
+        # Keep live QThreads owned until their finished signals are delivered.
+        if not stopped:
+            self._closed = False
+        return stopped

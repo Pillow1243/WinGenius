@@ -31,8 +31,8 @@ sys.path.insert(0, str(ROOT))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 # Never open real windows from a test run: the shell launcher becomes a dry run.
 os.environ.setdefault("WINGENIUS_NO_LAUNCH", "1")
-if os.name != "nt":
-    os.environ.setdefault("XDG_CONFIG_HOME", tempfile.mkdtemp(prefix="wg-out-cfg-"))
+from tests.sandbox import isolate_profile
+isolate_profile()
 
 from app.core.registry import get as get_tool, load_all          # noqa: E402
 from app.core.spec import RunContext, ToolError                   # noqa: E402

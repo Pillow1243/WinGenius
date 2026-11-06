@@ -70,9 +70,8 @@ class ToolRunner(QThread):
                 result = RunResult()
             if not isinstance(result, RunResult):
                 result = RunResult(message=str(result))
-            if self._event.is_set():
-                self.cancelled.emit()
-                return
+            # A late cancel request does not undo side effects already committed.
+            # Only the cooperative Cancelled exception means the tool stopped.
             self.succeeded.emit(result)
         except Cancelled:
             self.cancelled.emit()

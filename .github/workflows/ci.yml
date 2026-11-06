@@ -92,11 +92,17 @@ jobs:
           python main.py --list --json > /dev/null
           python main.py --doctor
 
+      - name: Persian / RTL PDF engine suite
+        run: python scripts/ci_capture.py python -X faulthandler -m coverage run --parallel-mode --source=app -m pytest -q tests/persian_pdf_test.py tests/hardening_test.py tests/audit_regression_test.py
+
+      - name: pytest entry point (the legacy suites now have fixtures)
+        run: python scripts/ci_capture.py python -X faulthandler -m pytest -q
+
       - name: Smoke suite
         run: python -X faulthandler -m coverage run --parallel-mode --source=app tests/smoke_test.py
 
       - name: Functional suite
-        run: python -X faulthandler -m coverage run --parallel-mode --source=app tests/functional_test.py
+        run: python scripts/ci_capture.py python -X faulthandler -m coverage run --parallel-mode --source=app tests/functional_test.py
 
       - name: Output-correctness suite (incl. pyHanko signatures)
         run: python -X faulthandler -m coverage run --parallel-mode --source=app tests/output_test.py
@@ -106,12 +112,6 @@ jobs:
 
       - name: Security & consistency regressions
         run: python -X faulthandler -m coverage run --parallel-mode --source=app tests/security_test.py
-
-      - name: Persian / RTL PDF engine suite
-        run: python -X faulthandler -m coverage run --parallel-mode --source=app -m pytest -q tests/persian_pdf_test.py tests/hardening_test.py
-
-      - name: pytest entry point (the legacy suites now have fixtures)
-        run: python -m pytest -q
 
       - name: Coverage gate
         run: |
@@ -146,4 +146,4 @@ jobs:
       - name: Wheel imports cleanly
         run: |
           python -m pip install -q --no-deps --target /tmp/wg-wheel-install dist-check/*.whl
-          cd /tmp && PYTHONPATH=/tmp/wg-wheel-install python -c "import app.core.registry, app.core.paths; print('wheel import OK')"
+          cd /tmp && PYTHONPATH=/tmp/wg-wheel-install python -c "import app.core.registry; from app.core.paths import resource_path; assert resource_path('fonts', 'Vazirmatn-Regular.ttf').is_file(); assert resource_path('fonts', 'OFL.txt').is_file(); print('wheel import and fonts OK')"

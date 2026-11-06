@@ -137,7 +137,7 @@ class ExecutionPolicy:
                 record_history: bool = True) -> "ExecutionPolicy":
         return cls(
             source="cli",
-            max_risk=OperationRisk.CONFIRM,
+            max_risk=OperationRisk.SAFE,
             confirmed=yes,
             dry_run=dry_run,
             record_history=record_history and not dry_run,
@@ -164,10 +164,10 @@ class ExecutionPolicy:
         )
 
     @classmethod
-    def for_scheduler(cls, *, allow_dangerous: bool = True) -> "ExecutionPolicy":
+    def for_scheduler(cls, *, allow_dangerous: bool = False) -> "ExecutionPolicy":
         return cls(
             source="scheduler",
-            max_risk=OperationRisk.CONFIRM,
+            max_risk=OperationRisk.SAFE,
             confirmed=allow_dangerous,
             dry_run=False,
             record_history=True,
@@ -183,13 +183,9 @@ class PolicyDeniedError(ToolError):
 
 
 def _truthy(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    if isinstance(value, str):
-        return value.strip().lower() in ("1", "true", "yes", "on", "بله")
-    return False
+    # Tool implementations use Python truthiness. In particular, a nonempty
+    # string such as "false" is truthy; classification must not understate it.
+    return bool(value)
 
 
 def _inspect_flow(values: Mapping[str, Any], depth: int) -> Optional[RiskAssessment]:
@@ -205,8 +201,10 @@ def _inspect_flow(values: Mapping[str, Any], depth: int) -> Optional[RiskAssessm
                               "اجرای جریان خودکار", "Automated flow execution")
     try:
         from . import flowkit
+        from .workflows import Workflow
 
-        workflow = flowkit.resolve(ref)
+        snapshot = values.get("_flow_snapshot")
+        workflow = Workflow.from_dict(snapshot) if isinstance(snapshot, dict) else flowkit.resolve(ref)
     except Exception:
         return RiskAssessment("flow_run", OperationRisk.CONFIRM,
                               "اجرای فایل جریان خارجی", "External flow file execution")
@@ -250,11 +248,12 @@ def _walk_macro_steps(steps: Any, depth: int, nested: List[str]) -> Tuple[Operat
                     highest = sub.risk
                     reason_fa = f"{tool_id}: {sub.reason_fa}"
                     reason_en = f"{tool_id}: {sub.reason_en}"
-        elif kind in ("delete", "move"):
+        elif kind in ("delete", "move", "copy", "mkdir", "write"):
             nested.append(f"macro:{kind}")
-            if OperationRisk.CONFIRM > highest:
-                highest = OperationRisk.CONFIRM
-                reason_fa = "حذف یا جابه‌جایی فایل توسط ماکرو"
+            risk = OperationRisk.DESTRUCTIVE if kind == "write" else OperationRisk.CONFIRM
+            if risk > highest:
+                highest = risk
+                reason_fa = "تغییر فایل یا پوشه توسط ماکرو"
                 reason_en = f"Macro file {kind} step"
         for branch_key in ("steps", "then", "else"):
             if isinstance(step.get(branch_key), list):
@@ -264,6 +263,31 @@ def _walk_macro_steps(steps: Any, depth: int, nested: List[str]) -> Tuple[Operat
                     reason_fa = sub_fa
                     reason_en = sub_en
     return highest, reason_fa, reason_en
+
+
+def snapshot_invocation(tool_id: str, values: Mapping[str, Any]) -> Dict[str, Any]:
+    """Freeze external macro/flow content for assessment and execution."""
+    from copy import deepcopy
+
+    result = deepcopy(dict(values))
+    if tool_id == "macro_run" and str(result.get("file") or "").strip():
+        if "_macro_snapshot" not in result:
+            from .macro import MacroError, load_macro
+
+            try:
+                result["_macro_snapshot"] = load_macro(Path(str(result["file"])))
+            except MacroError as exc:
+                raise ToolError(str(exc)) from exc
+    if tool_id == "flow_run" and "_flow_snapshot" not in result:
+        ref = str(result.get("file") or result.get("flow") or "").strip()
+        if ref:
+            from . import flowkit
+
+            try:
+                result["_flow_snapshot"] = flowkit.resolve(ref).as_dict()
+            except (OSError, LookupError, ValueError) as exc:
+                raise ToolError(f"Could not load flow: {exc}") from exc
+    return result
 
 
 def _inspect_macro(values: Mapping[str, Any], depth: int) -> Optional[RiskAssessment]:
@@ -279,15 +303,17 @@ def _inspect_macro(values: Mapping[str, Any], depth: int) -> Optional[RiskAssess
         macro_obj = None
         builtin_raw = str(values.get("builtin") or "").strip()
         file_raw = str(values.get("file") or "").strip()
-        if builtin_raw != "":
-            templates = macro_mod.builtin_macros("fa")
-            idx = int(builtin_raw)
-            if 0 <= idx < len(templates):
-                macro_obj = templates[idx]
+        if file_raw and isinstance(values.get("_macro_snapshot"), dict):
+            macro_obj = values["_macro_snapshot"]
         elif file_raw:
             path = Path(file_raw)
             if path.is_file():
                 macro_obj = macro_mod.load_macro(path)
+        elif builtin_raw != "":
+            templates = macro_mod.builtin_macros("fa")
+            idx = int(builtin_raw)
+            if 0 <= idx < len(templates):
+                macro_obj = templates[idx]
         if not isinstance(macro_obj, dict):
             return RiskAssessment("macro_run", OperationRisk.CONFIRM,
                                   "اجرای ماکرو", "Macro execution")
@@ -320,7 +346,7 @@ def classify_invocation(
     mode = str(merged.get("mode") or "").strip().lower()
 
     # 1. Explicit dry-run / preview flags render read-only simulations SAFE.
-    if "dry_run" in merged and _truthy(merged.get("dry_run")) and tid != "macro_run":
+    if tid in {"temp_clean", "folder_sync"} and _truthy(merged.get("dry_run")):
         return RiskAssessment(tid, OperationRisk.SAFE,
                               "حالت پیش‌نمایش بدون تغییر", "Dry-run preview without changes")
 
@@ -334,9 +360,7 @@ def classify_invocation(
         if macro_res is not None:
             return macro_res
     if tid == "undo_last":
-        count = int(merged.get("count") or 0)
-        if count <= 0:
-            return RiskAssessment(tid, OperationRisk.SAFE, "بدون تغییر", "No-op undo count")
+        # The implementation clamps even zero/negative input to at least one undo.
         return RiskAssessment(
             tid, OperationRisk.CONFIRM,
             "بازگردانی تغییرات فایل‌سیستم از ژورنال",
@@ -344,6 +368,18 @@ def classify_invocation(
         )
 
     # 3. Dynamic per-tool action overrides before static fallbacks.
+    # Preview-capable file organizers mutate existing user files when applied.
+    if tid in ("batch_rename", "organize_files", "rename_by_date"):
+        if not _truthy(merged.get("preview", True)):
+            return RiskAssessment(tid, OperationRisk.CONFIRM,
+                                  "تغییر یا جابه‌جایی فایل‌های موجود",
+                                  "Renames, moves or copies existing user files")
+        return RiskAssessment(tid, OperationRisk.SAFE, "پیش‌نمایش فایل‌ها", "File preview")
+
+    if tid in ("dark_mode", "set_wallpaper"):
+        return RiskAssessment(tid, OperationRisk.CONFIRM,
+                              "تغییر تنظیمات ظاهر ویندوز", "Changes Windows appearance settings")
+
     if tid == "ocr_setup":
         if action == "set_path":
             return RiskAssessment(
@@ -437,13 +473,11 @@ def classify_invocation(
         )
 
     if tid == "create_shortcut":
-        if str(merged.get("where") or "").strip().lower() == "startup":
-            return RiskAssessment(
-                tid, OperationRisk.CONFIRM,
-                "ساخت میان‌بر در پوشه‌ی اجرای خودکار ویندوز (Startup)",
-                "Creates a shortcut inside the Windows Startup folder",
-            )
-        return RiskAssessment(tid, OperationRisk.SAFE, "ساخت میان‌بر", "Creates a shortcut")
+        return RiskAssessment(
+            tid, OperationRisk.CONFIRM,
+            "ساخت میان‌بر در پوشه‌های ویندوز (از جمله اجرای خودکار)",
+            "Creates a shortcut in Windows folders, potentially including Startup",
+        )
 
     if tid == "sendto_install":
         return RiskAssessment(
@@ -505,8 +539,6 @@ def classify_invocation(
     # Multi-action admin tools where list/view is strictly read-only when spec.danger is False.
     if tid in ("windows_features", "power_plan", "startup_manager") and action == "list":
         return RiskAssessment(tid, OperationRisk.SAFE, "مشاهده‌ی فهرست بدون تغییر", "Read-only listing")
-    if tid == "restore_point" and _truthy(merged.get("list", True)):
-        return RiskAssessment(tid, OperationRisk.SAFE, "مشاهده‌ی نقاط بازیابی", "Read-only restore point list")
     if tid == "driver_problems":
         return RiskAssessment(tid, OperationRisk.SAFE, "بررسی وضعیت درایورها", "Read-only driver inspection")
 
@@ -590,6 +622,7 @@ class ExecutionService:
                 outer_policy if isinstance(outer_policy, ExecutionPolicy) else None
             )
 
+        merged = snapshot_invocation(spec.id, merged)
         assessment = classify_invocation(spec, merged)
         if not effective.allows(assessment.risk):
             reason = assessment.reason_for(run_ctx.lang)

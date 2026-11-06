@@ -50,14 +50,18 @@ def _run_ffmpeg(ctx: RunContext, args: List[str], duration: float = 0.0, label: 
         if proc.stderr is None:
             return
         try:
-            data = proc.stderr.read()
-            if data:
-                errors.append(data[-8192:])
+            while data := proc.stderr.read(4096):
+                errors.append(data)
+                if len(errors) > 2:
+                    del errors[:-2]
         except Exception:
             pass
 
     stderr_thread = threading.Thread(target=_drain_stderr, name="wg-ffmpeg-stderr", daemon=True)
     stderr_thread.start()
+    from ..core.utils import CancellableProcess
+
+    cancellation = CancellableProcess(proc, ctx).start()
     try:
         assert proc.stdout is not None
         for line in proc.stdout:
@@ -72,12 +76,13 @@ def _run_ffmpeg(ctx: RunContext, args: List[str], duration: float = 0.0, label: 
             elif line.startswith("speed=") and label:
                 ctx.log(f"{label} {line}")
             if ctx.cancelled:
-                proc.kill()
-                proc.wait(timeout=5)
                 ctx.check_cancel()
         proc.wait(timeout=30)
+        cancellation.close()
+        cancellation.check_cancelled()
         stderr_thread.join(timeout=5)
     finally:
+        cancellation.close()
         if proc.poll() is None:
             proc.kill()
             try:

@@ -32,6 +32,7 @@ leave a half-written vault behind.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import shutil
@@ -162,6 +163,7 @@ class Vault:
         self._entries: Optional[List[Dict[str, Any]]] = None
         self._salt: bytes = b""
         self._key: bytes = b""
+        self._revision: Optional[bytes] = None
 
     # ------------------------------------------------------------------ basics
     def exists(self) -> bool:
@@ -206,6 +208,19 @@ class Vault:
         self._flush()
 
     def _flush(self) -> None:
+        from .resource_lock import resource_lock
+
+        with resource_lock(self.path):
+            try:
+                current = hashlib.sha256(self.path.read_bytes()).digest()
+            except FileNotFoundError:
+                current = None
+            if current != self._revision:
+                raise VaultError("vault changed since it was opened; reopen it and retry")
+            self._flush_locked()
+            self._revision = hashlib.sha256(self.path.read_bytes()).digest()
+
+    def _flush_locked(self) -> None:
         AESGCM = _aesgcm()
         if self._entries is None:
             self._entries = []
@@ -260,6 +275,7 @@ class Vault:
         else:
             raise VaultError("not a WinGenius vault")
         self._entries = entries
+        self._revision = hashlib.sha256(raw).digest()
         return self._entries
 
     def _unlock_v1(self, raw: bytes) -> List[Dict[str, Any]]:

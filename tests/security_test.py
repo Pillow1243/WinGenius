@@ -24,6 +24,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("WINGENIUS_NO_LAUNCH", "1")
+from tests.sandbox import isolate_profile
+isolate_profile()
 
 from app.core.registry import load_all  # noqa: E402
 

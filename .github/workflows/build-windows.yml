@@ -304,8 +304,10 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($tagArg)) {
             $tagArg = "v${{ steps.meta.outputs.version }}"
           }
-          python scripts/sign_release.py --build --dir release `
-            --version "${{ steps.meta.outputs.version }}" --tag "$tagArg"
+          $signArgs = @('--build', '--dir', 'release', '--version', '${{ steps.meta.outputs.version }}', '--tag', $tagArg)
+          if ('${{ steps.meta.outputs.tag }}') { $signArgs += '--require-signature' }
+          python scripts/sign_release.py @signArgs
+          if ($LASTEXITCODE -ne 0) { throw "Release manifest generation failed" }
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v7

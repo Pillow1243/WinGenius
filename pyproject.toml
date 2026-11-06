@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "wingenius"
 version = "7.1.0"
-description = "WinGenius — a Persian-first, all-in-one Windows toolbox (290 tools, 11 categories)"
+description = "WinGenius — a Persian-first, all-in-one Windows toolbox (292 tools, 11 categories)"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "AGPL-3.0-or-later"
@@ -67,7 +67,7 @@ exclude = ["tests*", "packaging*", "docs*", "scripts*"]
 namespaces = false
 
 [tool.setuptools.package-data]
-app = ["assets/*.png", "assets/*.ico", "py.typed"]
+app = ["assets/*.png", "assets/*.ico", "assets/fonts/*.ttf", "assets/fonts/*.txt", "py.typed"]
 
 [tool.ruff]
 line-length = 110

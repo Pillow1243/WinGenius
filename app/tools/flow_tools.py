@@ -64,7 +64,13 @@ def _flow_ref(values: Dict[str, Any], ctx: RunContext):
 def flow_run(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     from ..core.workflows import run_sync
 
-    workflow = _flow_ref(v, ctx)
+    snapshot = v.get("_flow_snapshot")
+    if isinstance(snapshot, dict):
+        from ..core.workflows import Workflow
+
+        workflow = Workflow.from_dict(snapshot)
+    else:
+        workflow = _flow_ref(v, ctx)
     report = flowkit.validate(workflow, ctx.lang)
     if not report.ok:
         raise ToolError(ctx.M(

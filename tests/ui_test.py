@@ -15,10 +15,9 @@ sys.path.insert(0, str(ROOT))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 # Never open real windows from a test run: the shell launcher becomes a dry run.
 os.environ.setdefault("WINGENIUS_NO_LAUNCH", "1")
-# keep the developer's real profile clean: tests get their own data folder
-if os.name != "nt":
-    import tempfile as _tempfile
-    os.environ.setdefault("XDG_CONFIG_HOME", _tempfile.mkdtemp(prefix="wg-test-cfg-"))
+# Standalone runs must not touch the developer's real application profile.
+from tests.sandbox import isolate_profile
+isolate_profile()
 
 from PySide6.QtCore import QEventLoop, QTimer                     # noqa: E402
 
@@ -579,7 +578,13 @@ def main() -> int:
         if widget is not None:
             panel._set_widget_value(widget, value)
     panel._refresh_visibility()
-    panel._run()
+    from PySide6.QtWidgets import QMessageBox
+    original_question = QMessageBox.question
+    QMessageBox.question = lambda *args, **kwargs: QMessageBox.StandardButton.Yes
+    try:
+        panel._run()
+    finally:
+        QMessageBox.question = original_question
     deadline = time.time() + 20
     while panel._runner is not None and time.time() < deadline:
         spin(60)
@@ -647,6 +652,9 @@ def main() -> int:
     macro_file = macro_module.save_macro(macro_module.builtin_macros("fa")[0])
     toasts: list = []
     original_toast = window._show_toast
+    from PySide6.QtWidgets import QMessageBox
+    original_question = QMessageBox.question
+    QMessageBox.question = lambda *args, **kwargs: QMessageBox.StandardButton.Yes
     window._show_toast = lambda text, kind="info", *a, **k: (toasts.append(str(text)),
                                                             original_toast(text, kind, *a, **k))
     try:
@@ -657,6 +665,7 @@ def main() -> int:
             time.sleep(0.05)
     finally:
         window._show_toast = original_toast
+        QMessageBox.question = original_question
     check(any("صف" in t or "queued" in t.lower() for t in toasts), f"no queued toast: {toasts[:3]}")
     check(len(toasts) >= 2, f"macro run never reported a result: {toasts}")
     finished = " ".join(toasts[1:]).lower()

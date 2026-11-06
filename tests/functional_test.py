@@ -24,10 +24,9 @@ sys.path.insert(0, str(ROOT))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 # Never open real windows from a test run: the shell launcher becomes a dry run.
 os.environ.setdefault("WINGENIUS_NO_LAUNCH", "1")
-# keep the developer's real profile clean: tests get their own data folder
-if os.name != "nt":
-    import tempfile as _tempfile
-    os.environ.setdefault("XDG_CONFIG_HOME", _tempfile.mkdtemp(prefix="wg-test-cfg-"))
+# Standalone runs must not touch the developer's real application profile.
+from tests.sandbox import isolate_profile
+isolate_profile()
 
 from app.core.registry import get as get_tool, load_all, count  # noqa: E402
 from app.core.spec import RunContext, ToolError  # noqa: E402
@@ -677,10 +676,11 @@ def test_v41_tools(fixtures: dict) -> None:
     _settings = _Settings()
     try:
         saved = run("ocr_setup", action="set_path", path=str(fake_engine))
-        check("ocr_setup saves a custom engine path", str(fake_engine) in saved.message,
+        expected_engine = fake_engine.resolve()
+        check("ocr_setup saves a custom engine path", str(expected_engine) in saved.message,
               saved.message[:60])
         check("ocr_setup records the path in settings",
-              str(fake_engine) in str(_settings.get("ocr_tesseract_path", "")), "not saved")
+              Path(str(_settings.get("ocr_tesseract_path", ""))).resolve() == expected_engine, "not saved")
         saved_dir = run("ocr_setup", action="set_path", path=str(sandbox))
         check("ocr_setup accepts a folder containing the engine", "وجود ندارد" not in saved_dir.message,
               saved_dir.message[:60])
@@ -2095,6 +2095,12 @@ def test_fuzz() -> None:
 
     from app.core.registry import all_tools
     from app.core.spec import ToolError
+    from app.core.execution import ExecutionPolicy, execute_tool
+
+    def safe_run(spec, values):
+        # Fuzzing must not bypass the same policy that protects real callers.
+        return execute_tool(spec, values, RunContext(lang="fa", output_dir=str(base)),
+                            policy=ExecutionPolicy.for_api())
 
     class Timeout(Exception):
         pass
@@ -2134,7 +2140,7 @@ def test_fuzz() -> None:
                 signal.setitimer(signal.ITIMER_REAL, alarm_seconds)
             started = time.time()
             try:
-                spec.run(RunContext(lang="fa", output_dir=str(base)), values)
+                safe_run(spec, values)
                 polite.append(spec.id)          # ran fine with junk: acceptable
             except ToolError:
                 polite.append(spec.id)          # the friendly path
@@ -2168,7 +2174,7 @@ def test_fuzz() -> None:
         if can_alarm:
             signal.setitimer(signal.ITIMER_REAL, 15.0)
         try:
-            spec.run(RunContext(lang="fa", output_dir=str(base)), values)
+            safe_run(spec, values)
         except ToolError:
             offenders.append(spec.id)          # acceptable: the tool wanted something else
         except Timeout:
@@ -2187,7 +2193,7 @@ def test_fuzz() -> None:
         if can_alarm:
             signal.setitimer(signal.ITIMER_REAL, 15.0)
         try:
-            result = spec.run(RunContext(lang="fa", output_dir=str(base)), spec.defaults())
+            result = safe_run(spec, spec.defaults())
             text = f"{getattr(result, 'message', '')} {getattr(result, 'details', '')}"
             if any(token in text for token in ("Traceback", "KeyError", "TypeError", "NoneType")):
                 noisy.append(spec.id)

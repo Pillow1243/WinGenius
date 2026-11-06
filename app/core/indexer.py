@@ -7,6 +7,7 @@ both work; the query language supports quotes, `-word` and `word*`.
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
 import tempfile
 import time
@@ -145,10 +146,11 @@ def extract_text_with_meta(path: Path) -> tuple:
         if suffix in DOCX_SUFFIXES:
             return _docx_text(path)[:MAX_CHARS], False
         if suffix in TEXT_SUFFIXES:
-            raw = path.read_bytes()[:MAX_FILE_BYTES]
-            for encoding in ("utf-8", "utf-8-sig", "cp1256", "latin-1"):
+            with path.open("rb") as handle:
+                raw = handle.read(MAX_FILE_BYTES)
+            for encoding in ("utf-8-sig", "utf-8", "cp1256", "latin-1"):
                 try:
-                    return raw.decode(encoding, errors="ignore")[:MAX_CHARS], False
+                    return raw.decode(encoding)[:MAX_CHARS], False
                 except (UnicodeDecodeError, LookupError):
                     continue
     except Exception as exc:  # pragma: no cover - a broken file must not stop the crawl
@@ -290,7 +292,8 @@ def build(folders: Iterable[str], patterns: str = "", recursive: bool = True,
         if root.is_symlink():
             continue
         if root.is_file():
-            if not _is_sensitive_file(root):
+            if (not _is_sensitive_file(root) and not _excluded_by(root, extra_excludes)
+                    and root.suffix.lower() in SUPPORTED and root.stat().st_size <= MAX_FILE_BYTES):
                 files.append(root)
             continue
         if not root.exists():
@@ -329,8 +332,6 @@ def build(folders: Iterable[str], patterns: str = "", recursive: bool = True,
             except OSError:
                 continue
     counters = {"files": len(files), "indexed": 0, "skipped": 0, "chars": 0, "ocr": 0}
-    if not files:
-        return counters
     conn = _connect()
     try:
         for position, path in enumerate(files, start=1):
@@ -344,12 +345,15 @@ def build(folders: Iterable[str], patterns: str = "", recursive: bool = True,
                 counters["skipped"] += 1
                 continue
             key = str(path.resolve())
-            row = conn.execute("SELECT mtime FROM docs WHERE path=?", (key,)).fetchone()
-            if row and abs(float(row[0]) - stat.st_mtime) < 0.5:
+            row = conn.execute("SELECT mtime, size FROM docs WHERE path=?", (key,)).fetchone()
+            if row and float(row[0]) == stat.st_mtime and int(row[1]) == stat.st_size:
                 counters["skipped"] += 1
                 continue
             body, used_ocr = extract_text_with_meta(path)
             if not body.strip():
+                # A changed file that became empty must not retain its old contents.
+                conn.execute("DELETE FROM docs_fts WHERE path=?", (key,))
+                conn.execute("DELETE FROM docs WHERE path=?", (key,))
                 counters["skipped"] += 1
                 continue
             conn.execute("DELETE FROM docs_fts WHERE path=?", (key,))
@@ -364,6 +368,18 @@ def build(folders: Iterable[str], patterns: str = "", recursive: bool = True,
                 counters["ocr"] += 1
             if position % 25 == 0:
                 conn.commit()
+        # Only prune missing paths under roots actually scanned, never while cancelled
+        # or when the root itself is missing (e.g. a disconnected drive).
+        if not (cancel and cancel()):
+            roots = [Path(folder).resolve() for folder in folders
+                     if Path(folder).is_dir() and not Path(folder).is_symlink()]
+            for (key,) in conn.execute("SELECT path FROM docs").fetchall():
+                indexed = Path(key)
+                in_scope = any(indexed.is_relative_to(root) if recursive else indexed.parent == root
+                               for root in roots)
+                if in_scope and not indexed.exists():
+                    conn.execute("DELETE FROM docs_fts WHERE path=?", (key,))
+                    conn.execute("DELETE FROM docs WHERE path=?", (key,))
         conn.commit()
     finally:
         conn.close()
@@ -380,7 +396,7 @@ def _clean_query(query: str) -> str:
     if not text:
         return ""
     tokens = []
-    for token in text.split():
+    for token in re.findall(r'"[^"]*"\*?|\S+', text):
         bare = token.strip('"')
         if not bare:
             continue
