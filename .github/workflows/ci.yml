@@ -136,7 +136,7 @@ jobs:
     # Deliberately *not* on pull requests — it duplicates the whole suite run and
     # would double every PR's CI time; nightly + manual + pushes to main are enough
     # to catch a number that quietly stops being true.
-    if: always()   # TEMP: diagnose the first mismatch, then restore the schedule-only gate
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
