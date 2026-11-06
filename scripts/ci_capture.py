@@ -22,7 +22,7 @@ def main() -> int:
             failures.append(line.strip())
     status = process.wait()
     if status:
-        details = "\n".join((failures[-20:] or list(recent)[-20:]))[-6000:]
+        details = "\n".join(failures[-20:] + list(recent)[-50:])[-12000:]
         escaped = details.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
         print(f"::error title=Test failure::{escaped}", flush=True)
     return status
