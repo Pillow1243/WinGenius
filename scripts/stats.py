@@ -48,7 +48,13 @@ def environment() -> dict:
     return env
 
 
-def collect() -> dict:
+def collect(diagnostics: dict | None = None) -> dict:
+    """Run every suite and return {key: reported check count}.
+
+    `diagnostics`, when given, receives each suite's raw output so a mismatch can
+    explain itself (which checks were skipped, what failed) instead of only saying
+    "642 != 641".
+    """
     counts: dict[str, int] = {}
     for key, script, pattern in SUITES:
         command = ([sys.executable, "-m", "pytest", "-o", "addopts=", "-q", script]
@@ -56,6 +62,8 @@ def collect() -> dict:
         proc = subprocess.run(command, cwd=ROOT, env=environment(),
                               capture_output=True, text=True, timeout=1200)
         output = (proc.stdout or "") + (proc.stderr or "")
+        if diagnostics is not None:
+            diagnostics[key] = output
         match = pattern.search(output)
         if proc.returncode != 0 or not match:
             raise SystemExit(f"{script} failed (rc={proc.returncode}):\n{output[-1500:]}")
@@ -163,7 +171,8 @@ def verify() -> int:
     published "2,336 checks" is what the suites actually report today.
     """
     declared = json.loads(STATS.read_text(encoding="utf-8"))
-    counts = collect()
+    diagnostics: dict[str, str] = {}
+    counts = collect(diagnostics)
     errors: list[str] = []
     for key, value in counts.items():
         stored = (declared.get("suites") or {}).get(key)
@@ -186,6 +195,7 @@ def verify() -> int:
             # "stats" job failed is visible without downloading the job log.
             print(f"::error title=docs/stats.json is stale::{error}")
         print("\nRun `python scripts/stats.py --run` and commit docs/stats.json.")
+        _explain_mismatches(errors, counts, declared, diagnostics)
         summary = os.environ.get("GITHUB_STEP_SUMMARY")
         if summary:
             try:
@@ -199,6 +209,23 @@ def verify() -> int:
         return 1
     print(f"OK  {live} tools · {sum(counts.values())} checks reproduced by the suites")
     return 0
+
+
+def _explain_mismatches(errors: list[str], counts: dict, declared: dict,
+                        diagnostics: dict) -> None:
+    """Attach the skipped/failed lines of every mismatching suite to the report."""
+    for key, value in counts.items():
+        if (declared.get("suites") or {}).get(key) == value:
+            continue
+        output = diagnostics.get(key, "")
+        interesting = [line.strip() for line in output.splitlines()
+                       if line.strip().startswith(("SKIP", "FAILED", "RESULT", "OUTPUT CHECK",
+                                                   "SECURITY CHECK", "PASS  ") )
+                       or " skipped" in line or " passed" in line]
+        detail = " | ".join(interesting[-10:])[:900]
+        if not detail:                      # nothing familiar: show the tail
+            detail = " ".join(output.strip().splitlines()[-3:])[:900]
+        print(f"::error title={key} count changed::{detail}")
 
 
 def main() -> int:
