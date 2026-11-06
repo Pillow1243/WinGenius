@@ -647,6 +647,9 @@ def main() -> int:
     macro_file = macro_module.save_macro(macro_module.builtin_macros("fa")[0])
     toasts: list = []
     original_toast = window._show_toast
+    from PySide6.QtWidgets import QMessageBox
+    original_question = QMessageBox.question
+    QMessageBox.question = lambda *args, **kwargs: QMessageBox.StandardButton.Yes
     window._show_toast = lambda text, kind="info", *a, **k: (toasts.append(str(text)),
                                                             original_toast(text, kind, *a, **k))
     try:
@@ -657,6 +660,7 @@ def main() -> int:
             time.sleep(0.05)
     finally:
         window._show_toast = original_toast
+        QMessageBox.question = original_question
     check(any("صف" in t or "queued" in t.lower() for t in toasts), f"no queued toast: {toasts[:3]}")
     check(len(toasts) >= 2, f"macro run never reported a result: {toasts}")
     finished = " ".join(toasts[1:]).lower()

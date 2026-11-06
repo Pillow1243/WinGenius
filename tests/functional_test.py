@@ -677,10 +677,11 @@ def test_v41_tools(fixtures: dict) -> None:
     _settings = _Settings()
     try:
         saved = run("ocr_setup", action="set_path", path=str(fake_engine))
-        check("ocr_setup saves a custom engine path", str(fake_engine) in saved.message,
+        expected_engine = fake_engine.resolve()
+        check("ocr_setup saves a custom engine path", str(expected_engine) in saved.message,
               saved.message[:60])
         check("ocr_setup records the path in settings",
-              str(fake_engine) in str(_settings.get("ocr_tesseract_path", "")), "not saved")
+              Path(str(_settings.get("ocr_tesseract_path", ""))).resolve() == expected_engine, "not saved")
         saved_dir = run("ocr_setup", action="set_path", path=str(sandbox))
         check("ocr_setup accepts a folder containing the engine", "وجود ندارد" not in saved_dir.message,
               saved_dir.message[:60])
