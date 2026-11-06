@@ -26,7 +26,7 @@ def test_f09_posix_file_is_0600(tmp_path):
 
     target = tmp_path / "journal.db"
     target.write_text("x", encoding="utf-8")
-    os.chmod(target, 0o644)
+    os.chmod(target, stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP)
     secure_private_file(target)
     assert stat.S_IMODE(target.stat().st_mode) == 0o600
 

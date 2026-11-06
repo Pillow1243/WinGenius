@@ -6,7 +6,6 @@ plain-HTTP site can never reach a top grade.
 from __future__ import annotations
 
 import os
-import threading
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("WINGENIUS_NO_LAUNCH", "1")

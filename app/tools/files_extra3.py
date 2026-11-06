@@ -190,6 +190,9 @@ def archive_decrypt(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
                             ))
                         out_handle.write(chunk)
                 os.replace(tmp, target)          # atomic: no half-written files
+            except Cancelled:
+                tmp.unlink(missing_ok=True)
+                raise                                    # cancellation must propagate
             except ToolError:
                 tmp.unlink(missing_ok=True)
                 raise
@@ -209,9 +212,6 @@ def archive_decrypt(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
                     "با «ساخت ZIP رمزدار» خود WinGenius باز می‌شود.",
                     f"This encryption is not supported (probably AES): {exc}\n"
                     "ZIPs made by WinGenius itself always open."))
-            except Cancelled:
-                tmp.unlink(missing_ok=True)
-                raise                                    # cancellation must propagate
             except BaseException:
                 tmp.unlink(missing_ok=True)
                 raise

@@ -56,7 +56,7 @@ def run_mypy(paths: list[str]) -> tuple[dict[str, int], str, int]:
         try:
             path = path.resolve().relative_to(ROOT)
         except ValueError:
-            pass
+            pass        # an absolute path outside the repo: keep it as reported
         key = str(path).replace("\\", "/")
         counts[key] = counts.get(key, 0) + 1
     return counts, output, proc.returncode

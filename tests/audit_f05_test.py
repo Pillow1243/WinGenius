@@ -11,7 +11,6 @@ public key stays BLOCKED-NEEDS-OWNER.
 """
 from __future__ import annotations
 
-import json
 import os
 
 import pytest

@@ -330,7 +330,6 @@ def _header_value_score(key: str, value: str, headers: Dict[str, str], lang: str
     Returns (points, note) where note explains a weak/invalid value.
     """
     fa = lang != "en"
-    note = ""
 
     def N(fa_text: str, en_text: str) -> str:
         return fa_text if fa else en_text

@@ -191,7 +191,6 @@ def describe_cron(expr: str, lang: str = "fa") -> str:
         bits.append(("هر روز " if fa else "daily at ") + clock if daily else clock)
     else:
         bits.append((f"دقیقه {minute} ساعت {hour}" if fa else f"at minute {minute} of hour {hour}"))
-    both_days = dom not in ("*", "?") and dow not in ("*", "?")
     if dow not in ("*", "?"):
         try:
             days = sorted(parse_cron(expr)["weekday"])

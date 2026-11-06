@@ -55,17 +55,14 @@ def main() -> int:
         print(f"  MISSING from requirements.txt: {', '.join(missing)}")
     if extra:
         print(f"  MISSING from pyproject.toml  : {', '.join(extra)}")
-    if missing or extra:
-        return 1
-    if missing or extra:
-        pass
-    else:
+    drift = bool(missing or extra)
+    if not drift:
         print("dependency lists are in sync ✓")
 
     # audit F-12: every requirement needs an explicit pin, otherwise CI keeps
     # re-resolving the dependency graph on every run.
-    problems = list(missing) and ["requirements/pyproject drift"] or []
-    if CONSTRAINTS.is_file():
+    problems = drift
+    if not drift and CONSTRAINTS.is_file():
         pins = {}
         for line in CONSTRAINTS.read_text(encoding="utf-8").splitlines():
             line = line.split("#", 1)[0].strip()
