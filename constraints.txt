@@ -47,3 +47,4 @@ pywin32==310
 # test tooling (CI installs these alongside the runtime set)
 pytest==9.2.0
 coverage==7.17.2
+mypy==2.4.1

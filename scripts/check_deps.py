@@ -19,7 +19,7 @@ CONSTRAINTS = ROOT / "constraints.txt"
 
 # Installed by CI next to the runtime set, so they are pinned here too but are
 # not part of [project.dependencies].
-TOOLING = {"pytest", "coverage"}
+TOOLING = {"pytest", "coverage", "mypy"}
 
 NAME = re.compile(r"^\s*([A-Za-z0-9_.-]+)")
 

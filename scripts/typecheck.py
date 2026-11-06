@@ -13,9 +13,15 @@ hundreds of legacy errors and get switched off within a week, so instead:
 That makes "no new type errors" an enforced rule while the legacy backlog can be
 burned down file by file.
 
-    python scripts/typecheck.py            # check against the baseline
-    python scripts/typecheck.py --update   # re-record the baseline
-    python scripts/typecheck.py --paths app/core  # scope a check
+    python scripts/typecheck.py                  # check against the baseline
+    python scripts/typecheck.py --update         # re-record the baseline
+    python scripts/typecheck.py --strict-baseline  # also fail on stale entries
+    python scripts/typecheck.py --paths app/core # scope a check
+
+Only *new* errors fail by default. mypy reports fewer errors when an optional
+dependency is missing (its imports degrade to `Any`), so "the baseline records
+more than reality" is informational unless `--strict-baseline` asks for a tidy
+pass — otherwise the gate would depend on what happens to be installed.
 """
 from __future__ import annotations
 
@@ -63,13 +69,19 @@ def load() -> dict:
 
 
 def check(counts: dict[str, int], baseline: dict, strict: bool) -> list[str]:
+    """Return the problems that must fail the gate.
+
+    Only growth is a regression. A file with *fewer* errors than recorded (or no
+    errors at all) is reported only when `strict` is set: mypy legitimately finds
+    less to complain about when an optional dependency is not installed.
+    """
     stored: dict[str, int] = dict(baseline.get("files") or {})
     problems: list[str] = []
     for path, count in sorted(counts.items()):
         allowed = int(stored.get(path, 0))
         if count > allowed:
             problems.append(f"{path}: {count} type errors, baseline allows {allowed}")
-        elif count < allowed:
+        elif strict and count < allowed:
             problems.append(f"{path}: {count} type errors, baseline records {allowed} "
                             "— lower it with --update")
     if strict:
@@ -78,6 +90,17 @@ def check(counts: dict[str, int], baseline: dict, strict: bool) -> list[str]:
                 problems.append(f"{path}: baseline records {allowed} type errors but the "
                                 "file is clean now — run --update")
     return problems
+
+
+def improvements(counts: dict[str, int], baseline: dict) -> list[str]:
+    """Files that are better than the baseline records (never a failure)."""
+    stored: dict[str, int] = dict(baseline.get("files") or {})
+    notes: list[str] = []
+    for path, allowed in sorted(stored.items()):
+        count = int(counts.get(path, 0))
+        if count < allowed:
+            notes.append(f"{path}: {count} (baseline {allowed})")
+    return notes
 
 
 def update(counts: dict[str, int], paths: list[str]) -> None:
@@ -97,8 +120,9 @@ def main(argv: list[str] | None = None) -> int:
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--update", action="store_true", help="re-record the baseline")
     parser.add_argument("--paths", nargs="+", default=TARGETS)
-    parser.add_argument("--no-strict-baseline", action="store_true",
-                        help="do not fail when a baseline entry is out of date (cleaner files)")
+    parser.add_argument("--strict-baseline", action="store_true",
+                        help="also fail when the baseline is out of date (needs the full "
+                             "runtime dependencies installed)")
     args = parser.parse_args(argv)
 
     counts, output, returncode = run_mypy(args.paths)
@@ -111,7 +135,8 @@ def main(argv: list[str] | None = None) -> int:
         update(counts, args.paths)
         print(f"baseline updated: {total} type errors in {len(counts)} files -> {BASELINE}")
         return 0
-    problems = check(counts, load(), strict=not args.no_strict_baseline)
+    baseline = load()
+    problems = check(counts, baseline, strict=args.strict_baseline)
     if problems:
         for problem in problems:
             print(f"FAIL  {problem}")
@@ -120,6 +145,10 @@ def main(argv: list[str] | None = None) -> int:
               "(no new ones are allowed; `--update` only after fixing or accepting)")
         return 1
     print(f"OK  {total} type errors in {len(counts)} files, none new against the baseline")
+    better = improvements(counts, baseline)
+    if better:
+        print(f"     {len(better)} file(s) are cleaner than the baseline records "
+              f"(run --update to tidy): {', '.join(better[:3])}")
     return 0
 
 

@@ -65,9 +65,13 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install
+        # The baseline in docs/mypy_baseline.json was recorded with the runtime
+        # dependencies installed, so resolve the same pinned graph here — with a
+        # bare interpreter many imports degrade to Any and the counts change.
         run: |
           python -m pip install -q --upgrade pip
-          python -m pip install -q mypy
+          python -m pip install -q -r requirements.txt -c constraints.txt
+          python -m pip install -q -c constraints.txt mypy
       - name: No new type errors
         run: python scripts/typecheck.py
 

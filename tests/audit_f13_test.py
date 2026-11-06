@@ -39,6 +39,27 @@ def test_f13_ci_runs_the_type_gate():
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     assert "scripts/typecheck.py" in workflow, "CI never runs the type gate"
     assert "mypy" in workflow
+    # the baseline was recorded with the runtime dependencies installed; a bare
+    # interpreter degrades imports to Any and changes every count
+    job = workflow.split("types:", 1)[1].split("\n  tests:", 1)[0]
+    assert "requirements.txt" in job, "the type job must install the pinned runtime deps"
+    assert "constraints.txt" in job, "the type job must resolve the pinned graph"
+
+
+def test_f13_counts_are_environment_sensitive_so_only_growth_fails():
+    """Fewer errors than recorded is not a regression (missing optional deps)."""
+    spec = importlib.util.spec_from_file_location("typecheck", ROOT / "scripts" / "typecheck.py")
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+
+    baseline = {"files": {"app/core/spec.py": 5, "app/ui/widgets.py": 3}}
+    # fewer errors / a clean file: fine in the default mode, flagged as "better"
+    counts = {"app/core/spec.py": 2}
+    assert module.check(counts, baseline, strict=False) == []
+    assert module.improvements(counts, baseline), "the drop should be reported as a note"
+    # …but the same situation is a stale baseline in strict mode
+    assert module.check(counts, baseline, strict=True)
 
 
 def test_f13_script_ships_with_the_repo():
