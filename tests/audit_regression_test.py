@@ -398,3 +398,53 @@ def test_macro_panel_queues_confirmed_snapshot(tmp_path, monkeypatch):
     MainWindow._on_macro_run(shell, path)
     assert captured["_macro_snapshot"]["steps"][0]["path"] == "original"
     assert classify_invocation("macro_run", captured).requires_confirmation
+
+
+@pytest.mark.parametrize("tool_id", ["batch_rename", "organize_files", "rename_by_date"])
+def test_real_file_operations_require_approval(tool_id):
+    from app.core.execution import OperationRisk, classify_invocation
+    assert classify_invocation(tool_id, {"preview": True}).risk == OperationRisk.SAFE
+    assert classify_invocation(tool_id, {"preview": False}).risk == OperationRisk.CONFIRM
+
+
+def test_truthy_string_delete_is_not_misclassified_as_safe(tmp_path):
+    from app.core.execution import ExecutionPolicy, PolicyDeniedError, execute_tool
+    from app.core.spec import RunContext
+
+    folder = tmp_path / "junk"
+    folder.mkdir()
+    target = folder / "test.tmp"
+    target.write_text("keep")
+    with pytest.raises(PolicyDeniedError):
+        execute_tool("junk_scan", {"folder": str(folder), "delete": "false"},
+                     RunContext(lang="en"), policy=ExecutionPolicy.for_api())
+    assert target.exists()
+
+
+def test_restore_point_and_appearance_are_not_safe():
+    from app.core.execution import OperationRisk, classify_invocation
+    assert classify_invocation("restore_point", {"list": True}).risk == OperationRisk.ELEVATED
+    assert classify_invocation("dark_mode", {}).risk == OperationRisk.CONFIRM
+    assert classify_invocation("set_wallpaper", {}).risk == OperationRisk.CONFIRM
+    assert classify_invocation("create_shortcut", {"where": "desktop"}).risk == OperationRisk.CONFIRM
+
+
+def test_flow_uses_frozen_content_after_approval(tmp_path):
+    from app.core.execution import ExecutionPolicy, execute_tool, snapshot_invocation
+    from app.core.spec import RunContext
+
+    flow = tmp_path / "flow.json"
+    folder = tmp_path / "files"
+    folder.mkdir()
+    file = folder / "keep.txt"
+    file.write_text("content")
+    safe = {"name": "flow", "steps": [{"tool_id": "batch_rename", "values": {
+        "folder": str(folder), "preview": True, "template": "new_{n}"}}]}
+    flow.write_text(json.dumps(safe))
+    values = snapshot_invocation("flow_run", {"file": str(flow), "inputs": [str(file)]})
+    safe["steps"][0]["values"]["preview"] = False
+    flow.write_text(json.dumps(safe))
+    execute_tool("flow_run", values, RunContext(lang="en", output_dir=str(tmp_path)),
+                 policy=ExecutionPolicy.for_api())
+    assert file.exists()
+    assert not (folder / "new_01.txt").exists()

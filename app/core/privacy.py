@@ -40,7 +40,7 @@ def is_sensitive(key: str, tool_id: str = "") -> bool:
 def sanitize_values(tool_id: str, values: dict[str, Any]) -> dict[str, Any]:
     """Drop sensitive keys recursively; preserve safe values and placeholders."""
     return {str(k): sanitize_document(v) for k, v in values.items()
-            if str(k) != "_macro_snapshot" and not is_sensitive(str(k), tool_id)}
+            if str(k) not in {"_macro_snapshot", "_flow_snapshot"} and not is_sensitive(str(k), tool_id)}
 
 
 def secret_strings(tool_id: str, values: dict[str, Any]) -> list[str]:

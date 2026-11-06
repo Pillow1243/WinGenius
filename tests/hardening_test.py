@@ -371,7 +371,7 @@ def test_v71_dynamic_risk_classification_and_nested_propagation(tmp_path):
 
     registry.load_all()
     assert classify_invocation("base64_tool", {"mode": "encode", "text": "abc"}).risk == OperationRisk.SAFE
-    assert classify_invocation("batch_rename", {"preview": False}).risk == OperationRisk.SAFE
+    assert classify_invocation("batch_rename", {"preview": False}).risk == OperationRisk.CONFIRM
     assert classify_invocation("junk_scan", {"delete": False}).risk == OperationRisk.SAFE
     assert classify_invocation("junk_scan", {"delete": True}).risk == OperationRisk.DESTRUCTIVE
     assert classify_invocation("ocr_setup", {"action": "status"}).risk == OperationRisk.SAFE

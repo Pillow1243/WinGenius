@@ -579,7 +579,13 @@ def main() -> int:
         if widget is not None:
             panel._set_widget_value(widget, value)
     panel._refresh_visibility()
-    panel._run()
+    from PySide6.QtWidgets import QMessageBox
+    original_question = QMessageBox.question
+    QMessageBox.question = lambda *args, **kwargs: QMessageBox.StandardButton.Yes
+    try:
+        panel._run()
+    finally:
+        QMessageBox.question = original_question
     deadline = time.time() + 20
     while panel._runner is not None and time.time() < deadline:
         spin(60)
