@@ -1,0 +1,49 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# WinGenius — dependency constraints (audit F-12)
+#
+# requirements.txt carries *ranges* (>=x,<y) which is right for users but means
+# CI re-resolves the whole dependency graph on every run: a single upstream
+# breaking release can turn a green build red with no commit of ours, and two CI
+# jobs can silently test different versions. Install with:
+#
+#     pip install -r requirements.txt -c constraints.txt
+#
+# `python scripts/check_deps.py` fails when a requirement here is missing, and
+# `tests/audit_f12_test.py` fails when this file drifts from the resolved set.
+# Bump deliberately: re-resolve, run the suites, commit the numbers.
+# ──────────────────────────────────────────────────────────────────────────────
+
+# UI
+PySide6-Essentials==6.12.0
+
+# PDF
+pypdf==7.0.0
+PyMuPDF==2.1.0
+pyHanko==0.38.1
+reportlab==5.1.0
+
+# image / office / qr
+Pillow==13.0.0
+python-docx==1.2.0
+openpyxl==3.1.5
+qrcode==8.2
+python-barcode==0.16.1
+opencv-python-headless==4.14.0.94
+
+# security / system / network
+cryptography==50.0.2
+psutil==7.2.2
+requests==2.34.2
+mss==10.2.0
+markdown==3.11.3
+pyzipper==0.4.0
+imageio-ffmpeg==0.8.1
+pytesseract==0.3.13
+dnspython==2.9.2
+
+# Windows-only runtime dependency (marker in pyproject/requirements)
+pywin32==310
+
+# test tooling (CI installs these alongside the runtime set)
+pytest==9.2.0
+coverage==7.17.2

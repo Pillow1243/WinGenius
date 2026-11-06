@@ -140,7 +140,7 @@ Version 4.1 was the hardening + distribution release, and is included here:
 ## Install & run
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements.txt -c constraints.txt
 python main.py                 # GUI
 python main.py --doctor        # environment + dependency report
 python main.py --self-test     # headless smoke run

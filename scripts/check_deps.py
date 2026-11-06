@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail when requirements.txt and [project.dependencies] drift apart.
+"""Fail when requirements.txt, constraints.txt and [project.dependencies] drift apart.
 
 The wheel used to omit mss, opencv and pywin32, and the frozen exe shipped
 without pyHanko even though the UI advertised PDF signing.  One list is now
@@ -15,6 +15,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PYPROJECT = ROOT / "pyproject.toml"
 REQUIREMENTS = ROOT / "requirements.txt"
+CONSTRAINTS = ROOT / "constraints.txt"
+
+# Installed by CI next to the runtime set, so they are pinned here too but are
+# not part of [project.dependencies].
+TOOLING = {"pytest", "coverage"}
 
 NAME = re.compile(r"^\s*([A-Za-z0-9_.-]+)")
 
@@ -52,8 +57,39 @@ def main() -> int:
         print(f"  MISSING from pyproject.toml  : {', '.join(extra)}")
     if missing or extra:
         return 1
-    print("dependency lists are in sync ✓")
-    return 0
+    if missing or extra:
+        pass
+    else:
+        print("dependency lists are in sync ✓")
+
+    # audit F-12: every requirement needs an explicit pin, otherwise CI keeps
+    # re-resolving the dependency graph on every run.
+    problems = list(missing) and ["requirements/pyproject drift"] or []
+    if CONSTRAINTS.is_file():
+        pins = {}
+        for line in CONSTRAINTS.read_text(encoding="utf-8").splitlines():
+            line = line.split("#", 1)[0].strip()
+            if not line or line.startswith("-"):
+                continue
+            line = line.split(";", 1)[0].strip()
+            name, _, version = line.partition("==")
+            match = NAME.match(name)
+            if match and version.strip():
+                pins[canonical(match.group(1))] = version.strip()
+        expected = (declared | TOOLING)
+        unpinned = sorted(expected - set(pins))
+        unknown = sorted(set(pins) - expected)
+        print(f"constraints.txt : {len(pins)} pinned versions")
+        if unpinned:
+            print(f"  NOT pinned in constraints.txt: {', '.join(unpinned)}")
+        if unknown:
+            print(f"  pinned but not required      : {', '.join(unknown)}")
+        problems = bool(unpinned or unknown)
+    else:
+        print("constraints.txt : MISSING")
+        problems = True
+
+    return 1 if problems else 0
 
 
 if __name__ == "__main__":

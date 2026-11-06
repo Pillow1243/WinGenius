@@ -29,7 +29,7 @@ py -3.12 -m venv .venv
                                       # Set-ExecutionPolicy -Scope Process RemoteSigned
 
 python -m pip install --upgrade pip
-pip install -r requirements.txt
+pip install -r requirements.txt -c constraints.txt
 
 python main.py                        # اجرای برنامه
 python main.py --self-test            # آزمون سریع بدون باز کردن پنجره
@@ -40,7 +40,7 @@ python main.py --self-test            # آزمون سریع بدون باز کر
 ```bash
 cd /path/to/WinGenius
 python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.txt -c constraints.txt
 
 # فقط لینوکس — کتابخانه‌های سیستمی که Qt لازم دارد:
 sudo apt install libxkbcommon0 libegl1 libglib2.0-0 libdbus-1-3 libfontconfig1
@@ -162,7 +162,7 @@ WinGenius.exe --sendto "C:\in\report.pdf" "C:\in\photo.jpg"
 
 | پیام | علت و راه‌حل |
 |---|---|
-| `ModuleNotFoundError: No module named 'PySide6'` | venv فعال نیست یا `pip install -r requirements.txt` اجرا نشده |
+| `ModuleNotFoundError: No module named 'PySide6'` | venv فعال نیست یا `pip install -r requirements.txt -c constraints.txt` اجرا نشده |
 | `ImportError: libxkbcommon.so.0` (لینوکس) | بسته‌های سیستمی Qt را نصب کنید (بالا) |
 | `An unexpected error occurred` هنگام اجرا | `%APPDATA%\WinGenius\logs\` را ببینید؛ نسخه‌ی پایتون باید ≥ ۳.۱۱ باشد |
 | ویندوز هشدار SmartScreen می‌دهد | exe امضای دیجیتال ندارد؛ «More info → Run anyway» یا خودتان کد را از سورس اجرا کنید |
