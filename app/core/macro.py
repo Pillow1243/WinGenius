@@ -336,18 +336,55 @@ class MacroRunner:
         if self.dry_run:
             self.result.executed += 1
             self._log(self.M(f"کپی (تمرینی): {src} → {dst}", f"would copy: {src} → {dst}"))
+            collisions = self._copy_collisions(src, dst)
+            for item in collisions:
+                self._log(self.M(f"برخورد نام در حالت تمرینی: {item}",
+                                 f"name collision (dry-run): {item}"))
             return None
         self._check_file_policy("copy")
         if src.is_dir():
-            ensure_dir(dst)
-            shutil.copytree(src, dst, dirs_exist_ok=True)
+            # Never overwrite an existing file: every copied file gets a unique
+            # destination name and is recorded in the undo journal (audit F-03).
+            created: List[str] = []
+            for item in sorted(src.rglob("*")):
+                rel = item.relative_to(src)
+                if item.is_dir():
+                    ensure_dir(dst / rel)
+                    continue
+                target = unique_path(dst / rel)
+                ensure_dir(target.parent)
+                shutil.copy2(item, target)
+                created.append(str(target))
+            if created and self.journal_enabled:
+                from .journal import journal
+                journal().record_created(
+                    created, self.M("کپی پوشه توسط ماکرو", "macro folder copy"),
+                    self.M("کپی پوشه توسط ماکرو", "macro folder copy"), tool_id="macro_run")
             self.result.executed += 1
             return dst
         target = unique_path(dst if dst.suffix else dst / src.name)
         ensure_dir(target.parent)
         shutil.copy2(src, target)
+        if self.journal_enabled:
+            from .journal import journal
+            journal().record_created(
+                [str(target)], self.M("کپی فایل توسط ماکرو", "macro file copy"),
+                self.M("کپی فایل توسط ماکرو", "macro file copy"), tool_id="macro_run")
         self.result.executed += 1
         return target
+
+    def _copy_collisions(self, src: Path, dst: Path) -> List[str]:
+        """Destination paths that already exist (reported in dry-run)."""
+        collisions: List[str] = []
+        if src.is_dir():
+            for item in sorted(src.rglob("*")):
+                if item.is_file() and (dst / item.relative_to(src)).exists():
+                    collisions.append(f"{item.name} → {dst / item.relative_to(src)}")
+        else:
+            candidate = dst if dst.suffix else dst / src.name
+            if candidate.exists():
+                collisions.append(f"{src.name} → {candidate}")
+        return collisions
 
     def _move(self, src: Path, dst: Path) -> Optional[Path]:
         if self.dry_run:
@@ -451,6 +488,19 @@ class MacroRunner:
                 else:
                     self._check_file_policy("write")
                     ensure_dir(target.parent)
+                    if target.exists() and self.journal_enabled:
+                        # snapshot the old content first so the write is undoable (F-03)
+                        from .journal import journal
+                        op_id = journal().record_file_backup(
+                            target, self.M("نوشتن فایل توسط ماکرو", "macro file write"),
+                            self.M("نوشتن فایل توسط ماکرو", "macro file write"),
+                            tool_id="macro_run")
+                        if not op_id:
+                            self._log(self.M(
+                                f"هشدار: از {target.name} نسخه‌ی پشتیبان گرفته نشد؛ "
+                                "این تغییر قابل بازگردانی نیست.",
+                                f"warning: no backup taken of {target.name}; "
+                                "this change will NOT be undoable."))
                     target.write_text(text, encoding="utf-8")
                     self.result.outputs.append(str(target))
                     self.result.executed += 1
