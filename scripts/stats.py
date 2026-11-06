@@ -182,7 +182,20 @@ def verify() -> int:
     if errors:
         for error in errors:
             print(f"STALE  {error}")
+            # GitHub turns this into a check-run annotation, i.e. the reason a red
+            # "stats" job failed is visible without downloading the job log.
+            print(f"::error title=docs/stats.json is stale::{error}")
         print("\nRun `python scripts/stats.py --run` and commit docs/stats.json.")
+        summary = os.environ.get("GITHUB_STEP_SUMMARY")
+        if summary:
+            try:
+                with open(summary, "a", encoding="utf-8") as handle:
+                    handle.write("### docs/stats.json is stale\n\n")
+                    for error in errors:
+                        handle.write(f"- {error}\n")
+                    handle.write("\nFix with `python scripts/stats.py --run`.\n")
+            except OSError:
+                pass
         return 1
     print(f"OK  {live} tools · {sum(counts.values())} checks reproduced by the suites")
     return 0
