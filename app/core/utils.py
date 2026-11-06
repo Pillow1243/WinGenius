@@ -9,7 +9,7 @@ import subprocess
 import sys
 import unicodedata
 from pathlib import Path
-from typing import List, Sequence, Tuple
+from typing import Any, List, Sequence, Tuple
 
 IS_WINDOWS = sys.platform.startswith("win")
 
@@ -231,6 +231,31 @@ class RangeError(ValueError):
     def __init__(self, message: str, part: str = "") -> None:
         super().__init__(message)
         self.part = part or message
+
+
+PERSIAN_DIGITS = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
+
+
+def fa_digits(text: Any) -> str:
+    """Western digits → Persian digits (۰-۹).  Leaves everything else alone."""
+    return str(text).translate(PERSIAN_DIGITS)
+
+
+def ui_number(value: Any, lang: str = "fa") -> str:
+    """Format a number for display: Persian digits in Persian UI when enabled.
+
+    Paths and file names never go through this — only counters, sizes and dates.
+    """
+    text = str(value)
+    if lang != "en":
+        try:
+            from .settings import settings
+
+            if settings.get("ui/persian_digits"):
+                return fa_digits(text)
+        except Exception:                              # settings unavailable
+            return fa_digits(text)
+    return text
 
 
 def parse_ranges(text: str, max_index: int, one_based: bool = True) -> List[int]:

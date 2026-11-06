@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
 from ..core import theme
 from ..core.i18n import t
 from ..core.theme import Palette
-from ..core.utils import open_path, reveal_path
+from ..core.utils import open_path, reveal_path, ui_number
 from .widgets import Card, divider, label
 
 STATUS_COLORS = {"queued": "#8FA3BF", "running": "#18C8F5", "done": "#2BD9A0",
@@ -75,9 +75,10 @@ class JobRow(QFrame):
         title = label(job.title or job.tool_id, "RowTitle")
         title.setToolTip(job.tool_id)
         head.addWidget(title, 1)
+        digits = lambda text: ui_number(text, lang)  # noqa: E731 - display only
         meta = label(f"{_status_text(job.status, lang)}"
-                     + (f" · {job.elapsed:.1f}s" if job.elapsed else "")
-                     + (f" · {_ago(job.created, lang)}" if job.status in ("done", "failed", "cancelled") else "")
+                     + (f" · {digits(f'{job.elapsed:.1f}s')}" if job.elapsed else "")
+                     + (f" · {digits(_ago(job.created, lang))}" if job.status in ("done", "failed", "cancelled") else "")
                      + (f" · {t('jb.restored')}" if getattr(job, "paused", False) else ""),
                      "Hint")
         head.addWidget(meta)
@@ -255,10 +256,11 @@ class JobsDrawer(QWidget):
             return
         jobs = self.manager.jobs()[:40]
         stats = self.manager.stats()
+        num = lambda value: ui_number(value, self.lang)  # noqa: E731 - display only
         self._stats.setText(
-            (f"{stats['active']} active · {stats['done']} done · {stats['failed']} failed")
+            (f"{num(stats['active'])} active · {num(stats['done'])} done · {num(stats['failed'])} failed")
             if self.lang == "en" else
-            (f"{stats['active']} فعال · {stats['done']} انجام‌شده · {stats['failed']} خطا"))
+            (f"{num(stats['active'])} فعال · {num(stats['done'])} انجام‌شده · {num(stats['failed'])} خطا"))
         resumable = self.manager.has_resumable()
         self._resume.setVisible(resumable)
         if resumable:

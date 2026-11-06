@@ -65,6 +65,7 @@ _DEFAULTS: dict[str, Any] = {
     "ui/accent": "#5B8CFF",
     "ui/animations": True,
     "ui/glow": True,
+    "ui/persian_digits": True,        # show ۰-۹ in the shell (incl. numbers in the UI)
     "ui/confirm_danger": True,
     "ui/auto_check_updates": False,   # opt-in startup release check
     "ui/start_page": "home",

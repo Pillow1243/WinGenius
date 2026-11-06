@@ -868,6 +868,25 @@ def icon_sync(p, r, c, w):
     ]))
 
 
+def icon_maximize(p, r, c, w):
+    p.drawRoundedRect(QRectF(r.left() + r.width() * 0.2, r.top() + r.height() * 0.2,
+                             r.width() * 0.6, r.height() * 0.6),
+                      r.width() * 0.07, r.width() * 0.07)
+
+
+def icon_restore(p, r, c, w):
+    """Two offset frames: the standard "restore down" glyph."""
+    p.drawRoundedRect(QRectF(r.left() + r.width() * 0.14, r.top() + r.height() * 0.3,
+                             r.width() * 0.52, r.height() * 0.52),
+                      r.width() * 0.06, r.width() * 0.06)
+    p.drawLine(QPointF(r.left() + r.width() * 0.34, r.top() + r.height() * 0.3),
+               QPointF(r.left() + r.width() * 0.34, r.top() + r.height() * 0.16))
+    p.drawLine(QPointF(r.left() + r.width() * 0.34, r.top() + r.height() * 0.16),
+               QPointF(r.left() + r.width() * 0.84, r.top() + r.height() * 0.16))
+    p.drawLine(QPointF(r.left() + r.width() * 0.84, r.top() + r.height() * 0.16),
+               QPointF(r.left() + r.width() * 0.84, r.top() + r.height() * 0.66))
+
+
 def icon_square(p, r, c, w):
     p.drawRoundedRect(QRectF(r.left() + r.width() * 0.18, r.top() + r.height() * 0.18,
                              r.width() * 0.64, r.height() * 0.64),
@@ -1051,6 +1070,7 @@ ICONS: Dict[str, Callable] = {
     "list": icon_list, "speed": icon_speed, "download": icon_download,
     "x": icon_x, "back": icon_back, "chevron_right": icon_chevron_right,
     "chevron_left": icon_chevron_left, "sliders": icon_sliders, "minus": icon_minus,
+    "maximize": icon_maximize, "restore": icon_restore,
     "grid": icon_grid,
     "chart": icon_chart, "layers": icon_layers, "refresh": icon_refresh, "sparkles": icon_sparkles,
     "brush": icon_brush, "sun": icon_sun, "palette": icon_palette, "eye": icon_eye,

@@ -143,6 +143,7 @@ class ToolPanel(QWidget):
 
         footer = QHBoxLayout()
         footer.setSpacing(10)
+        self._footer = footer
         self._status = label("", "Hint")
         footer.addWidget(self._status, 1)
 
@@ -177,6 +178,9 @@ class ToolPanel(QWidget):
         self._run_button.clicked.connect(self._run)
         footer.addWidget(self._run_button, 0)
         root.addLayout(footer)
+        self._action_buttons = [self._run_button, self._queue_button,
+                                self._cancel_button, self._log_button]
+        self._arrange_actions()
 
         self._log_view = QPlainTextEdit()
         self._log_view.setObjectName("Log")
@@ -248,6 +252,7 @@ class ToolPanel(QWidget):
         result = self._result
         running = self._runner is not None and self._runner.isRunning()
         values = self._collect() if (self.spec is not None and self._widgets) else None
+        self._arrange_actions()
         self._retranslate_chrome()
         if self.spec is not None:
             self.load(self.spec, lang, settings.output_dir, values, announce_prefill=False)
@@ -306,6 +311,7 @@ class ToolPanel(QWidget):
 
         for field in spec.fields:
             self._add_field(field)
+        self._apply_tab_order()
 
         defaults = spec.defaults()
         for key, value in defaults.items():
@@ -484,6 +490,32 @@ class ToolPanel(QWidget):
             self._helpers[field.key] = helper
         self._rows[field.key] = row
         self._form.insertWidget(self._form.count() - 1, row)
+
+    def _arrange_actions(self) -> None:
+        """Primary action sits on the reading side: right in Persian, left in English.
+
+        With a right-to-left layout Qt puts the *first* widget added at the right
+        edge, so the footer used to end up with «اجرا» at the far left — the last
+        thing a Persian reader looks at.
+        """
+        order = list(self._action_buttons)
+        if self.lang != "en":
+            order.reverse()
+        for button in order:
+            self._footer.removeWidget(button)
+        for button in order:
+            self._footer.addWidget(button, 0)
+
+    def _apply_tab_order(self) -> None:
+        """Tab moves through the fields top-to-bottom, then the action buttons."""
+        chain: List[QWidget] = []
+        for field in (self.spec.fields if self.spec else []):
+            widget = self._widgets.get(field.key)
+            if widget is not None:
+                chain.append(widget)
+        chain.extend(self._action_buttons)
+        for first, second in zip(chain, chain[1:]):
+            QWidget.setTabOrder(first, second)
 
     def _placeholder(self, field: Field) -> str:
         """Hint text for a field; English mode never falls back to Persian."""

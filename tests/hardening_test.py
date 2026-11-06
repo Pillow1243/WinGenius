@@ -737,7 +737,11 @@ def test_v71_multipage_pdf_form_and_rtl_ltr_theme(tmp_path):
     ltr_qss = theme.stylesheet(light_pal, direction="ltr")
     assert "subcontrol-position: center left;" in rtl_qss
     assert "subcontrol-position: center right;" in ltr_qss
-    assert "#101626" in ltr_qss  # dark text chosen automatically for high-luminance yellow accent
+    # dark ink is chosen automatically when it reads better than white
+    # (WCAG 2.1 contrast, not a hard-coded hex)
+    ink = theme.accent_ink(light_pal.accent, light_pal.accent2)
+    assert ink in ltr_qss
+    assert theme.contrast_ratio(ink, light_pal.accent) >= 4.5
 
     # 2. Multi-page PDF AcroForm widget update does not crash and writes valid output
     writer = PdfWriter()

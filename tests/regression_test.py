@@ -452,3 +452,125 @@ def test_signed_manifest_verifies_against_a_pinned_key(tmp_path):
     with pytest.raises(Exception):
         verify_release_manifest(manifest, expected_version="7.1.0",
                                 trusted_pubkeys={"other": keys["public_key_b64"]})
+
+
+# ------------------------------------------------------------------ B2 contrast
+def test_every_accent_gets_readable_button_text(qapplication):
+    """WCAG AA (4.5:1) for the label on a primary button, for every shipped accent."""
+    from app.core.theme import accent_ink, build_palette, contrast_ratio, stylesheet
+    from app.ui.settings_panel import ACCENTS
+
+    for accent in ACCENTS:
+        ink = accent_ink(accent)
+        assert contrast_ratio(ink, accent) >= 4.5, f"{accent} with {ink}"
+        palette = build_palette("aurora", accent)
+        assert palette.on_accent == ink
+        sheet = stylesheet(palette)
+        primary = sheet.split("QPushButton#Primary {", 1)[1].split("}", 1)[0]
+        assert f"color: {ink}" in primary, f"primary button must use {ink} on {accent}"
+
+
+# ------------------------------------------------------- B7 maximize / restore
+def test_maximize_button_toggles_and_relabels(window):
+    button = window._max_button
+    assert button.accessibleName()
+    before = window.isMaximized()
+    window.toggle_maximized()
+    assert window.isMaximized() is not before
+    expected = "tb.restore" if window.isMaximized() else "tb.maximize"
+    from app.core.i18n import t
+
+    assert button.toolTip() == t(expected)
+    window.toggle_maximized()
+    assert window.isMaximized() is before
+    window.showNormal()
+
+
+# ------------------------------------------------- B10/UI: primary action in RTL
+def test_primary_action_sits_on_the_reading_side(window):
+    window._on_language_changed("fa")
+    window._open_tool_by_id("pdf_to_images")
+    panel = window.tool_panel
+    order = []
+    for index in range(panel._footer.count()):
+        widget = panel._footer.itemAt(index).widget()
+        if widget in panel._action_buttons:
+            order.append(widget)
+    assert order[-1] is panel._run_button, "«اجرا» must be the right-most button in Persian"
+    window._on_language_changed("en")
+    order = [panel._footer.itemAt(index).widget() for index in range(panel._footer.count())
+             if panel._footer.itemAt(index).widget() in panel._action_buttons]
+    assert order[0] is panel._run_button, "Run must be the left-most button in English"
+    window._on_language_changed("fa")
+
+
+# ------------------------------------------------------------ Persian digits
+def test_ui_numbers_follow_the_language_and_the_setting(qapplication):
+    from app.core.settings import settings
+    from app.core.utils import fa_digits, ui_number
+
+    assert fa_digits("2026 · 42%") == "۲۰۲۶ · ۴۲%"
+    previous = settings.get("ui/persian_digits")
+    try:
+        settings.set("ui/persian_digits", True)
+        assert ui_number("42%") == "۴۲%"
+        assert ui_number("42%", "en") == "42%"
+        settings.set("ui/persian_digits", False)
+        assert ui_number("42%") == "42%", "the setting must be able to turn it off"
+    finally:
+        settings.set("ui/persian_digits", previous)
+
+
+# --------------------------------------------------------- HiDPI / small screens
+def test_shell_survives_a_150_percent_scale_factor():
+    """A pint-sized smoke test: build the shell at 150% scaling in a child process.
+
+    Fixed pixel sizes (`setFixedWidth(600)`, radial radii) used to break silently at
+    high DPI; doing it out-of-process keeps the fragile Qt teardown out of pytest.
+    """
+    import json
+    import subprocess
+    import sys
+
+    script = r"""
+import json, os
+from app.bootstrap import create_app
+from app.core.registry import load_all
+load_all()
+app = create_app([])
+from PySide6.QtCore import Qt
+from app.ui.main_window import MainWindow
+w = MainWindow()
+w.setWindowState(Qt.WindowState.WindowNoState)
+w.show()
+app.processEvents()
+w.resize(1000, 700)
+app.processEvents()
+w.resize(1000, 700)           # restored geometry can override the first resize
+w._layout_overlays()          # deterministic: the shell's own layout pass
+app.processEvents()
+w._open_tool_by_id("pdf_to_images")
+app.processEvents()
+panel = w.tool_panel
+print(json.dumps({
+    "ratio": float(app.devicePixelRatio()),
+    "window": [w.width(), w.height()],
+    "panel": [panel.width(), panel.height()],
+    "panel_inside": panel.width() <= w.width() and panel.height() <= w.height(),
+    "geometry": [panel.geometry().left(), panel.geometry().top(),
+                 panel.geometry().right(), w.rect().right(), w.rect().bottom(),
+                 panel.geometry().bottom()],
+    "panel_wide_enough": panel.width() >= 520,
+    "run_button": [panel._run_button.width(), panel._run_button.isVisibleTo(panel)],
+}))
+"""
+    env = dict(os.environ, QT_SCALE_FACTOR="1.5", QT_QPA_PLATFORM="offscreen")
+    proc = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True,
+                          env=env, timeout=180)
+    assert proc.returncode == 0, proc.stderr[-1500:]
+    data = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert abs(data["ratio"] - 1.5) < 0.01
+    assert data["panel_inside"], data
+    assert data["panel_wide_enough"], data
+    width, visible = data["run_button"]
+    assert visible and 100 <= width <= data["panel"][0], data

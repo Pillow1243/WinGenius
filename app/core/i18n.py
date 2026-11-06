@@ -21,6 +21,8 @@ STRINGS: Dict[str, Dict[str, str]] = {
     "page.of": {"fa": "صفحه {0} از {1}", "en": "Page {0} of {1}"},
     # toolbar
     "tb.minimize": {"fa": "کوچک کردن", "en": "Minimize"},
+    "tb.maximize": {"fa": "بزرگ کردن", "en": "Maximize"},
+    "tb.restore": {"fa": "بازگرداندن اندازه", "en": "Restore down"},
     "tb.close": {"fa": "بستن", "en": "Close"},
     "tb.settings": {"fa": "تنظیمات", "en": "Settings"},
     "tb.lang": {"fa": "EN", "en": "فا"},
@@ -75,6 +77,8 @@ STRINGS: Dict[str, Dict[str, str]] = {
     "st.accent": {"fa": "رنگ تأکیدی", "en": "Accent color"},
     "st.animations": {"fa": "انیمیشن‌ها", "en": "Animations"},
     "st.glow": {"fa": "درخشش نئونی", "en": "Neon glow"},
+    "st.persian_digits": {"fa": "نمایش ارقام فارسی (۰-۹) در شمارنده‌ها",
+                          "en": "Persian digits (۰-۹) in counters"},
     "st.confirm": {"fa": "تأیید قبل از عملیات خطرناک", "en": "Confirm dangerous actions"},
     "st.output": {"fa": "پوشه‌ی خروجی پیش‌فرض", "en": "Default output folder"},
     "st.open_result": {"fa": "باز کردن خودکار نتیجه", "en": "Open result automatically"},

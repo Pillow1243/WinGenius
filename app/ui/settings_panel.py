@@ -69,6 +69,7 @@ class SettingsPanel(QWidget):
         scroll.setMaximumHeight(560)
         scroll.setWidget(self._body)
         self._scroll = scroll
+        self._scroll = scroll
         card_layout.addWidget(scroll, 1)
 
         outer = QVBoxLayout(self)
@@ -84,6 +85,19 @@ class SettingsPanel(QWidget):
         self.palette_ref = palette
         self.setStyleSheet("")
         self._build()
+
+    # ------------------------------------------------------------------ layout
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._fit_card()
+
+    def _fit_card(self) -> None:
+        """Card width follows the window (a fixed 600px touched the edge at 1366×768)."""
+        width = max(320, min(600, self.width() - 48))
+        if self._card.width() != width:
+            self._card.setFixedWidth(width)
+        if hasattr(self, "_scroll"):
+            self._scroll.setMaximumHeight(max(220, min(560, self.height() - 190)))
 
     def set_language(self, lang: str) -> None:
         self.lang = lang
@@ -155,6 +169,7 @@ class SettingsPanel(QWidget):
             ("ui/animations", t("st.animations")),
             ("ui/glow", t("st.glow")),
             ("ui/confirm_danger", t("st.confirm")),
+            ("ui/persian_digits", t("st.persian_digits")),
             ("files/open_after_run", t("st.open_result")),
             ("index/ocr", t("st.ocr_index")),
         ):
@@ -393,6 +408,8 @@ class SettingsPanel(QWidget):
         settings.set(key, bool(state))
         if key in ("ui/animations", "ui/glow"):
             self.themeChanged.emit()
+        elif key == "ui/persian_digits":
+            self.themeChanged.emit()      # panels re-render their counters
 
     def _copy_diagnostics(self) -> None:
         from PySide6.QtWidgets import QApplication
@@ -477,6 +494,7 @@ class SettingsPanel(QWidget):
         for key, default in (
             ("ui/theme", "aurora"), ("ui/accent", "#5B8CFF"), ("ui/animations", True),
             ("ui/glow", True), ("ui/confirm_danger", True), ("files/open_after_run", True),
+            ("ui/persian_digits", True),
         ):
             settings.set(key, default)
         self.themeChanged.emit()
