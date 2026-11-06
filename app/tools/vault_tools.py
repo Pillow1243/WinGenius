@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from ..core.registry import tool
 from ..core.spec import (
@@ -22,6 +22,46 @@ def _vault(values: Dict[str, Any], ctx: RunContext) -> Vault:
     if not password:
         raise ToolError(ctx.M("رمز گاوصندوق لازم است.", "The vault password is required."))
     return Vault(Path(raw), password)
+
+
+#: A 6-character password was fine when the vault only held notes; it is not fine
+#: for an encrypted container, so the floor moved to 10 with a strength *warning*.
+MIN_PASSWORD = 10
+
+
+def _password_strength(password: str) -> int:
+    """0 = too short, 1 = weak, 2 = ok, 3 = strong. Never blocks on 2/3."""
+    if len(password) < MIN_PASSWORD:
+        return 0
+    classes = sum(bool(any(test(ch) for ch in password)) for test in (
+        str.islower, str.isupper, str.isdigit,
+        lambda ch: not ch.isalnum(),
+    ))
+    if len(password) >= 16 and classes >= 2:
+        return 3
+    if classes >= 2:
+        return 2
+    return 1
+
+
+def _password_problem(ctx: RunContext, password: str) -> Optional[ToolError]:
+    if _password_strength(password):
+        return None
+    return ToolError(ctx.M(
+        f"رمز حداقل {MIN_PASSWORD} نویسه باشد؛ یک عبارت عبور طولانی (مثلاً چهار کلمه) بهتر است.",
+        f"Use at least {MIN_PASSWORD} characters — a long passphrase (four words) is better.",
+    ))
+
+
+def _password_hint(ctx: RunContext, password: str) -> str:
+    """A one-line warning appended to the result for weak-but-accepted passwords."""
+    if _password_strength(password) > 1:
+        return ""
+    return ctx.M(
+        "\nهشدار: رمز ضعیف است (همه‌ی نویسه‌ها یک‌جنس‌اند). یک عبارت عبور طولانی‌تر بگذارید.",
+        "\nWarning: that password is weak (all characters are the same kind). "
+        "Consider a longer passphrase.",
+    )
 
 
 def _friendly(ctx: RunContext, exc: Exception) -> ToolError:
@@ -51,8 +91,9 @@ def _friendly(ctx: RunContext, exc: Exception) -> ToolError:
 def vault_create(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     if str(v.get("password") or "") != str(v.get("confirm") or ""):
         raise ToolError(ctx.M("رمز و تکرارش یکسان نیستند.", "The two passwords do not match."))
-    if len(str(v.get("password") or "")) < 6:
-        raise ToolError(ctx.M("رمز حداقل ۶ نویسه باشد.", "Use at least 6 characters."))
+    problem = _password_problem(ctx, str(v.get("password") or ""))
+    if problem is not None:
+        raise problem
     target = Path(str(v.get("vault")))
     if target.suffix.lower() != ".wgv":
         target = target.with_suffix(".wgv")
@@ -65,7 +106,8 @@ def vault_create(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     except VaultError as exc:
         raise _friendly(ctx, exc) from exc
     return RunResult(
-        message=ctx.M("گاوصندوق ساخته شد.", "Vault created."),
+        message=ctx.M("گاوصندوق ساخته شد.", "Vault created.")
+        + _password_hint(ctx, str(v.get("password") or "")),
         outputs=[str(target)],
         details=ctx.M(f"مسیر: {target}\nالگوریتم: AES-256-GCM · کلید از scrypt ({vault.strength()})\n"
                       f"هدر گاوصندوق هم با GCM احراز می‌شود و هر فایل جداگانه رمز می‌شود.",
@@ -256,6 +298,9 @@ def vault_remove(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
 def vault_password(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     if str(v.get("new_password") or "") != str(v.get("confirm") or ""):
         raise ToolError(ctx.M("رمزهای تازه یکسان نیستند.", "The new passwords do not match."))
+    problem = _password_problem(ctx, str(v.get("new_password") or ""))
+    if problem is not None:
+        raise problem
     vault = _vault(v, ctx)
     try:
         vault.unlock()
@@ -263,7 +308,8 @@ def vault_password(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     except VaultError as exc:
         raise _friendly(ctx, exc) from exc
     return RunResult(message=ctx.M("رمز گاوصندوق عوض شد و همه‌چیز دوباره رمز شد.",
-                                   "Vault password changed; everything re-encrypted."),
+                                   "Vault password changed; everything re-encrypted.")
+                     + _password_hint(ctx, str(v.get("new_password") or "")),
                      outputs=[str(vault.path)])
 
 

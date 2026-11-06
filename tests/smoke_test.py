@@ -824,23 +824,23 @@ def test_v3(f: dict, ctx_factory) -> None:
 
     # --- encrypted vault ----------------------------------------------------
     vault_file = work / "smoke.wgv"
-    run_tool("vault_create", {"vault": str(vault_file), "password": "pw-123456",
-                              "confirm": "pw-123456"}, ctx)
+    run_tool("vault_create", {"vault": str(vault_file), "password": "pw-123456789",
+                              "confirm": "pw-123456789"}, ctx)
     assert vault_file.exists(), "vault_create wrote no file"
     record("vault_create", PASS, f"{vault_file.stat().st_size} bytes")
     note = work / "secret.txt"
     note.write_text("classified", encoding="utf-8")
-    run_tool("vault_add", {"vault": str(vault_file), "password": "pw-123456",
+    run_tool("vault_add", {"vault": str(vault_file), "password": "pw-123456789",
                            "files": str(note)}, ctx)
     record("vault_add file", PASS, "secret stored")
-    run_tool("vault_add", {"vault": str(vault_file), "password": "pw-123456",
+    run_tool("vault_add", {"vault": str(vault_file), "password": "pw-123456789",
                            "note_name": "memo.txt", "note_text": "hello"}, ctx)
-    result = run_tool("vault_list", {"vault": str(vault_file), "password": "pw-123456"}, ctx,
+    result = run_tool("vault_list", {"vault": str(vault_file), "password": "pw-123456789"}, ctx,
                       expect_output=False)
     assert "secret.txt" in result.details, result.details[:80]
     record("vault_list", PASS, "both entries listed")
     extract_dir = work / "vault_out"
-    run_tool("vault_extract", {"vault": str(vault_file), "password": "pw-123456",
+    run_tool("vault_extract", {"vault": str(vault_file), "password": "pw-123456789",
                                "out": str(extract_dir)}, ctx)
     assert (extract_dir / "secret.txt").read_text(encoding="utf-8") == "classified"
     record("vault_extract", PASS, "content decrypted correctly")
@@ -848,12 +848,12 @@ def test_v3(f: dict, ctx_factory) -> None:
     record("vault encryption", PASS, "no plaintext on disk")
     expect_error("vault_list", {"vault": str(vault_file), "password": "wrong-pw"}, ctx,
                  "wrong password")
-    run_tool("vault_password", {"vault": str(vault_file), "password": "pw-123456",
-                                "new_password": "pw-654321", "confirm": "pw-654321"}, ctx)
-    run_tool("vault_list", {"vault": str(vault_file), "password": "pw-654321"}, ctx,
+    run_tool("vault_password", {"vault": str(vault_file), "password": "pw-123456789",
+                                "new_password": "pw-654321xyz", "confirm": "pw-654321xyz"}, ctx)
+    run_tool("vault_list", {"vault": str(vault_file), "password": "pw-654321xyz"}, ctx,
              expect_output=False)
     record("vault_password", PASS, "re-keyed vault unlocks with the new password")
-    run_tool("vault_remove", {"vault": str(vault_file), "password": "pw-654321",
+    run_tool("vault_remove", {"vault": str(vault_file), "password": "pw-654321xyz",
                               "names": "memo.txt"}, ctx)
     record("vault_remove", PASS, "entry removed")
 

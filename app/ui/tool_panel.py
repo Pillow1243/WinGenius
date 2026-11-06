@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -126,9 +127,15 @@ class ToolPanel(QWidget):
         self._copy_button = QPushButton(t("tp.copy"))
         self._copy_button.setObjectName("Ghost")
         self._copy_button.clicked.connect(self._copy_result)
+        # Results used to be clipboard-only; a report you can attach to a ticket
+        # ("what did it say?") is the missing half of that.
+        self._save_button = QPushButton(t("tp.save_report"))
+        self._save_button.setObjectName("Ghost")
+        self._save_button.clicked.connect(self._save_report)
         actions.addWidget(self._open_button)
         actions.addWidget(self._reveal_button)
         actions.addWidget(self._copy_button)
+        actions.addWidget(self._save_button)
         actions.addStretch(1)
         result_layout.addLayout(actions)
         self._result_card.setVisible(False)
@@ -240,6 +247,7 @@ class ToolPanel(QWidget):
         self._open_button.setText(t("tp.open_output"))
         self._reveal_button.setText(t("tp.show_in_folder"))
         self._copy_button.setText(t("tp.copy"))
+        self._save_button.setText(t("tp.save_report"))
         self._close_button.setToolTip(t("tp.close"))
         self._update_favorite_icon()
         self._update_outdir_button(settings.output_dir)
@@ -799,6 +807,7 @@ class ToolPanel(QWidget):
         self.toastRequested.emit(t("tp.cancel"), "warning")
 
     def _show_result(self, result: RunResult, error: bool = False) -> None:
+        self._result = result
         self._result_is_error = bool(error)
         self._result_card.setVisible(True)
         self._result_title.setText(t("tp.failed") if error else t("tp.done"))
@@ -810,6 +819,7 @@ class ToolPanel(QWidget):
         self._open_button.setVisible(bool(result.outputs or result.open_target))
         self._reveal_button.setVisible(bool(result.outputs))
         self._copy_button.setVisible(bool(details or result.message))
+        self._save_button.setVisible(bool(details or result.message))
 
     def _open_result(self) -> None:
         if not self._result:
@@ -836,6 +846,42 @@ class ToolPanel(QWidget):
         clipboard = QGuiApplication.clipboard()
         clipboard.setText(text)
         self.toastRequested.emit(t("toast.output_copied"), "success")
+
+    def report_text(self) -> str:
+        """The result as a Markdown snippet (tool, status, message, outputs)."""
+        if not self._result:
+            return ""
+        spec = self.spec
+        lines = [f"# {spec.name_for(self.lang) if spec else ''}", ""]
+        if spec is not None:
+            lines.append(f"- tool: `{spec.id}`")
+        lines.append(f"- status: {'error' if self._result_is_error else 'ok'}")
+        lines.append(f"- when: {time.strftime('%Y-%m-%d %H:%M')}")
+        lines += ["", self._result.message or ""]
+        if self._result.details:
+            lines += ["", "```", self._result.details, "```"]
+        if self._result.outputs:
+            lines += ["", "## Outputs"] + [f"- `{path}`" for path in self._result.outputs]
+        return "\n".join(lines).strip() + "\n"
+
+    def _save_report(self) -> None:
+        from PySide6.QtWidgets import QFileDialog
+
+        text = self.report_text()
+        if not text:
+            return
+        stem = (self.spec.id if self.spec else "wingenius") + "-report.md"
+        suggested = str(Path(settings.output_dir) / stem)
+        chosen, _filt = QFileDialog.getSaveFileName(self, t("tp.save_report"), suggested,
+                                                    t("tp.report_filter"))
+        if not chosen:
+            return
+        try:
+            Path(chosen).write_text(text, encoding="utf-8")
+        except OSError as exc:
+            self.toastRequested.emit(str(exc), "error")
+            return
+        self.toastRequested.emit(t("tp.report_saved"), "success")
 
     # ----------------------------------------------------------------- footer
     def _choose_output_dir(self) -> None:

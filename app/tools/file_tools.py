@@ -404,13 +404,17 @@ def _overwrite(path: Path, passes: int) -> None:
 
 @tool(
     id="secure_delete", category="files", name="حذف امن فایل", name_en="Secure delete",
-    desc="فایل را چند بار بازنویسی و سپس پاک می‌کند تا بازیابی ممکن نباشد.",
-    desc_en="Overwrite files multiple times, then delete them (unrecoverable).",
+    desc="فایل را چند بار بازنویسی و سپس پاک می‌کند تا بازیابی سخت‌تر شود "
+         "(روی SSD و فایل‌سیستم‌های copy-on-write تضمین قطعی نیست).",
+    desc_en="Overwrites the file a few times, then deletes it — this makes recovery "
+            "hard, but on SSDs and copy-on-write filesystems it is not a guarantee.",
     icon="trash", order=60, danger=True,
     keywords=("shred", "wipe", "حذف امن", "پاک کردن قطعی"),
     fields=[
         Field("src", K_FILES, "فایل‌ها", "Files", required=True, filt=ALL_FILTER, multiple=True),
-        Field("passes", K_INT, "تعداد بازنویسی", "Overwrite passes", default=3, minimum=1, maximum=7),
+        Field("passes", K_INT, "تعداد بازنویسی", "Overwrite passes", default=3, minimum=1, maximum=7,
+              help="بیشتر = کندتر. سه گذر برای دیسک معمولی کافی است.",
+              help_en="More passes = slower. Three is enough on a spinning disk."),
     ],
 )
 def secure_delete(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
@@ -436,9 +440,16 @@ def secure_delete(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
         except Exception as exc:
             failed.append(f"{path.name}: {exc}")
     return RunResult(
-        message=ctx.M(f"{done} فایل به‌صورت امن حذف شد.", f"{done} file(s) securely deleted.")
+        message=ctx.M(f"{done} فایل بازنویسی و حذف شد.", f"{done} file(s) overwritten and deleted.")
         + (ctx.M(f"\n{len(failed)} مورد ناموفق.", f"\n{len(failed)} failed.") if failed else ""),
-        details="\n".join(failed),
+        details=(ctx.M(
+            "بازنویسی، بازیابی را سخت می‌کند ولی تضمینی نیست: روی SSD، فایل‌سیستم‌های "
+            "copy-on-write (btrfs/APFS) و درایوهایی با TRIM، نسخه‌های قبلی ممکن است "
+            "جای دیگری باقی بمانند. برای داده‌ی حساس از رمزنگاری کامل دیسک استفاده کنید.",
+            "Overwriting makes recovery hard but does not guarantee it: on SSDs, "
+            "copy-on-write filesystems (btrfs/APFS) and drives with TRIM the old blocks "
+            "may survive elsewhere. Use full-disk encryption for sensitive data.")
+            + ("\n\n" + "\n".join(failed) if failed else "")),
     )
 
 

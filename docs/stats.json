@@ -23,9 +23,9 @@
     "security": 57,
     "hardening": 56,
     "persian": 28,
-    "packaging": 29
+    "packaging": 30
   },
-  "checks": 2337,
+  "checks": 2338,
   "coverage": 75,
   "python": [
     "3.12",

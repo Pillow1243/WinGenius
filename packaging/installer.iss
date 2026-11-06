@@ -40,6 +40,11 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
+; Uninstalling used to leave settings, the journal, the search index and vault
+; snapshots behind in %APPDATA%\WinGenius.  Removing them is a choice, not a
+; surprise: it is unchecked and only applies to the app's own data folder.
+Name: "deletedata"; Description: "Also delete my WinGenius settings, history and index"; GroupDescription: "Cleanup:"; Flags: unchecked
+
 [Files]
 Source: "..\dist\{#AppExe}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
@@ -52,3 +57,23 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopico
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
+
+[UninstallDelete]
+; Only with the explicit "deletedata" task above.
+Type: filesandordirs; Name: "{userappdata}\{#AppName}\logs"; Tasks: deletedata
+Type: filesandordirs; Name: "{userappdata}\{#AppName}\cache"; Tasks: deletedata
+Type: filesandordirs; Name: "{userappdata}\{#AppName}\journal_snapshots"; Tasks: deletedata
+Type: filesandordirs; Name: "{userappdata}\{#AppName}\trash"; Tasks: deletedata
+Type: filesandordirs; Name: "{userappdata}\{#AppName}\updates"; Tasks: deletedata
+; The files WinGenius creates directly in its data folder (settings, journal,
+; queue, history, workflows, index).  Written as an explicit list so an unknown
+; folder a user put there by hand is never touched.
+Type: files; Name: "{userappdata}\{#AppName}\settings.ini"; Tasks: deletedata
+Type: files; Name: "{userappdata}\{#AppName}\journal.sqlite3"; Tasks: deletedata
+Type: files; Name: "{userappdata}\{#AppName}\history.json"; Tasks: deletedata
+Type: files; Name: "{userappdata}\{#AppName}\queue.json"; Tasks: deletedata
+Type: files; Name: "{userappdata}\{#AppName}\workflows.json"; Tasks: deletedata
+Type: files; Name: "{userappdata}\{#AppName}\schedules.json"; Tasks: deletedata
+Type: files; Name: "{userappdata}\{#AppName}\watch_rules.json"; Tasks: deletedata
+Type: files; Name: "{userappdata}\{#AppName}\index.sqlite3"; Tasks: deletedata
+Type: dirifempty; Name: "{userappdata}\{#AppName}"; Tasks: deletedata

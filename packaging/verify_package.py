@@ -97,6 +97,10 @@ def main() -> int:
           "AppId missing (upgrades would install side by side)")
     check("installer only lists languages Inno ships", "compiler:Default.isl" in iss,
           "custom .isl files break the build on a clean machine")
+    check("uninstall can remove the app's own data",
+          "[UninstallDelete]" in iss and 'Name: "deletedata"' in iss
+          and "Tasks: deletedata" in iss,
+          "user data would survive an uninstall with no way to remove it")
 
     # ------------------------------------------------------------------- assets
     icon = ROOT / "app" / "assets" / "icon.ico"

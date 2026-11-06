@@ -51,9 +51,11 @@ def archive_encrypt(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     password = str(v.get("password") or "")
     if not password:
         raise ToolError(ctx.M("رمز را وارد کنید.", "Enter a password."))
-    if len(password) < 6:
-        raise ToolError(ctx.M("رمز کوتاه است؛ حداقل ۶ نویسه بگذارید.",
-                              "That password is too short; use at least 6 characters."))
+    from .vault_tools import _password_hint, _password_problem
+
+    problem = _password_problem(ctx, password)   # one rule for every encrypted tool
+    if problem is not None:
+        raise problem
     level = str(v.get("level") or "normal")
     compression = {"store": zipfile.ZIP_STORED, "normal": zipfile.ZIP_DEFLATED,
                    "max": zipfile.ZIP_DEFLATED}.get(level, zipfile.ZIP_DEFLATED)
@@ -86,7 +88,8 @@ def archive_encrypt(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
         message=ctx.M(
             f"{written} فایل با AES-256 رمزدار شد ({human_size(total)} → {human_size(size)}، {change}).",
             f"{written} file(s) encrypted with AES-256 ({human_size(total)} → {human_size(size)}, "
-            f"{change})."),
+            f"{change}).")
+            + _password_hint(ctx, password),
         details=ctx.M(
             "این آرشیو با رمز باز می‌شود؛ رمز را گم نکنید — راه بازیابی وجود ندارد.",
             "The archive needs the password; there is no recovery if you lose it."),

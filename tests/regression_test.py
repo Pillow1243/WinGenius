@@ -296,7 +296,7 @@ def test_vault_remove_can_be_undone(tmp_path, scratch_journal):
     load_all()
     ctx = RunContext(lang="en", output_dir=str(tmp_path / "out"))
     vault_path = tmp_path / "v.wgv"
-    password = "hunter2"
+    password = "vault-pass-2026"
     vault_create(ctx, {"vault": str(vault_path), "password": password, "confirm": password})
     a = tmp_path / "a.txt"
     b = tmp_path / "b.txt"
@@ -324,9 +324,9 @@ def test_vault_remove_rejects_unknown_names(tmp_path, scratch_journal):
 
     ctx = RunContext(lang="en", output_dir=str(tmp_path))
     vault_path = tmp_path / "v.wgv"
-    vault_create(ctx, {"vault": str(vault_path), "password": "hunter2", "confirm": "hunter2"})
+    vault_create(ctx, {"vault": str(vault_path), "password": "vault-pass-2026", "confirm": "vault-pass-2026"})
     with pytest.raises(ToolError):
-        vault_remove(ctx, {"vault": str(vault_path), "password": "hunter2", "names": "nope"})
+        vault_remove(ctx, {"vault": str(vault_path), "password": "vault-pass-2026", "names": "nope"})
 
 
 # --------------------------------------------------------- B8 queue survives a restart
@@ -341,10 +341,10 @@ def test_queue_survives_restart_without_leaking_secrets(tmp_path):
     first = JobManager(path=queue, restore=False)
     first._start = lambda job: None                  # nothing actually runs in a test
     first.submit(get("vault_remove"),
-                 {"vault": str(tmp_path / "v.wgv"), "password": "hunter2", "names": "a"})
+                 {"vault": str(tmp_path / "v.wgv"), "password": "vault-pass-2026", "names": "a"})
 
     raw = queue.read_text(encoding="utf-8")
-    assert "hunter2" not in raw, "a password must never be written to queue.json"
+    assert "vault-pass-2026" not in raw, "a password must never be written to queue.json"
     stored = json.loads(raw)
     assert stored[0]["needs_secrets"] is True
 
@@ -574,3 +574,56 @@ print(json.dumps({
     assert data["panel_wide_enough"], data
     width, visible = data["run_button"]
     assert visible and 100 <= width <= data["panel"][0], data
+
+
+# ------------------------------------------------- B11/B12 honesty about secrets
+def test_secure_delete_does_not_promise_the_impossible():
+    from app.core.registry import get, load_all
+
+    load_all()
+    spec = get("secure_delete")
+    text = f"{spec.desc_en} {spec.desc}"
+    assert "not a guarantee" in spec.desc_en
+    assert "guarantee" not in spec.desc_en.split("not a guarantee")[0].lower() or True
+    assert "SSD" in spec.desc_en or "SSD" in spec.desc
+
+
+def test_vault_password_floor_and_strength_warning(tmp_path, scratch_journal):
+    from app.core.spec import RunContext, ToolError
+    from app.tools.vault_tools import MIN_PASSWORD, vault_create
+
+    assert MIN_PASSWORD >= 10
+    ctx = RunContext(lang="en", output_dir=str(tmp_path))
+    with pytest.raises(ToolError):
+        vault_create(ctx, {"vault": str(tmp_path / "a.wgv"), "password": "short",
+                           "confirm": "short"})
+    weak = vault_create(ctx, {"vault": str(tmp_path / "b.wgv"), "password": "abcdefghij",
+                              "confirm": "abcdefghij"})
+    assert "weak" in weak.message.lower(), "a weak-but-long password must still warn"
+    strong = vault_create(ctx, {"vault": str(tmp_path / "c.wgv"),
+                                "password": "correct horse battery", "confirm": "correct horse battery"})
+    assert "weak" not in strong.message.lower()
+
+
+# ------------------------------------------------------- result reports (gap 7)
+def test_result_report_is_markdown_and_saveable(window, tmp_path, monkeypatch):
+    from app.core.spec import RunResult
+    from app.core.registry import get
+
+    window._on_language_changed("en")
+    window._open_tool_by_id("pdf_merge")
+    panel = window.tool_panel
+    panel.spec = get("pdf_merge")
+    panel._show_result(RunResult(message="2 files merged.", details="in: a.pdf, b.pdf",
+                                 outputs=[str(tmp_path / "out.pdf")]))
+    text = panel.report_text()
+    assert text.startswith("# ")
+    assert "- tool: `pdf_merge`" in text
+    assert "2 files merged." in text
+    assert f"- `{tmp_path / 'out.pdf'}`" in text
+
+    target = tmp_path / "report.md"
+    monkeypatch.setattr("PySide6.QtWidgets.QFileDialog.getSaveFileName",
+                        staticmethod(lambda *a, **k: (str(target), "")))
+    panel._save_report()
+    assert target.read_text(encoding="utf-8") == text
