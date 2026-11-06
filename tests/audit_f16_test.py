@@ -89,3 +89,47 @@ def test_f16_readme_numbers_match_stats():
         # …and no other suite total is presented as the grand total
         suite_total = sum(data["suites"].values())
         assert suite_total == total
+
+
+def test_f16_documented_suite_numbers_match_stats():
+    """Per-suite totals quoted in the README must be the published ones.
+
+    README claimed "functional 642/642" and "packaging 28/28" while the suites
+    reported 641 and 30 — hand-copied numbers drift away from the run.
+    """
+    data = _stats()
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    digits = "۰۱۲۳۴۵۶۷۸۹"
+    latin = "0123456789"
+
+    def to_int(token: str) -> int | None:
+        token = token.replace(",", "").replace("٬", "").replace("\\u200c", "")
+        normalised = "".join(latin[digits.index(ch)] if ch in digits else ch for ch in token)
+        return int(normalised) if normalised.isdigit() else None
+
+    for suite, total in data["suites"].items():
+        pattern = rf"\b{re.escape(suite)}\s+([۰-۹\d][۰-۹\d,٬]*)"
+        for match in re.finditer(pattern, text):
+            value = to_int(match.group(1))
+            if value is None:
+                continue
+            assert value == total, (
+                f"README quotes {suite} {value}, docs/stats.json publishes {total}")
+
+
+def test_f16_no_unbacked_coverage_percentage():
+    """A coverage percentage may only be quoted when stats.json actually has one."""
+    data = _stats()
+    if data.get("coverage") is not None:
+        pytest.skip("coverage is published, so quoting it is fine")
+    gate = {str(70)}                      # the enforced fail_under gate is a policy, not a measurement
+    for name in ("README.md", "docs/README.en.md"):
+        text = (ROOT / name).read_text(encoding="utf-8")
+        claims = re.findall(r"\*\*(۷\d|۷۵|۷۷|\d{2})٪\*\*|\*\*(\d{2})%\*\*", text)
+        claimed = [c for group in claims for c in group if c and c not in gate and c not in
+                   {str(int(c)) if c.isdigit() else c for c in gate}]
+        # Persian digits are not comparable to the Latin gate, so drop ۷۰ explicitly
+        claimed = [c for c in claimed if c != "۷۰"]
+        assert not claimed, (
+            f"{name} quotes a coverage percentage ({claimed}) but docs/stats.json "
+            "records none — that is a hand-copied number")
