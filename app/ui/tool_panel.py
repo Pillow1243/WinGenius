@@ -262,6 +262,7 @@ class ToolPanel(QWidget):
         values = self._collect() if (self.spec is not None and self._widgets) else None
         self._arrange_actions()
         self._retranslate_chrome()
+        self._update_favorite_icon()          # tooltip carries the language (F-15)
         if self.spec is not None:
             self.load(self.spec, lang, settings.output_dir, values, announce_prefill=False)
             if result is not None:
@@ -435,14 +436,16 @@ class ToolPanel(QWidget):
             return self.palette_ref.accent
 
     def _update_favorite_icon(self) -> None:
+        # the tooltip is language-dependent and must be refreshed even when no
+        # tool is loaded yet (audit F-15)
+        is_fav = bool(self.spec and settings.is_favorite(self.spec.id))
+        self._fav_button.setToolTip(t("tp.unfavorite") if is_fav else t("tp.favorite"))
         if not self.spec:
             return
-        is_fav = settings.is_favorite(self.spec.id)
         color = QColor(self.palette_ref.warning if is_fav else self.palette_ref.text_dim)
         from .widgets import _make_icon
 
         self._fav_button.setIcon(_make_icon("star", color, 32))
-        self._fav_button.setToolTip(t("tp.unfavorite") if is_fav else t("tp.favorite"))
 
     def _toggle_favorite(self) -> None:
         if not self.spec:

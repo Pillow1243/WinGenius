@@ -206,10 +206,10 @@ class JobsDrawer(QWidget):
         self._clear.clicked.connect(self._clear_finished)
         footer.addWidget(self._clear)
         footer.addStretch(1)
-        done = QPushButton(t("st.close"))
-        done.setObjectName("Primary")
-        done.clicked.connect(self.close_panel)
-        footer.addWidget(done)
+        self._done = QPushButton(t("st.close"))       # retranslated in apply_palette
+        self._done.setObjectName("Primary")
+        self._done.clicked.connect(self.close_panel)
+        footer.addWidget(self._done)
         card_layout.addLayout(footer)
 
         outer = QVBoxLayout(self)
@@ -240,6 +240,11 @@ class JobsDrawer(QWidget):
         self._title.setText(t("jb.title"))
         self._subtitle.setText(t("jb.subtitle"))
         self._clear.setText(t("jb.clear"))
+        if getattr(self, "_done", None) is not None:
+            self._done.setText(t("st.close"))
+        if getattr(self, "_resume", None) is not None:
+            self._resume.setText(t("jb.resume", len(self.manager.resumable())
+                                          if self.manager is not None else 0))
         self.refresh()
 
     def set_language(self, lang: str) -> None:
