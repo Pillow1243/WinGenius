@@ -268,7 +268,7 @@ def test_gui_approved_background_job_is_queued(qapp, monkeypatch):
     panel._jobs.submit.return_value.id = "fake-job"
     monkeypatch.setattr(panel, "_collect", lambda: {"count": 2})
     monkeypatch.setattr(panel, "_validate", lambda _: None)
-    monkeypatch.setattr(panel, "_confirm_execution", lambda: True)
+    monkeypatch.setattr(panel, "_confirm_execution", lambda _values: True)
     panel._run_in_background()
     panel._jobs.submit.assert_called_once()
     panel.deleteLater()

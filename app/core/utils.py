@@ -284,3 +284,43 @@ def deps_available() -> dict:
         except (ImportError, ValueError):
             result[label] = False
     return result
+
+
+class CancellableProcess:
+    """Interrupt a blocked pipe read when a cooperative cancellation is requested.
+
+    Owns no process resources: callers must still wait for the child and close pipes.
+    """
+
+    def __init__(self, proc, ctx):
+        import threading
+
+        self.proc = proc
+        self.ctx = ctx
+        self.stopped = threading.Event()
+        self.killed = threading.Event()
+        self.thread = threading.Thread(target=self._watch, name="wg-process-cancel", daemon=True)
+
+    def _watch(self):
+        while not self.stopped.wait(0.05):
+            if self.ctx.cancelled and self.proc.poll() is None:
+                try:
+                    self.proc.kill()
+                    self.killed.set()
+                except ProcessLookupError:
+                    pass
+                return
+            if self.proc.poll() is not None:
+                return
+
+    def start(self):
+        self.thread.start()
+        return self
+
+    def close(self):
+        self.stopped.set()
+        self.thread.join()
+
+    def check_cancelled(self):
+        if self.killed.is_set():
+            self.ctx.check_cancel()

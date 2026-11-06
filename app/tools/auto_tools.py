@@ -117,7 +117,8 @@ def macro_run(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     macro: Dict[str, Any]
     if str(v.get("file") or "").strip():
         try:
-            macro = macro_module.load_macro(Path(str(v["file"])))
+            snapshot = v.get("_macro_snapshot")
+            macro = snapshot if isinstance(snapshot, dict) else macro_module.load_macro(Path(str(v["file"])))
         except macro_module.MacroError as exc:
             raise ToolError(str(exc)) from exc
     else:
@@ -128,13 +129,16 @@ def macro_run(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
                                   "Pick a macro file or a built-in template."))
         macro = dict(templates[int(index)])
 
+    dry_run = bool(v.get("dry_run"))
+    macro_output = ((Path(ctx.output_dir) if ctx.output_dir else Path.home() / "WinGenius") / "macro"
+                    if dry_run else out_dir(ctx, "macro"))
     variables: Dict[str, Any] = {}
     folder = str(v.get("folder") or "").strip()
     if folder:
-        variables.update({"folder": folder, "src": folder, "out": str(out_dir(ctx, "macro"))})
+        variables.update({"folder": folder, "src": folder, "out": str(macro_output)})
 
-    runner = macro_module.MacroRunner(lang=ctx.lang, output_dir=str(out_dir(ctx, "macro")),
-                                      dry_run=bool(v.get("dry_run")),
+    runner = macro_module.MacroRunner(lang=ctx.lang, output_dir=str(macro_output),
+                                      dry_run=dry_run,
                                       policy=getattr(ctx, "policy", None),
                                       on_log=lambda message: ctx.log(message),
                                       on_progress=lambda current, total: ctx.progress(current, total))

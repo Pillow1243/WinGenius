@@ -795,20 +795,37 @@ class MainWindow(QWidget):
 
     def _on_schedule_triggered(self, schedule, reason: str = "auto") -> None:
         """A cron schedule fired: queue its workflow, macro, or tool."""
-        from ..core.execution import ExecutionPolicy
+        from ..core.execution import (ExecutionPolicy, OperationRisk, classify_invocation,
+                                      classify_steps)
+
+        def blocked() -> None:
+            schedule_store.set_status(schedule.id, "blocked")
+            self._show_toast(
+                "اجرای خودکار عملیات نیازمند تأیید مسدود است؛ آن را دستی اجرا کنید."
+                if self.lang != "en" else
+                "Scheduled operations requiring confirmation are blocked; run them manually.",
+                "warning",
+            )
 
         try:
-            schedule_store.mark_run(schedule.id, reason)
-        except Exception:
-            pass
+            schedule_store.mark_run(schedule.id, "running")
+        except OSError as exc:
+            self._show_toast(("ثبت اجرای زمان‌بندی ناموفق بود: " if self.lang != "en"
+                              else "Could not record scheduled run: ") + str(exc), "error")
+            return
         title = schedule.title(self.lang)
         sched_policy = ExecutionPolicy.for_scheduler()
         kind = getattr(schedule, "kind", "workflow")
         if kind == "workflow":
             workflow = workflow_store.get(schedule.target_id)
             if workflow is None:
+                schedule_store.set_status(schedule.id, "failed")
                 self._show_toast(f"{title}: " + ("گردش‌کار پیدا نشد" if self.lang != "en"
                                                  else "workflow not found"), "warning")
+                return
+            risk, _ = classify_steps([(step.tool_id, step.values) for step in workflow.steps])
+            if risk >= OperationRisk.CONFIRM:
+                blocked()
                 return
             runner = WorkflowRunner(
                 workflow, self.lang, settings.output_dir,
@@ -816,6 +833,7 @@ class MainWindow(QWidget):
                 policy=sched_policy,
             )
             runner.finished.connect(self._on_workflow_done)
+            runner.finished.connect(lambda res, sid=schedule.id: schedule_store.set_status(sid, res.status))
             runner.finished.connect(lambda _res, r=runner: self._release_bg_runner("_scheduler_runners", r))
             self._scheduler_runners = getattr(self, "_scheduler_runners", [])
             self._scheduler_runners.append(runner)
@@ -825,38 +843,78 @@ class MainWindow(QWidget):
             payload = dict(getattr(schedule, "payload", {}) or {})
             macro_file = str(payload.get("file") or schedule.target_id or "").strip()
             if not macro_file or not Path(macro_file).is_file():
+                schedule_store.set_status(schedule.id, "failed")
                 self._show_toast(f"{title}: " + ("فایل ماکرو پیدا نشد" if self.lang != "en"
                                                  else "macro file not found"), "warning")
                 return
+            macro_values = {"file": macro_file, "dry_run": bool(payload.get("dry_run", False))}
+            if classify_invocation("macro_run", macro_values).requires_confirmation:
+                blocked()
+                return
             job = self.jobs.submit_by_id(
                 "macro_run",
-                {"file": macro_file, "dry_run": bool(payload.get("dry_run", False))},
+                macro_values,
                 policy=sched_policy,
             )
             if job is None:
+                schedule_store.set_status(schedule.id, "failed")
                 self._show_toast(f"{title}: " + ("ابزار ماکرو پیدا نشد" if self.lang != "en"
                                                  else "macro runner unavailable"), "warning")
                 return
+            self._track_schedule_job(schedule.id, job)
             self._update_jobs_badge()
             self._show_toast(("⏱ " if reason == "auto" else "▶ ") + title, "info")
         else:
+            tool_values = dict(getattr(schedule, "payload", {}) or {})
+            if classify_invocation(schedule.target_id, tool_values).requires_confirmation:
+                blocked()
+                return
             job = self.jobs.submit_by_id(
                 schedule.target_id,
-                dict(getattr(schedule, "payload", {}) or {}),
+                tool_values,
                 policy=sched_policy,
             )
             if job is None:
+                schedule_store.set_status(schedule.id, "failed")
                 self._show_toast(f"{title}: " + ("ابزار پیدا نشد" if self.lang != "en"
                                                  else "tool not found"), "warning")
                 return
+            self._track_schedule_job(schedule.id, job)
             self._update_jobs_badge()
             self._show_toast(("⏱ " if reason == "auto" else "▶ ") + title, "info")
+
+    def _track_schedule_job(self, schedule_id: str, job) -> None:
+        def report(finished_job) -> None:
+            if finished_job.id != job.id:
+                return
+            try:
+                self.jobs.jobFinished.disconnect(report)
+            except (RuntimeError, TypeError):
+                pass
+            schedule_store.set_status(schedule_id, finished_job.status)
+        self.jobs.jobFinished.connect(report)
 
     def _on_macro_run(self, path, dry_run: bool = False) -> None:
         """Run a macro file through the macro tool (queued, cancellable, logged)."""
         if not path:
             return
-        job = self.jobs.submit_by_id("macro_run", {"file": str(path), "dry_run": bool(dry_run)})
+        from ..core.execution import ExecutionPolicy, classify_invocation
+
+        values = {"file": str(path), "dry_run": bool(dry_run)}
+        assessment = classify_invocation("macro_run", values)
+        if assessment.requires_confirmation:
+            from PySide6.QtWidgets import QMessageBox
+            prompt = ("این ماکرو ممکن است فایل‌ها یا تنظیمات را تغییر دهد. ادامه می‌دهید؟"
+                      if self.lang != "en" else
+                      "This macro may change files or settings. Continue?")
+            prompt += "\n\n" + assessment.reason_for(self.lang)
+            if QMessageBox.question(self, "WinGenius", prompt,
+                                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                    QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+                return
+        job = self.jobs.submit_by_id("macro_run", values,
+                                     policy=ExecutionPolicy.for_gui(confirmed=assessment.requires_confirmation,
+                                                                    source="macro"))
         if job is None:
             self._show_toast("ماکرو صف نشد." if self.lang != "en" else "macro not queued", "error")
             return
@@ -1216,6 +1274,34 @@ class MainWindow(QWidget):
         self.radial.setFocus()
 
     def closeEvent(self, event) -> None:
+        stopped = self.tool_panel.shutdown()
+        for panel_attr in ("plan_panel", "workflow_panel"):
+            panel = getattr(self, panel_attr, None)
+            if panel is not None and hasattr(panel, "shutdown"):
+                try:
+                    if not panel.shutdown():
+                        stopped = False
+                except Exception:
+                    stopped = False
+        for pool_attr in ("_scheduler_runners", "_watch_runners"):
+            for runner in list(getattr(self, pool_attr, []) or []):
+                try:
+                    if not runner.shutdown(1500):
+                        stopped = False
+                except Exception:
+                    stopped = False
+        if getattr(self, "_bg_update_worker", None) is not None and self._bg_update_worker.isRunning():
+            self._bg_update_worker.quit()
+            if not self._bg_update_worker.wait(1500):
+                stopped = False
+        if getattr(self, "jobs", None) is not None and not self.jobs.shutdown():
+            stopped = False
+        if not stopped:
+            self._show_toast(
+                "کارهای در حال اجرا هنوز متوقف نشده‌اند؛ کمی بعد دوباره ببندید." if self.lang == "fa"
+                else "Some jobs are still stopping. Please try closing again shortly.", "error")
+            event.ignore()
+            return
         for service in ("scheduler",):
             try:
                 getattr(self, service).stop()
@@ -1235,25 +1321,6 @@ class MainWindow(QWidget):
         except Exception:
             pass
         settings.set("app/window_pos", f"{self.x()},{self.y()}")
-        self.tool_panel.shutdown()
-        for panel_attr in ("plan_panel", "workflow_panel"):
-            panel = getattr(self, panel_attr, None)
-            if panel is not None and hasattr(panel, "shutdown"):
-                try:
-                    panel.shutdown()
-                except Exception:
-                    pass
-        for pool_attr in ("_scheduler_runners", "_watch_runners"):
-            for runner in list(getattr(self, pool_attr, []) or []):
-                try:
-                    runner.shutdown(1500)
-                except Exception:
-                    pass
-        if getattr(self, "_bg_update_worker", None) is not None and self._bg_update_worker.isRunning():
-            self._bg_update_worker.quit()
-            self._bg_update_worker.wait(1500)
-        if getattr(self, "jobs", None) is not None:
-            self.jobs.shutdown()
         super().closeEvent(event)
 
     # ---------------------------------------------------------------- theming

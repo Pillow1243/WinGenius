@@ -201,12 +201,18 @@ def audio_waveform(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
         if proc.stderr is None:
             return
         try:
-            err_chunks.append(proc.stderr.read()[-4096:])
+            while data := proc.stderr.read(4096):
+                err_chunks.append(data)
+                if len(err_chunks) > 2:
+                    del err_chunks[:-2]
         except Exception:
             pass
 
     err_thread = threading.Thread(target=_drain_err, daemon=True)
     err_thread.start()
+    from ..core.utils import CancellableProcess
+
+    cancellation = CancellableProcess(proc, ctx).start()
     started = time.monotonic() if "time" in globals() else 0.0
     try:
         assert proc.stdout is not None
@@ -242,13 +248,18 @@ def audio_waveform(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
                 proc.kill()
                 raise ToolError(ctx.M("خواندن صدا طول کشید؛ فایل کوتاه‌تری امتحان کنید.",
                                       "Reading the audio took too long; try a shorter file."))
+        cancellation.close()
+        cancellation.check_cancelled()
         if in_bin > 0:
             peaks.append(current_peak)
         proc.wait(timeout=15)
         err_thread.join(timeout=2)
     finally:
+        cancellation.close()
         if proc.poll() is None:
             proc.kill()
+        proc.wait()
+        err_thread.join(timeout=2)
     if proc.returncode != 0 or not peaks or total_samples == 0:
         message = b"".join(err_chunks).decode("utf-8", "replace").strip()[:300]
         if proc.returncode != 0:

@@ -21,7 +21,7 @@ from ..core.settings import settings
 from ..core.privacy import sanitize_values
 from ..core.spec import (
     K_BOOL, K_CHOICE, K_COLOR, K_DIR, K_FILE, K_FILES, K_FLOAT, K_INT, K_MULTILINE,
-    K_PASSWORD, K_SAVE, K_TEXT, Field, RunResult,
+    K_PASSWORD, K_SAVE, K_TEXT, Field, RunResult, ToolError,
 )
 from ..core.utils import human_size, open_path, reveal_path
 from ..core.worker import ToolRunner
@@ -340,13 +340,21 @@ class ToolPanel(QWidget):
         if self._jobs is None:
             self._run()
             return
-        if not self._confirm_execution():
+        from ..core.execution import ExecutionPolicy, snapshot_invocation
+
+        try:
+            values = snapshot_invocation(self.spec.id, values)
+        except ToolError as exc:
+            self.toastRequested.emit(str(exc), "error")
+            self._status.setText(str(exc))
             return
-        from ..core.execution import ExecutionPolicy
+        confirmed = self._confirm_execution(values)
+        if confirmed is None:
+            return
 
         job = self._jobs.submit(
             self.spec, values, self.lang, settings.output_dir,
-            policy=ExecutionPolicy.for_gui(confirmed=True, record_history=False, source="queue"),
+            policy=ExecutionPolicy.for_gui(confirmed=confirmed, record_history=False, source="queue"),
         )
         self.toastRequested.emit(t("tp.queued"), "success")
         if job is not None:
@@ -584,15 +592,16 @@ class ToolPanel(QWidget):
                         return t("tp.not_found", str(item))
         return None
 
-    def _confirm_execution(self) -> bool:
+    def _confirm_execution(self, values: Dict[str, Any]) -> Optional[bool]:
         """The foreground and queue buttons enforce the dynamic 4-tier risk gate."""
-        if not self.spec or not settings.get("ui/confirm_danger"):
-            return True
+        if not self.spec:
+            return None
         from ..core.execution import classify_invocation
 
-        active_values = self._collect()
-        assessment = classify_invocation(self.spec.id, active_values)
+        assessment = classify_invocation(self.spec.id, values)
         if not assessment.requires_confirmation:
+            return False
+        if not settings.get("ui/confirm_danger"):
             return True
         from PySide6.QtWidgets import QMessageBox
 
@@ -604,7 +613,7 @@ class ToolPanel(QWidget):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
-        return answer == QMessageBox.StandardButton.Yes
+        return True if answer == QMessageBox.StandardButton.Yes else None
 
     def _run(self) -> None:
         if not self.spec or self._runner is not None:
@@ -615,9 +624,17 @@ class ToolPanel(QWidget):
             self.toastRequested.emit(problem, "error")
             self._status.setText(problem)
             return
-        if not self._confirm_execution():
+        from ..core.execution import ExecutionPolicy, snapshot_invocation
+
+        try:
+            values = snapshot_invocation(self.spec.id, values)
+        except ToolError as exc:
+            self.toastRequested.emit(str(exc), "error")
+            self._status.setText(str(exc))
             return
-        from ..core.execution import ExecutionPolicy
+        confirmed = self._confirm_execution(values)
+        if confirmed is None:
+            return
 
         self._result_card.setVisible(False)
         self._progress.setVisible(True)
@@ -629,7 +646,7 @@ class ToolPanel(QWidget):
 
         runner = ToolRunner(
             self.spec, values, self.lang, settings.output_dir, self,
-            policy=ExecutionPolicy.for_gui(confirmed=True, record_history=True),
+            policy=ExecutionPolicy.for_gui(confirmed=confirmed, record_history=True),
         )
         self._runner = runner
         self._retiring_runners = getattr(self, "_retiring_runners", set())
@@ -810,17 +827,17 @@ class ToolPanel(QWidget):
     def close_panel(self) -> None:
         self.hide()
 
-    def shutdown(self, timeout_ms: int = 4000) -> None:
-        """Cancel a running tool and wait for its thread (called on app close)."""
+    def shutdown(self, timeout_ms: int = 4000) -> bool:
+        """Cancel workers, retaining any that have not stopped yet."""
         candidates = set(getattr(self, "_retiring_runners", set()) or set())
         if self._runner is not None:
             candidates.add(self._runner)
-        for runner in list(candidates):
+        stopped = True
+        for runner in candidates:
             try:
                 runner.cancel()
-                runner.wait(timeout_ms)
+                if not runner.wait(timeout_ms):
+                    stopped = False
             except Exception:
-                pass
-        if hasattr(self, "_retiring_runners"):
-            self._retiring_runners.clear()
-        self._runner = None
+                stopped = False
+        return stopped

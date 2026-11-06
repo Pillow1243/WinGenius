@@ -744,14 +744,17 @@ class WorkflowRunner(QObject):
         if self._runner is not None:
             self._runner.cancel()
 
-    def shutdown(self, timeout_ms: int = 3000) -> None:
+    def shutdown(self, timeout_ms: int = 3000) -> bool:
         self.cancel()
+        stopped = True
         for runner in list(self._runners):
             try:
                 runner.cancel()
-                runner.wait(timeout_ms)
+                if not runner.wait(timeout_ms):
+                    stopped = False
             except Exception:
-                pass
+                stopped = False
+        return stopped
 
     def _release_runner(self, runner: ToolRunner) -> None:
         if runner in self._runners:

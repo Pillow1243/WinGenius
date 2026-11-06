@@ -83,7 +83,7 @@ def _parse_args(argv: List[str]) -> Dict[str, Any]:
     options: Dict[str, Any] = {"files": [], "sets": [], "out": "", "category": "",
                                "json": False, "lang": "fa", "quiet": False, "title": "",
                                "yes": False, "dry_run": False, "download_only": False,
-                               "allow_unsigned": False}
+                               "allow_unsigned": False, "run_flag": False}
     index = 0
     while index < len(argv):
         arg = argv[index]
@@ -121,13 +121,22 @@ def _parse_args(argv: List[str]) -> Dict[str, Any]:
             index += 1
             options["workflow"] = argv[index] if index < len(argv) else ""
         elif arg == "--plan":
+            if options.get("mode") == "run" and options.get("run") == "":
+                options["run_flag"] = True
             options["mode"] = "plan"
             index += 1
             options["plan"] = argv[index] if index < len(argv) else ""
         elif arg == "--run":
-            options["mode"] = "run"
-            index += 1
-            options["run"] = argv[index] if index < len(argv) else ""
+            # In plan mode --run is a switch, not a tool ID.
+            if options.get("mode") == "plan":
+                options["run_flag"] = True
+            else:
+                options["mode"] = "run"
+                if index + 1 < len(argv) and not argv[index + 1].startswith("--"):
+                    index += 1
+                    options["run"] = argv[index]
+                else:
+                    options["run"] = ""
         elif arg == "--list-schedules":
             options["mode"] = "schedules"
         elif arg == "--run-schedule":
@@ -227,14 +236,15 @@ def _build_values(spec, files: List[str], sets: List[tuple], out: str) -> Dict[s
 
 
 def run_cli(argv: List[str]) -> int:
-    setup_logging()
-    from . import upgrade
-
-    try:
-        upgrade.migrate()
-    except Exception:                        # a broken migration must not block the CLI
-        pass
     options = _parse_args(argv)
+    if not options["dry_run"]:
+        setup_logging()
+        from . import upgrade
+
+        try:
+            upgrade.migrate()
+        except Exception:                    # a broken migration must not block the CLI
+            pass
     mode = options["mode"]
     load_all()
 
@@ -435,7 +445,14 @@ def run_cli(argv: List[str]) -> int:
         if item is None:
             _print(f"unknown schedule: {options.get('schedule')}")
             return 2
-        sched_policy = ExecutionPolicy.for_scheduler()
+        dry_run = bool(options.get("dry_run"))
+        # An explicit CLI invocation must obey CLI confirmation and preview policy.
+        sched_policy = ExecutionPolicy.for_cli(yes=bool(options.get("yes")), dry_run=dry_run)
+
+        def mark_schedule(status: str) -> None:
+            if not dry_run:
+                schedule_store.mark_run(item.id, status)
+
         if item.kind == "macro":
             from . import macro as macro_module
 
@@ -446,7 +463,7 @@ def run_cli(argv: List[str]) -> int:
                 if matches:
                     path = matches[0]
             if not path.exists():
-                schedule_store.mark_run(item.id, "failed")
+                mark_schedule("failed")
                 _print(f"unknown macro: {target}")
                 return 2
             try:
@@ -459,11 +476,11 @@ def run_cli(argv: List[str]) -> int:
                 )
                 mres = runner.execute(macro_doc, dict(item.payload or {}))
             except Exception as exc:                    # noqa: BLE001
-                schedule_store.mark_run(item.id, "failed")
+                mark_schedule("failed")
                 _print(f"failed: {exc}")
                 return 1
             ok = mres.status in ("done", "dry-run")
-            schedule_store.mark_run(item.id, "done" if ok else "failed")
+            mark_schedule("done" if ok else "failed")
             _print(mres.message(options["lang"]))
             return 0 if ok else 1
         if item.kind != "workflow":
@@ -479,10 +496,10 @@ def run_cli(argv: List[str]) -> int:
                 result = execution_service.execute(spec, dict(item.payload or {}), ctx,
                                                    policy=sched_policy)
             except Exception as exc:                    # noqa: BLE001
-                schedule_store.mark_run(item.id, "failed")
+                mark_schedule("failed")
                 _print(f"failed: {exc}")
                 return 1
-            schedule_store.mark_run(item.id, "done")
+            mark_schedule("done")
             _print(getattr(result, "message", "") or "done")
             for output in (getattr(result, "outputs", []) or [])[:20]:
                 _print(f"  → {output}")
@@ -493,9 +510,14 @@ def run_cli(argv: List[str]) -> int:
         if workflow is None:
             _print(f"unknown workflow: {item.target_id}")
             return 2
-        result = run_sync(workflow, options["lang"], options["out"] or settings.output_dir,
-                          dict(item.payload or {}), policy=sched_policy)
-        schedule_store.mark_run(item.id, result.status)
+        try:
+            result = run_sync(workflow, options["lang"], options["out"] or settings.output_dir,
+                              dict(item.payload or {}), policy=sched_policy)
+        except Exception as exc:  # report policy denials and unexpected workflow failures
+            mark_schedule("failed")
+            _print(f"failed: {exc}")
+            return 1
+        mark_schedule(result.status)
         _print(result.message or result.status)
         for step in result.steps:
             _print(f"  {step.status:<8} {step.tool_id}")
@@ -641,7 +663,7 @@ def run_cli(argv: List[str]) -> int:
         if workflow is None:
             _print("no plan matched that sentence")
             return 2
-        if not options.get("run_flag", True) or options.get("dry_run"):
+        if not options.get("run_flag", False) or options.get("dry_run"):
             if options["json"]:
                 _print(json.dumps({
                     "id": workflow.id,

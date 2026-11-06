@@ -140,11 +140,11 @@ def folder_sync(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     target = Path(str(v.get("target") or ""))
     if not source.is_dir():
         raise ToolError(ctx.M("پوشه‌ی مبدأ پیدا نشد.", "Source folder not found."))
-    if not target.is_dir():
+    dry = bool(v.get("dry_run", True))
+    if not target.is_dir() and not dry:
         ensure_dir(target)
     if source.resolve() == target.resolve():
         raise ToolError(ctx.M("مبدأ و مقصد یکی هستند.", "Source and target are the same folder."))
-    dry = bool(v.get("dry_run", True))
     mirror = str(v.get("mode") or "mirror") == "mirror"
     src_files = walk_files(source)
     copied = updated = deleted = 0

@@ -137,7 +137,7 @@ class ExecutionPolicy:
                 record_history: bool = True) -> "ExecutionPolicy":
         return cls(
             source="cli",
-            max_risk=OperationRisk.CONFIRM,
+            max_risk=OperationRisk.SAFE,
             confirmed=yes,
             dry_run=dry_run,
             record_history=record_history and not dry_run,
@@ -164,10 +164,10 @@ class ExecutionPolicy:
         )
 
     @classmethod
-    def for_scheduler(cls, *, allow_dangerous: bool = True) -> "ExecutionPolicy":
+    def for_scheduler(cls, *, allow_dangerous: bool = False) -> "ExecutionPolicy":
         return cls(
             source="scheduler",
-            max_risk=OperationRisk.CONFIRM,
+            max_risk=OperationRisk.SAFE,
             confirmed=allow_dangerous,
             dry_run=False,
             record_history=True,
@@ -250,11 +250,12 @@ def _walk_macro_steps(steps: Any, depth: int, nested: List[str]) -> Tuple[Operat
                     highest = sub.risk
                     reason_fa = f"{tool_id}: {sub.reason_fa}"
                     reason_en = f"{tool_id}: {sub.reason_en}"
-        elif kind in ("delete", "move"):
+        elif kind in ("delete", "move", "copy", "mkdir", "write"):
             nested.append(f"macro:{kind}")
-            if OperationRisk.CONFIRM > highest:
-                highest = OperationRisk.CONFIRM
-                reason_fa = "حذف یا جابه‌جایی فایل توسط ماکرو"
+            risk = OperationRisk.DESTRUCTIVE if kind == "write" else OperationRisk.CONFIRM
+            if risk > highest:
+                highest = risk
+                reason_fa = "تغییر فایل یا پوشه توسط ماکرو"
                 reason_en = f"Macro file {kind} step"
         for branch_key in ("steps", "then", "else"):
             if isinstance(step.get(branch_key), list):
@@ -264,6 +265,22 @@ def _walk_macro_steps(steps: Any, depth: int, nested: List[str]) -> Tuple[Operat
                     reason_fa = sub_fa
                     reason_en = sub_en
     return highest, reason_fa, reason_en
+
+
+def snapshot_invocation(tool_id: str, values: Mapping[str, Any]) -> Dict[str, Any]:
+    """Freeze external macro content so assessment and execution see the same program."""
+    from copy import deepcopy
+
+    result = deepcopy(dict(values))
+    if tool_id == "macro_run" and str(result.get("file") or "").strip():
+        if "_macro_snapshot" not in result:
+            from .macro import MacroError, load_macro
+
+            try:
+                result["_macro_snapshot"] = load_macro(Path(str(result["file"])))
+            except MacroError as exc:
+                raise ToolError(str(exc)) from exc
+    return result
 
 
 def _inspect_macro(values: Mapping[str, Any], depth: int) -> Optional[RiskAssessment]:
@@ -279,15 +296,17 @@ def _inspect_macro(values: Mapping[str, Any], depth: int) -> Optional[RiskAssess
         macro_obj = None
         builtin_raw = str(values.get("builtin") or "").strip()
         file_raw = str(values.get("file") or "").strip()
-        if builtin_raw != "":
-            templates = macro_mod.builtin_macros("fa")
-            idx = int(builtin_raw)
-            if 0 <= idx < len(templates):
-                macro_obj = templates[idx]
+        if file_raw and isinstance(values.get("_macro_snapshot"), dict):
+            macro_obj = values["_macro_snapshot"]
         elif file_raw:
             path = Path(file_raw)
             if path.is_file():
                 macro_obj = macro_mod.load_macro(path)
+        elif builtin_raw != "":
+            templates = macro_mod.builtin_macros("fa")
+            idx = int(builtin_raw)
+            if 0 <= idx < len(templates):
+                macro_obj = templates[idx]
         if not isinstance(macro_obj, dict):
             return RiskAssessment("macro_run", OperationRisk.CONFIRM,
                                   "اجرای ماکرو", "Macro execution")
@@ -320,7 +339,7 @@ def classify_invocation(
     mode = str(merged.get("mode") or "").strip().lower()
 
     # 1. Explicit dry-run / preview flags render read-only simulations SAFE.
-    if "dry_run" in merged and _truthy(merged.get("dry_run")) and tid != "macro_run":
+    if tid in {"temp_clean", "folder_sync"} and _truthy(merged.get("dry_run")):
         return RiskAssessment(tid, OperationRisk.SAFE,
                               "حالت پیش‌نمایش بدون تغییر", "Dry-run preview without changes")
 
@@ -334,9 +353,7 @@ def classify_invocation(
         if macro_res is not None:
             return macro_res
     if tid == "undo_last":
-        count = int(merged.get("count") or 0)
-        if count <= 0:
-            return RiskAssessment(tid, OperationRisk.SAFE, "بدون تغییر", "No-op undo count")
+        # The implementation clamps even zero/negative input to at least one undo.
         return RiskAssessment(
             tid, OperationRisk.CONFIRM,
             "بازگردانی تغییرات فایل‌سیستم از ژورنال",
@@ -590,6 +607,7 @@ class ExecutionService:
                 outer_policy if isinstance(outer_policy, ExecutionPolicy) else None
             )
 
+        merged = snapshot_invocation(spec.id, merged)
         assessment = classify_invocation(spec, merged)
         if not effective.allows(assessment.risk):
             reason = assessment.reason_for(run_ctx.lang)

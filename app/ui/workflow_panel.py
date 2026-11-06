@@ -509,13 +509,15 @@ class WorkflowPanel(OverlaySheet):
             self._runner = None
         super().close_panel()
 
-    def shutdown(self, timeout_ms: int = 2000) -> None:
+    def shutdown(self, timeout_ms: int = 2000) -> bool:
         runners = list(getattr(self, "_retiring_runners", []) or [])
         if self._runner is not None and self._runner not in runners:
             runners.append(self._runner)
+        stopped = True
         for runner in runners:
             try:
-                runner.shutdown(timeout_ms)
+                if not runner.shutdown(timeout_ms):
+                    stopped = False
             except Exception:
-                pass
-        self._runner = None
+                stopped = False
+        return stopped

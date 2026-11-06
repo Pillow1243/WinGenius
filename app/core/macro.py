@@ -298,9 +298,10 @@ class MacroRunner:
             return
         from .execution import OperationRisk, PolicyDeniedError, RiskAssessment
 
-        if not self.policy.allows(OperationRisk.CONFIRM):
+        risk = OperationRisk.DESTRUCTIVE if action_name == "write" else OperationRisk.CONFIRM
+        if not self.policy.allows(risk):
             assessment = RiskAssessment(
-                f"macro:{action_name}", OperationRisk.CONFIRM,
+                f"macro:{action_name}", risk,
                 "حذف یا جابه‌جایی فایل توسط ماکرو نیازمند مجوز است",
                 f"Macro file {action_name} requires policy confirmation",
             )
@@ -326,6 +327,7 @@ class MacroRunner:
             self.result.executed += 1
             self._log(self.M(f"کپی (تمرینی): {src} → {dst}", f"would copy: {src} → {dst}"))
             return None
+        self._check_file_policy("copy")
         if src.is_dir():
             ensure_dir(dst)
             shutil.copytree(src, dst, dirs_exist_ok=True)
@@ -427,6 +429,7 @@ class MacroRunner:
                     self.result.executed += 1
                     self._log(self.M(f"پوشه (تمرینی): {folder}", f"would create: {folder}"))
                 else:
+                    self._check_file_policy("mkdir")
                     ensure_dir(folder)
                     self.result.executed += 1
             elif kind == "write":
@@ -436,6 +439,7 @@ class MacroRunner:
                     self.result.executed += 1
                     self._log(self.M(f"نوشتن (تمرینی): {target}", f"would write: {target}"))
                 else:
+                    self._check_file_policy("write")
                     ensure_dir(target.parent)
                     target.write_text(text, encoding="utf-8")
                     self.result.outputs.append(str(target))

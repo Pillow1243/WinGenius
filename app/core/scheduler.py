@@ -24,7 +24,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
-from .privacy import sanitize_values
+from .privacy import atomic_json_write, sanitize_values
 from .paths import data_dir
 
 # --------------------------------------------------------------------- parsing
@@ -69,12 +69,11 @@ def _parse_field(expr: str, low: int, high: int, label: str) -> set:
                 start = end = int(part)
             except ValueError as exc:
                 raise CronError(f"{label}: bad value '{part}'") from exc
-        if label == "weekday":
-            start = 0 if start == 7 else start
-            end = 0 if end == 7 else end
-        if start < low or end > high or start > end:
-            raise CronError(f"{label}: {part} is outside {low}-{high}")
-        values.update(range(start, end + 1, step))
+        max_value = 7 if label == "weekday" else high
+        if start < low or end > max_value or start > end:
+            raise CronError(f"{label}: {part} is outside {low}-{max_value}")
+        values.update(0 if label == "weekday" and value == 7 else value
+                      for value in range(start, end + 1, step))
     return values
 
 
@@ -236,15 +235,16 @@ class Schedule:
 
     def catch_up_due(self, now: Optional[datetime] = None) -> bool:
         """Fire late when a window passed while the app was closed."""
-        if not self.enabled or not self.catch_up or not self.last_run:
+        if not self.enabled or not self.catch_up:
             return False
         now = now or datetime.now()
         if matches(self.cron, now.replace(second=0, microsecond=0)):
             return False
-        previous = next_run(self.cron, datetime.fromtimestamp(self.last_run))
+        since = datetime.fromtimestamp(self.last_run or self.created)
+        previous = next_run(self.cron, since)
         if previous is None:
             return False
-        return previous <= now and datetime.fromtimestamp(self.last_run) < previous
+        return previous <= now and since < previous
 
     def summary(self, lang: str = "fa") -> str:
         nxt = self.next_at()
@@ -303,12 +303,7 @@ class ScheduleStore:
         return self._items
 
     def _save(self) -> None:
-        try:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            self._path.write_text(json.dumps([item.as_dict() for item in self._load()],
-                                             ensure_ascii=False, indent=2), encoding="utf-8")
-        except OSError:
-            pass
+        atomic_json_write(self._path, [item.as_dict() for item in self._load()])
 
     def all(self) -> List[Schedule]:
         return list(self._load())
@@ -348,6 +343,12 @@ class ScheduleStore:
         item.last_status = status
         item.runs += 1
         self.save(item)
+
+    def set_status(self, schedule_id: str, status: str) -> None:
+        item = self.get(schedule_id)
+        if item is not None:
+            item.last_status = status
+            self.save(item)
 
     def clear(self) -> None:
         self._items = []

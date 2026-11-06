@@ -2095,6 +2095,12 @@ def test_fuzz() -> None:
 
     from app.core.registry import all_tools
     from app.core.spec import ToolError
+    from app.core.execution import ExecutionPolicy, execute_tool
+
+    def safe_run(spec, values):
+        # Fuzzing must not bypass the same policy that protects real callers.
+        return execute_tool(spec, values, RunContext(lang="fa", output_dir=str(base)),
+                            policy=ExecutionPolicy.for_api())
 
     class Timeout(Exception):
         pass
@@ -2134,7 +2140,7 @@ def test_fuzz() -> None:
                 signal.setitimer(signal.ITIMER_REAL, alarm_seconds)
             started = time.time()
             try:
-                spec.run(RunContext(lang="fa", output_dir=str(base)), values)
+                safe_run(spec, values)
                 polite.append(spec.id)          # ran fine with junk: acceptable
             except ToolError:
                 polite.append(spec.id)          # the friendly path
@@ -2168,7 +2174,7 @@ def test_fuzz() -> None:
         if can_alarm:
             signal.setitimer(signal.ITIMER_REAL, 15.0)
         try:
-            spec.run(RunContext(lang="fa", output_dir=str(base)), values)
+            safe_run(spec, values)
         except ToolError:
             offenders.append(spec.id)          # acceptable: the tool wanted something else
         except Timeout:
@@ -2187,7 +2193,7 @@ def test_fuzz() -> None:
         if can_alarm:
             signal.setitimer(signal.ITIMER_REAL, 15.0)
         try:
-            result = spec.run(RunContext(lang="fa", output_dir=str(base)), spec.defaults())
+            result = safe_run(spec, spec.defaults())
             text = f"{getattr(result, 'message', '')} {getattr(result, 'details', '')}"
             if any(token in text for token in ("Traceback", "KeyError", "TypeError", "NoneType")):
                 noisy.append(spec.id)

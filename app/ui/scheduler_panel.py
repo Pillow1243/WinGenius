@@ -50,7 +50,7 @@ class ScheduleCard(QFrame):
         title = label(item.title(lang), "RowTitle")
         title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         head.addWidget(title, 1)
-        head.addWidget(label("فعال" if item.enabled else "خاموش" if lang != "en"
+        head.addWidget(label(("فعال" if item.enabled else "خاموش") if lang != "en"
                              else ("on" if item.enabled else "off"), "Hint"))
         box.addLayout(head)
 
@@ -194,8 +194,8 @@ class SchedulerPanel(OverlaySheet):
         fa = self.lang != "en"
         self._title.setText("زمان‌بند و ماکرو" if fa else "Scheduler & macros")
         self._subtitle.setText(
-            "کارها را با عبارت cron زمان‌بندی کنید و ماکروهای شرطی بسازید." if fa
-            else "Schedule jobs with cron expressions and run conditional macros.")
+            "زمان‌بند فقط هنگام باز بودن برنامه فعال است؛ اجرای خودکار عملیات خطرناک مسدود است." if fa
+            else "The scheduler runs only while the app is open; risky automatic operations are blocked.")
         for attribute, text_fa, text_en in (("_save_button", "ذخیره", "Save"),
                                             ("_reset_button", "فرم تازه", "New")):
             widget = getattr(self, attribute, None)
@@ -305,14 +305,19 @@ class SchedulerPanel(OverlaySheet):
             self.toastRequested.emit("یک هدف انتخاب کنید." if self.lang != "en" else "Pick a target",
                                      "warning")
             return
-        item = self._editing or store.new()
+        item = self._editing or Schedule()
         item.name = self._name_input.text().strip()
         item.cron = expr
         item.kind = self._kind_combo.currentData() or "workflow"
         item.target_id = str(target)
         item.catch_up = self._catchup_check.isChecked()
         item.enabled = True
-        store.save(item)
+        try:
+            store.save(item)
+        except OSError as exc:
+            self.toastRequested.emit(("ذخیره ناموفق بود: " if self.lang != "en"
+                                      else "Could not save schedule: ") + str(exc), "error")
+            return
         self._editing = None
         self.toastRequested.emit("زمان‌بندی ذخیره شد." if self.lang != "en" else "Schedule saved", "success")
         self._refresh()

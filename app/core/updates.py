@@ -82,8 +82,8 @@ TRUSTED_RELEASE_PUBKEYS: Dict[str, str] = {
 }
 
 # Optional pinned Windows Authenticode SHA-1/SHA-256 certificate thumbprints (uppercase hex).
-# When empty, any OS-trusted `Status == "Valid"` Authenticode signature is accepted;
-# when populated, the signer thumbprint must also belong to this set.
+# Authenticode alone establishes publisher identity only when this set is configured.
+# An empty set means that a pinned Ed25519 manifest is required by default.
 TRUSTED_AUTHENTICODE_THUMBPRINTS: frozenset[str] = frozenset()
 
 
@@ -862,12 +862,14 @@ def verify_downloaded_package(
             f"Windows Authenticode rejected the binary (status={auth_res.status}: {auth_res.detail})."
         )
 
-    crypto_ok = bool(manifest_verified or auth_res.valid)
+    publisher_pinned = (auth_res.valid and bool(TRUSTED_AUTHENTICODE_THUMBPRINTS)
+                        and auth_res.thumbprint.upper() in TRUSTED_AUTHENTICODE_THUMBPRINTS)
+    crypto_ok = bool(manifest_verified or publisher_pinned)
     if require_signature and not crypto_ok:
         raise UpdateSignatureRequiredError(
             f"SHA-256 ({actual_sha256[:16]}…) matched {', '.join(expected_hashes)}, "
-            "but neither a signed Ed25519 release manifest nor a Windows Authenticode "
-            "digital signature was present. Installation blocked by default policy.",
+            "but neither a signed Ed25519 release manifest nor a pinned publisher "
+            "Authenticode signature was present. Installation blocked by default policy.",
             sha256=actual_sha256,
             asset_name=asset.name,
         )

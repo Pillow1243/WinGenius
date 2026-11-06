@@ -37,6 +37,8 @@ def main() -> int:
     parser.add_argument("--keygen", action="store_true", help="Generate a new Ed25519 signing keypair")
     parser.add_argument("--build", action="store_true", help="Build (and optionally sign) update-manifest.json")
     parser.add_argument("--verify", type=str, default="", help="Verify an update-manifest.json file")
+    parser.add_argument("--require-signature", action="store_true",
+                        help="Fail unless the manifest is signed by a pinned release key")
     parser.add_argument("--dir", type=str, default="release", help="Release artifacts directory")
     parser.add_argument("--version", type=str, default="", help="Release version (e.g. 7.1.0)")
     parser.add_argument("--tag", type=str, default="", help="Release git tag (e.g. v7.1.0)")
@@ -68,6 +70,18 @@ def main() -> int:
             private_key_b64=priv_key,
             key_id=key_id,
         )
+        if args.require_signature:
+            if not manifest.get("signed"):
+                print("error: release signing key is required", file=sys.stderr)
+                return 2
+            try:
+                verified, _, _ = verify_release_manifest(manifest, expected_version=version)
+            except Exception as exc:
+                print(f"error: release signature verification failed: {exc}", file=sys.stderr)
+                return 2
+            if not verified:
+                print("error: release manifest is not signed", file=sys.stderr)
+                return 2
         out_path = rel_dir / MANIFEST_FILENAME
         out_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         state = f"signed (key_id={key_id})" if manifest.get("signed") else "unsigned (no WINGENIUS_UPDATE_SIGNING_KEY)"

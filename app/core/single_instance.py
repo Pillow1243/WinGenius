@@ -18,6 +18,7 @@ shared memory — a guard must never be the reason the app refuses to open.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import time
 from typing import Optional
@@ -27,8 +28,10 @@ KEY_PREFIX = "WinGenius.instance."
 
 def _key_for(profile: Optional[str] = None) -> str:
     """One key per data folder, so two portable profiles can coexist."""
-    seed = profile or os.environ.get("XDG_CONFIG_HOME", "") or os.environ.get("APPDATA", "")
-    digest = hashlib.sha1(str(seed or os.path.expanduser("~")).encode("utf-8")).hexdigest()[:12]
+    from .paths import data_dir
+
+    seed = profile or str(data_dir().resolve())
+    digest = hashlib.sha1(os.path.normcase(str(seed)).encode("utf-8")).hexdigest()[:12]
     return f"{KEY_PREFIX}{digest}"
 
 
@@ -112,13 +115,13 @@ class InstanceGuard:
         socket.connectToServer(self.key)
         if not socket.waitForConnected(400):
             return False
-        socket.write(message.encode("utf-8"))
+        socket.write(message.encode("utf-8") + b"\n")
         socket.flush()
         socket.waitForBytesWritten(400)
         socket.disconnectFromServer()
         return True
 
-    def listen(self, on_ping) -> None:
+    def listen(self, on_ping, on_message=None) -> None:
         """Serve `on_ping` when a second launch asks the window to come forward."""
         try:
             from PySide6.QtNetwork import QLocalServer
@@ -135,11 +138,29 @@ class InstanceGuard:
         def _handle() -> None:
             while server.hasPendingConnections():
                 connection = server.nextPendingConnection()
-                try:
-                    connection.readyRead.connect(
-                        lambda c=connection: (_consume(c), on_ping()))
-                except Exception:
-                    on_ping()
+                buffer = bytearray()
+
+                def _read(c=connection, data=buffer) -> None:
+                    data.extend(bytes(c.readAll()))
+                    if len(data) > 1024 * 1024:
+                        c.disconnectFromServer()
+                        return
+                    if b"\n" not in data:
+                        return
+                    raw = bytes(data).split(b"\n", 1)[0]
+                    c.disconnectFromServer()
+                    try:
+                        message = json.loads(raw.decode("utf-8"))
+                    except (ValueError, UnicodeDecodeError):
+                        message = None
+                    if on_message and isinstance(message, dict):
+                        on_message(message)
+                    else:
+                        on_ping()
+
+                connection.readyRead.connect(_read)
+                if connection.bytesAvailable():
+                    _read()
 
         server.newConnection.connect(_handle)
         self._local = server
@@ -161,7 +182,7 @@ class InstanceGuard:
 
     # ----------------------------------------------------------------- helpers
     def _looks_alive(self, memory) -> bool:
-        """A segment is stale when its owner is gone or its timestamp is ancient."""
+        """A segment is stale only when its owner is gone."""
         try:
             if not memory.attach():
                 return False
@@ -173,9 +194,8 @@ class InstanceGuard:
             parts = raw.split()
             if len(parts) != 2:
                 return False
-            pid, started = int(parts[0]), float(parts[1])
-            if time.time() - started > 12 * 3600:        # older than half a day → stale
-                return False
+            pid = int(parts[0])
+            float(parts[1])  # validate the stored timestamp, not the owner's age
             if pid == os.getpid():
                 return False
             return _pid_alive(pid)
@@ -206,7 +226,9 @@ def _pid_alive(pid: int) -> bool:
             handle = ctypes.windll.kernel32.OpenProcess(
                 PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
             if not handle:
-                return False
+                # Access denied means a process may exist but belongs to another
+                # security context. Never treat that as proof it is dead.
+                return ctypes.windll.kernel32.GetLastError() == 5
             exit_code = ctypes.c_ulong()
             ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code))
             ctypes.windll.kernel32.CloseHandle(handle)
@@ -215,6 +237,8 @@ def _pid_alive(pid: int) -> bool:
             return True
     try:
         os.kill(pid, 0)
+        return True
+    except PermissionError:
         return True
     except OSError:
         return False
