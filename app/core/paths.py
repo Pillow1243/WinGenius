@@ -6,6 +6,7 @@ build and the source run behave identically.
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -51,9 +52,35 @@ def is_portable() -> bool:
         return False
 
 
+def _windows_acl(path: Path, directory: bool) -> bool:
+    """Restrict a path to the current user with icacls (audit F-09).
+
+    `os.chmod` cannot express POSIX permissions on Windows — it only toggles the
+    read-only attribute — so the previous "if not IS_WINDOWS" guard meant the
+    data tree, journals and the API token simply inherited whatever ACL the
+    parent folder had (often `Users: read`, sometimes a roaming profile). We
+    now drop inheritance and grant the current user alone, best effort: a
+    locked-down machine may refuse, and that must never break startup.
+    """
+    user = os.environ.get("USERNAME") or os.environ.get("USER")
+    try:
+        args = ["icacls", str(path), "/inheritance:r"]
+        if user:
+            args += ["/grant:r", f"{user}:(OI)(CI)F" if directory else f"{user}:F"]
+        result = subprocess.run(
+            args, capture_output=True, timeout=10,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        return result.returncode == 0
+    except Exception:                                   # missing icacls, timeout, …
+        return False
+
+
 def _secure_dir(path: Path) -> Path:
-    """On Unix keep the data tree private: 0700 for folders, no group/other access."""
-    if not IS_WINDOWS:
+    """Keep the data tree private: 0700 on Unix, an owner-only ACL on Windows."""
+    if IS_WINDOWS:
+        _windows_acl(path, directory=True)
+    else:
         try:
             os.chmod(path, 0o700)
         except OSError:
@@ -62,8 +89,13 @@ def _secure_dir(path: Path) -> Path:
 
 
 def secure_private_file(path: Path) -> Path:
-    """On Unix force 0600 on a sensitive file (databases, tokens, journals)."""
-    if not IS_WINDOWS:
+    """Force owner-only access on a sensitive file (databases, tokens, journals).
+
+    POSIX: 0600. Windows: inheritance removed, current user granted full control.
+    """
+    if IS_WINDOWS:
+        _windows_acl(path, directory=False)
+    else:
         try:
             os.chmod(path, 0o600)
         except OSError:
