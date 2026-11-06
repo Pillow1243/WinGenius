@@ -28,6 +28,84 @@ def _winreg():
     return require("winreg", "pywin32", None)
 
 
+# Shell metacharacters that must never reach a shell — the uninstall string is
+# read from HKLM/HKCU and both hives are treated as untrusted input.
+_SHELL_METACHARS = ("&", "|", "<", ">", "^")
+_SHELL_STARTERS = ("cmd ", "cmd.exe", "cmd/", "powershell", "pwsh", "start ", "rundll32 ")
+
+
+def _uninstall_argv(command: str) -> List[str]:
+    """Convert a registry UninstallString into an argv list for shell=False.
+
+    Follows the Windows CreateProcess quoting rules closely enough for real
+    uninstallers (quoted exe path, MSI product codes, switches). Anything that
+    looks like a shell construct (``&``, ``|``, ``cmd /c`` …) is refused
+    fail-closed instead of being executed.
+    """
+    import shlex
+
+    text = os.path.expandvars((command or "").strip())
+    if not text:
+        raise ValueError("empty uninstall command")
+    if any(ch in text for ch in _SHELL_METACHARS):
+        raise ValueError(f"shell metacharacter in uninstall command: {text!r}")
+    lowered = text.lower()
+    if lowered.startswith(_SHELL_STARTERS):
+        raise ValueError(f"shell starter in uninstall command: {text!r}")
+    if text.startswith('"'):
+        end = text.find('"', 1)
+        if end == -1:
+            raise ValueError(f"unterminated quote in uninstall command: {text!r}")
+        exe = text[1:end]
+        rest = text[end + 1:]
+    else:
+        parts = text.split(None, 1)
+        exe = parts[0]
+        rest = parts[1] if len(parts) > 1 else ""
+        # Unquoted path with spaces ("C:\Program Files\App\un.exe" /S): Windows
+        # resolves this by trying progressively longer prefixes ending in .exe.
+        if " " in exe and not Path(exe).exists():
+            tokens = text.split()
+            for i in range(1, len(tokens)):
+                candidate = " ".join(tokens[:i + 1])
+                if candidate.lower().endswith(".exe") and Path(candidate).exists():
+                    exe = candidate
+                    rest = " ".join(tokens[i + 1:])
+                    break
+    argv = [exe]
+    for token in shlex.split(rest, posix=False):
+        token = token.strip()
+        if len(token) >= 2 and token[0] == '"' and token[-1] == '"':
+            token = token[1:-1]
+        if token:
+            argv.append(token)
+    return argv
+
+
+def _launch_uninstaller(ctx: RunContext, app: Dict[str, str]) -> None:
+    """Launch a registry uninstaller safely: argv only, never shell=True.
+
+    The UninstallString is untrusted input (HKCU included), so it is parsed
+    with the Windows quoting rules and anything resembling a shell construct
+    is refused fail-closed.  The full command is surfaced to the user.
+    """
+    command = app.get("uninstall") or ""
+    try:
+        argv = _uninstall_argv(command)
+    except ValueError as exc:
+        raise ToolError(ctx.M(
+            f"فرمان حذف این برنامه به‌صورت امن قابل‌اجرا نیست و مسدود شد:\n{command}\n({exc})",
+            f"This app's uninstall command is not safe to run and was blocked:\n{command}\n({exc})",
+        )) from exc
+    log_line = f"uninstall {app.get('name', '?')}: {' '.join(argv)}"
+    try:
+        subprocess.Popen(argv, shell=False, close_fds=True)
+    except OSError as exc:
+        raise ToolError(str(exc))
+    ctx.log(log_line)
+    return argv
+
+
 def _startup_folder(global_scope: bool = False) -> Path:
     appdata = os.environ.get("APPDATA", "")
     local = os.environ.get("PROGRAMDATA", r"C:\ProgramData")
@@ -180,7 +258,9 @@ def _clear(path: Path) -> int:
               choices=[("temp", "فایل‌های موقت ویندوز", "Windows temp files"),
                        ("browser", "کش مرورگرها", "Browser caches"),
                        ("all", "همه‌ی موارد بالا", "All of the above")]),
-        Field("dry_run", K_BOOL, "فقط محاسبه (بدون حذف)", "Measure only (no delete)", default=True),
+        Field("dry_run", K_BOOL, "فقط محاسبه (بدون حذف)", "Measure only (no delete)", default=True,
+              help="پیش‌فرض روشن است؛ خاموش کردن یعنی فایل‌ها واقعاً پاک شوند.",
+              help_en="On by default; turning it off means files are really deleted."),
     ],
 )
 def temp_clean(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
@@ -409,7 +489,9 @@ def process_manager(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
                        ("start", "اجرای سرویس", "Start service"),
                        ("stop", "توقف سرویس", "Stop service"),
                        ("restart", "ری‌استارت سرویس", "Restart service")]),
-        Field("name", K_TEXT, "نام سرویس", "Service name", visible_when=("action", ("start", "stop", "restart"))),
+        Field("name", K_TEXT, "نام سرویس", "Service name", visible_when=("action", ("start", "stop", "restart")),
+              help="نام سرویس ویندوز (ستون Name در services.msc)، نه نام نمایشی.",
+              help_en="The Windows service name (Name column in services.msc), not the display name."),
         Field("filter", K_TEXT, "فیلتر نام", "Name filter", default="", visible_when=("action", "list")),
     ],
 )
@@ -583,11 +665,18 @@ def installed_apps(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
         if not match or not match["uninstall"]:
             raise ToolError(ctx.M("برنامه با این نام پیدا نشد یا حذف‌کننده ندارد.",
                                   "App not found or has no uninstaller."))
-        try:
-            subprocess.Popen(match["uninstall"], shell=True)
-        except OSError as exc:
-            raise ToolError(str(exc))
-        return RunResult(message=ctx.M(f"حذف‌کننده‌ی «{match['name']}» اجرا شد.", f"Uninstaller for '{match['name']}' launched."))
+        argv = _launch_uninstaller(ctx, match)
+        return RunResult(
+            message=ctx.M(f"حذف‌کننده‌ی «{match['name']}» اجرا شد.", f"Uninstaller for '{match['name']}' launched."),
+            details=ctx.M(
+                f"برنامه: {match['name']} ({match.get('version') or '؟'})\n"
+                f"مسیر فایل اجرایی: {argv[0]}\n"
+                f"فرمان کامل: {' '.join(argv)}",
+                f"App: {match['name']} ({match.get('version') or '?'})\n"
+                f"Executable: {argv[0]}\n"
+                f"Full command: {' '.join(argv)}",
+            ),
+        )
     flt = str(v.get("filter") or "").lower()
     rows = []
     for app in apps:

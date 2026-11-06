@@ -85,6 +85,28 @@ def main() -> int:
     english = text("docs/README.en.md")
     check("English docs totals", formatted in english, formatted)
     check("English docs suite lines", str(STATS["suites"]["security"]) in english)
+    # Every suite's real count must appear in the English docs (not just one).
+    missing_suites = [f"{k}={v}" for k, v in STATS["suites"].items() if str(v) not in english]
+    check("English docs quote every suite count", not missing_suites, ", ".join(missing_suites))
+    # The "Totals:" line must list components that actually sum to the total —
+    # a single stale component used to pass while the sum was wrong (2,336/2,337).
+    totals_match = re.search(r"Totals:\s*\*\*([^*]+)\*\*", english)
+    if totals_match:
+        body = re.sub(r"=\s*[\d,]+\s*checks", "", totals_match.group(1))  # drop the "= N checks" tail
+        quoted = [int(n.replace(",", "")) for n in re.findall(r"([\d,]+)\s+\w+", body)]
+        check("English docs components sum to the total", sum(quoted) == total,
+              f"components {quoted} sum to {sum(quoted)}, total is {total}")
+    else:
+        check("English docs components sum to the total", False, "no Totals line found")
+    # The English TL;DR inside README.md must quote the same version/tools/total.
+    check("README English TL;DR version", f"WinGenius {version}**" in readme, version)
+    check("README English TL;DR tools", f"**{tools} tools in {STATS['categories']} categories**" in readme,
+          f"{tools} tools / {STATS['categories']} categories")
+    check("README English TL;DR total", formatted in readme, formatted)
+    # coverage must be a real measurement or null — never a stale constant.
+    cov = STATS.get("coverage")
+    check("stats coverage is measured or null", cov is None or (isinstance(cov, int) and 0 <= cov <= 100),
+          repr(cov))
     showcase = text("docs/showcase.html")
     showcase_prose = re.sub(r"data:image/png;base64,[A-Za-z0-9+/=]+", "[IMG]", showcase)
     check("showcase totals", formatted in showcase_prose, formatted)

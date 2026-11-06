@@ -128,7 +128,8 @@ def pdf_forms_list(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     fields=[
         Field("src", K_FILE, "فایل PDF", "PDF file", required=True, filt=PDF_FILTER),
         Field("fields", K_MULTILINE, "مقادیر (هر خط name=value)", "Values (name=value per line)",
-              required=True, placeholder="FirstName=علی\nLastName=رضایی"),
+              required=True, placeholder="FirstName=علی\nLastName=رضایی",
+              placeholder_en="FirstName=Ali\nLastName=Rezaei"),
         Field("out", K_SAVE, "ذخیره در", "Save to", filt=PDF_FILTER),
     ],
 )

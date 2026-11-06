@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional
 
 from .logger import get_logger
-from .paths import data_dir
+from .paths import data_dir, secure_private_file
 
 log = get_logger("indexer")
 
@@ -110,6 +110,12 @@ def _connect() -> sqlite3.Connection:
     path = index_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path))
+    # The FTS index holds plaintext file contents: keep db + WAL sidecars 0600.
+    secure_private_file(path)
+    for sidecar in ("-wal", "-shm"):
+        side = path.with_name(path.name + sidecar)
+        if side.exists():
+            secure_private_file(side)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute(
         """CREATE TABLE IF NOT EXISTS docs (

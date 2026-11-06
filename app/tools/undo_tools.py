@@ -124,7 +124,9 @@ def trash_restore(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     desc_en="Permanently empties the internal trash (no undo afterwards).",
     icon="trash", order=16, keywords=("empty trash", "cleanup", "خالی", "پاکسازی"),
     fields=[Field("confirm", K_CHOICE, "تأیید", "Confirm", default="no",
-                  choices=[("no", "نه، فعلاً نه", "No, keep it"), ("yes", "بله پاک کن", "Yes, empty it")])],
+                  choices=[("no", "نه، فعلاً نه", "No, keep it"), ("yes", "بله پاک کن", "Yes, empty it")],
+                  help="خالی کردن سطل دائمی است و با واگرد برنمی‌گردد.",
+                  help_en="Emptying the trash is permanent — Undo cannot bring it back.")],
 )
 def trash_cleanup(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     if str(v.get("confirm") or "no") != "yes":

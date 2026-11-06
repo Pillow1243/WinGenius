@@ -51,13 +51,33 @@ def is_portable() -> bool:
         return False
 
 
+def _secure_dir(path: Path) -> Path:
+    """On Unix keep the data tree private: 0700 for folders, no group/other access."""
+    if not IS_WINDOWS:
+        try:
+            os.chmod(path, 0o700)
+        except OSError:
+            pass
+    return path
+
+
+def secure_private_file(path: Path) -> Path:
+    """On Unix force 0600 on a sensitive file (databases, tokens, journals)."""
+    if not IS_WINDOWS:
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
+    return path
+
+
 def data_dir() -> Path:
     """Writable data folder (settings, logs, cache) — per-user, or portable."""
     if is_portable():
         path = project_root() / "data"
         try:
             path.mkdir(parents=True, exist_ok=True)
-            return path
+            return _secure_dir(path)
         except OSError:
             pass                                  # read-only USB: fall back below
     if IS_WINDOWS:
@@ -66,19 +86,19 @@ def data_dir() -> Path:
         root = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
     path = root / APP_NAME
     path.mkdir(parents=True, exist_ok=True)
-    return path
+    return _secure_dir(path)
 
 
 def logs_dir() -> Path:
     path = data_dir() / "logs"
     path.mkdir(parents=True, exist_ok=True)
-    return path
+    return _secure_dir(path)
 
 
 def cache_dir() -> Path:
     path = data_dir() / "cache"
     path.mkdir(parents=True, exist_ok=True)
-    return path
+    return _secure_dir(path)
 
 
 def settings_file() -> Path:

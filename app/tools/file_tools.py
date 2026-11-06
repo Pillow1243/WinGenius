@@ -151,7 +151,9 @@ def batch_rename(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
         Field("folder", K_DIR, "پوشه", "Folder", required=True),
         Field("recursive", K_BOOL, "شامل زیرپوشه‌ها", "Include subfolders", default=True),
         Field("min_size", K_INT, "حداقل حجم (KB)", "Minimum size (KB)", default=0, minimum=0, maximum=10000000),
-        Field("delete", K_BOOL, "حذف نسخه‌های اضافی (خطرناک!)", "Delete extra copies (dangerous!)", default=False),
+        Field("delete", K_BOOL, "حذف نسخه‌های اضافی (خطرناک!)", "Delete extra copies (dangerous!)", default=False,
+              help="فقط وقتی این گزینه روشن باشد حذف انجام می‌شود؛ پیش‌فرض فقط گزارش است.",
+              help_en="Deletion only happens when this is on; the default is a report."),
     ],
 )
 def find_duplicates(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
@@ -239,7 +241,8 @@ def hash_files(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
             lines.append(f"{path}: missing")
             continue
         ctx.progress(index, len(files), path.name)
-        digest = hash_file(path, algo, lambda done, total: ctx.progress(done, total, path.name))
+        digest = hash_file(path, algo,
+                           lambda done, total, name=path.name: ctx.progress(done, total, name))
         lines.append(f"{digest}  {path}")
     report = "\n".join(lines)
     outputs: List[str] = []
@@ -314,6 +317,7 @@ def zip_extract(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     password = str(v.get("password") or "").encode() or None
     extracted = 0
     skipped: List[str] = []
+    renamed: List[str] = []
     root = dest.resolve()
     max_entries = 10_000
     max_total_bytes = 2 * 1024 * 1024 * 1024
@@ -355,8 +359,15 @@ def zip_extract(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
                     extracted += 1
                     continue
                 target.parent.mkdir(parents=True, exist_ok=True)
+                if target.exists():
+                    # Default collision policy: never overwrite an existing file;
+                    # write the new member under a unique name instead.
+                    unique = unique_path(target)
+                    renamed.append(f"{member.filename} → {unique.name}")
+                    target = unique
+                tmp = target.with_name(target.name + f".part-{os.getpid()}")
                 try:
-                    with archive.open(member, pwd=password) as src_fh, target.open("wb") as dst_fh:
+                    with archive.open(member, pwd=password) as src_fh, open(tmp, "wb") as dst_fh:
                         while True:
                             chunk = src_fh.read(1 << 20)
                             if not chunk:
@@ -368,8 +379,12 @@ def zip_extract(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
                                     "Uncompressed archive size exceeded the 2 GiB safety limit.",
                                 ))
                             dst_fh.write(chunk)
+                    os.replace(tmp, target)      # atomic: no half-written files
                 except ToolError:
-                    target.unlink(missing_ok=True)
+                    tmp.unlink(missing_ok=True)
+                    raise
+                except BaseException:
+                    tmp.unlink(missing_ok=True)
                     raise
                 extracted += 1
     except RuntimeError as exc:
@@ -380,6 +395,11 @@ def zip_extract(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     if skipped:
         message += ctx.M(f" · {len(skipped)} مورد ناامن (خارج از مقصد) رد شد",
                          f" · skipped {len(skipped)} unsafe path(s)")
+    if renamed:
+        message += ctx.M(
+            f" · {len(renamed)} مورد به‌خاطر وجود فایل هم‌نام، نام منحصربه‌فرد گرفت:\n" + "\n".join(renamed[:10]),
+            f" · {len(renamed)} item(s) renamed to avoid overwriting existing files:\n" + "\n".join(renamed[:10]),
+        )
     return RunResult(message=message, outputs=[str(dest)], open_target=str(dest))
 
 

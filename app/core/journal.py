@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
-from .paths import data_dir
+from .paths import data_dir, secure_private_file
 from .utils import human_size, unique_path
 
 SCHEMA = """
@@ -121,6 +121,12 @@ class Journal:
         existed = self._path.exists()
         conn = sqlite3.connect(str(self._path), timeout=10)
         conn.row_factory = sqlite3.Row
+        # The journal records undo data for filesystem changes: keep it 0600.
+        secure_private_file(self._path)
+        for sidecar in ("-wal", "-shm"):
+            side = self._path.with_name(self._path.name + sidecar)
+            if side.exists():
+                secure_private_file(side)
         if not existed:
             # Somebody removed the journal while we were running (a cleanup tool, a
             # user emptying the data folder, a half-restored backup). Rebuild the

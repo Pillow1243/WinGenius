@@ -131,6 +131,22 @@ def main(argv: List[str] | None = None) -> int:
         _attach_console()
         return run_cli(argv)
 
+    # ------------------------------------------- explicit elevation request
+    # `--elevate` re-launches *this* executable with UAC for the operations
+    # that need it, instead of running the whole app elevated by default.
+    if "--elevate" in argv:
+        if not IS_WINDOWS:
+            log.warning("--elevate is only meaningful on Windows")
+            return 0
+        if winapi.is_admin():
+            log.info("already running elevated; continuing without re-launch")
+        else:
+            log.info("requesting elevation via UAC (--elevate)")
+            if winapi.run_as_admin():
+                return 0                      # the elevated copy takes over
+            log.warning("elevation was declined or failed")
+            return 1
+
     # ------------------------------------------------- single-instance guard
     guard = None
     if "--allow-multi" not in argv:
@@ -227,9 +243,10 @@ def main(argv: List[str] | None = None) -> int:
         QTimer.singleShot(2500, app.quit)
     if IS_WINDOWS and not winapi.is_admin():
         window._show_toast(
-            "برای ابزارهای سیستمی، برنامه را Run as administrator اجرا کنید."
+            "برای ابزارهای سیستمی که به دسترسی مدیر نیاز دارند، «WinGenius.exe --elevate» را اجرا کنید؛"
+            "سایر بخش‌های برنامه بدون دسترسی بالا کار می‌کنند."
             if settings.lang == "fa" else
-            "Run as administrator for full system-tool access.",
+            "System tools that need admin rights: run \"WinGenius.exe --elevate\" (UAC prompt, only for those operations). Everything else works without elevation.",
             "info",
         )
     return app.exec()

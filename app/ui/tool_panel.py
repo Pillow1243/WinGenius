@@ -522,7 +522,7 @@ class ToolPanel(QWidget):
             if widget is not None:
                 chain.append(widget)
         chain.extend(self._action_buttons)
-        for first, second in zip(chain, chain[1:]):
+        for first, second in zip(chain, chain[1:], strict=False):   # adjacent pairs by design
             QWidget.setTabOrder(first, second)
 
     def _placeholder(self, field: Field) -> str:

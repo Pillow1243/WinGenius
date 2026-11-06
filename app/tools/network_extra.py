@@ -452,6 +452,9 @@ def whois_lookup(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
               choices=[("view", "نمایش", "View"), ("block", "مسدود کردن دامنه", "Block a domain"),
                        ("unblock", "رفع مسدودی", "Unblock"), ("open", "باز کردن با Notepad", "Open in Notepad")]),
         Field("domain", K_TEXT, "دامنه", "Domain", placeholder="ads.example.com",
+              placeholder_en="ads.example.com",
+              help="دامنه‌ی خام بدون http؛ مثل ads.example.com. ابتدا از فایل hosts پشتیبان گرفته می‌شود.",
+              help_en="Bare domain, no http:// — e.g. ads.example.com. A backup of the hosts file is made first.",
               visible_when=("action", ("block", "unblock"))),
     ],
 )

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field as dc_field
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 # ----------------------------------------------------------------- field kinds
 K_FILE = "file"
@@ -116,6 +116,9 @@ class RunContext:
         self._on_message = on_message
         self._cancel = cancel_event or threading.Event()
         self.policy = policy
+        # Input paths of the running tool (populated by the execution layer).
+        # Output helpers refuse to write onto any of them.
+        self.protected_inputs: List[str] = []
 
     # ------------------------------------------------------------------ i18n
     def M(self, fa: str, en: Optional[str] = None) -> str:
@@ -196,3 +199,45 @@ class ToolSpec:
             else:
                 values[f.key] = ""
         return values
+
+    def validate_values(self, values: Mapping[str, Any], lang: str = "fa") -> List[Dict[str, str]]:
+        """Structural validation of raw input values, before any tool code runs.
+
+        Returns a list of {field, error} entries; empty means valid.  Checks
+        required fields, numeric ranges and choice membership.  Messages are
+        bilingual and never echo secrets (sensitive fields are not echoed).
+        """
+        errors: List[Dict[str, str]] = []
+        en = lang == "en"
+
+        def err(field: Field, fa: str, en_msg: str) -> None:
+            label = (field.label_en or field.label) if en else (field.label or field.label_en)
+            errors.append({
+                "field": field.key,
+                "error": (en_msg if en else fa).format(label=label or field.key),
+            })
+
+        for f in self.fields:
+            raw = values.get(f.key, f.default)
+            empty = raw is None or (isinstance(raw, str) and not raw.strip()) \
+                or (isinstance(raw, (list, tuple)) and not raw)
+            if f.required and empty and f.kind not in (K_BOOL,):
+                err(f, "فیلد «{label}» الزامی است.", "Field “{label}” is required.")
+                continue
+            if empty:
+                continue
+            if f.kind in (K_INT, K_FLOAT):
+                try:
+                    number = float(raw) if f.kind == K_FLOAT else int(str(raw).strip())
+                except (TypeError, ValueError):
+                    err(f, "مقدار «{label}» باید عدد باشد.", "“{label}” must be a number.")
+                    continue
+                if number < f.minimum or number > f.maximum:
+                    err(f, f"مقدار «{{label}}» باید بین {f.minimum} و {f.maximum} باشد.",
+                        f"“{{label}}” must be between {f.minimum} and {f.maximum}.")
+            elif f.kind == K_CHOICE and f.choices:
+                allowed = {str(c[0]) for c in f.choices}
+                if str(raw) not in allowed:
+                    err(f, "مقدار «{label}» انتخاب معتبری نیست.",
+                        "“{label}” is not one of the allowed choices.")
+        return errors

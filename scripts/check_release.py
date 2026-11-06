@@ -40,6 +40,7 @@ SYNCED = [
     "docs/stats.json",
     "packaging/version_info.txt",
     "packaging/installer.iss",
+    "README.md",
 ]
 # Everything check_docs.py reads (it resolves ROOT from its own __file__).
 DOCS = [
@@ -270,11 +271,33 @@ def check_python_snippets() -> list[str]:
     return failures
 
 
+def check_trust_store() -> list[str]:
+    """Release gate: the update trust store must be release-ready.
+
+    Fails (not warns) when only the shipped placeholder key is pinned: a
+    release signed with a placeholder would fail verification for every user.
+    The real key is an owner action (GitHub Secret/HSM) — this check stays
+    red, labelled BLOCKED-NEEDS-OWNER, until a real key is pinned.
+    """
+    sys.path.insert(0, str(ROOT))
+    try:
+        from app.core.updates import keyring_status
+    except Exception as exc:
+        return [f"update trust store unreadable: {exc}"]
+    status = keyring_status()
+    if status["ready"]:
+        return []
+    return ["BLOCKED-NEEDS-OWNER: release trust store is not ready ("
+            + "; ".join(status["problems"])
+            + "). Pin the real release public key in app/core/updates.py; keep the "
+              "private key only in GitHub Secrets/HSM — never commit a key."]
+
+
 def main() -> int:
     code = sync_code()
     failures: list[str] = (check_release_metadata() + check_node24_actions()
                            + check_exe_paths() + check_frozen_tools()
-                           + check_python_snippets())
+                           + check_python_snippets() + check_trust_store())
     with tempfile.TemporaryDirectory(prefix="wg-release-") as tmp:
         root = Path(tmp)
         for rel in dict.fromkeys(SYNCED + DOCS):

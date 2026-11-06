@@ -452,11 +452,13 @@ class SettingsPanel(QWidget):
         if not paths:
             return
         warning = (
-            "افزونه‌های Python با دسترسی کامل حساب شما اجرا می‌شوند؛ سندباکس ندارند.\n"
-            "فقط اگر فایل‌های زیر را می‌شناسید تأیید کنید:\n"
+            "افزونه‌های Python با دسترسی کامل حساب شما (فایل‌ها، شبکه) اجرا می‌شوند؛ سندباکس ندارند.\n"
+            "هش SHA-256 فقط ثابت می‌کند بایت‌های فایل عوض نشده‌اند — نشانه‌ای از بی‌خطر بودن کد نیست.\n"
+            "جزئیات در SECURITY.md. فقط فایل‌هایی را تأیید کنید که خودتان بررسی کرده‌اید:\n"
             if self.lang == "fa" else
-            "Python plugins run with your account privileges, without a sandbox.\n"
-            "Approve only files you have reviewed:\n"
+            "Python plugins run with your full account access (files, network); there is no sandbox.\n"
+            "The SHA-256 hash only proves the bytes are unchanged — it says nothing about whether the code is safe.\n"
+            "See SECURITY.md. Approve only files you have reviewed yourself:\n"
         )
         answer = QMessageBox.warning(
             self, t("st.plugins"), warning + "\n".join(str(p.resolve()) for p in paths),

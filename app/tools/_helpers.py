@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib
+import os
 import re
 import shutil
 import sys
@@ -141,18 +142,74 @@ def out_dir(ctx: RunContext, subfolder: str = "") -> Path:
     return ensure_dir(base)
 
 
+def same_file(a: Path, b: Path) -> bool:
+    """True when both paths denote the same file (canonical, symlink, hardlink, case)."""
+    try:
+        if a.exists() and b.exists() and os.path.samefile(a, b):
+            return True
+    except OSError:
+        pass
+    try:
+        ra, rb = os.path.realpath(a), os.path.realpath(b)
+    except OSError:
+        ra, rb = str(a), str(b)
+    if IS_WINDOWS:
+        return ra.lower() == rb.lower()
+    return ra == rb
+
+
+def _protected(ctx: RunContext) -> List[Path]:
+    return [Path(p) for p in getattr(ctx, "protected_inputs", []) or []]
+
+
 def save_target(ctx: RunContext, requested: str, default_name: str) -> Path:
-    """Resolve a 'save as' field, falling back to the output folder."""
+    """Resolve a 'save as' field, falling back to the output folder.
+
+    Safety policy (applies to every tool that saves through here):
+      * the destination may never be one of the tool's input files
+        (src == out, symlink/hardlink/case variants included) — refused loudly;
+      * an existing destination file is never overwritten by default — a
+        unique name (``name-1.ext`` …) is produced instead, so a half-failed
+        run can never destroy a previously written file.
+    """
     requested = (requested or "").strip()
     if requested:
-        path = Path(requested)
+        path = Path(requested).expanduser()
         if path.is_dir():
-            return unique_path(path / default_name)
-        if path.suffix == "":
-            return unique_path(path / default_name)
-        ensure_dir(path.parent)
-        return path
-    return unique_path(out_dir(ctx) / default_name)
+            path = path / default_name
+        elif path.suffix == "":
+            path = path / default_name
+        else:
+            ensure_dir(path.parent)
+    else:
+        path = out_dir(ctx) / default_name
+    for src in _protected(ctx):
+        if same_file(path, src):
+            raise ToolError(ctx.M(
+                f"مسیر خروجی با فایل ورودی یکی است و بازنویسی آن مجاز نیست:\n{path}",
+                f"The output path is the same file as the input; overwriting it is not allowed:\n{path}",
+            ))
+    return unique_path(path)
+
+
+def atomic_write_bytes(path: Path, data: bytes) -> Path:
+    """Write `data` to `path` via a temp file + atomic replace (POSIX & Windows)."""
+    path = Path(path)
+    ensure_dir(path.parent)
+    tmp = path.with_name(path.name + f".tmp-{os.getpid()}")
+    try:
+        with open(tmp, "wb") as fh:
+            fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+    return path
 
 
 def replace_suffix(path: Path, suffix: str) -> str:

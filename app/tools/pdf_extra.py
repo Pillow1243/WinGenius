@@ -12,7 +12,7 @@ from ..core.spec import (
     Field, RunContext, RunResult, ToolError,
 )
 from ..core.utils import human_size
-from ._helpers import first_file, page_ranges, save_target
+from ._helpers import atomic_write_bytes, first_file, page_ranges, save_target
 from .pdf_tools import PDF_FILTER, _fitz, _open_doc, _open_reader, _pypdf
 
 
@@ -458,11 +458,14 @@ def pdf_stamp_image(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
         layer.save()
         buffer.seek(0)
         overlay = pypdf.PdfReader(buffer).pages[0]
-        page.merge_page(overlay)
+        # pypdf 7 removed merge_page() on reader-owned pages: attach the page to
+        # the writer first, then merge the overlay onto the writer-owned page.
         writer.add_page(page)
+        writer.pages[-1].merge_page(overlay)
     dest = _writer(ctx, src, v, "_stamped")
-    with open(dest, "wb") as fh:
-        writer.write(fh)
+    out_buffer = io.BytesIO()
+    writer.write(out_buffer)
+    atomic_write_bytes(dest, out_buffer.getvalue())
     return RunResult(
         message=ctx.M(f"مهر روی {total} صفحه گذاشته شد.\n{dest}", f"Stamped {total} page(s).\n{dest}"),
         outputs=[str(dest)], open_target=str(dest),

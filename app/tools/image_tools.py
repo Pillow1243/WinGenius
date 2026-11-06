@@ -275,7 +275,7 @@ def image_watermark(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
             ratio = target_w / max(1, logo.width)
             mark = logo.resize((target_w, max(1, int(logo.height * ratio))), Image.LANCZOS)
             if alpha < 255:
-                mark_alpha = mark.split()[-1].point(lambda px: int(px * alpha / 255))
+                mark_alpha = mark.split()[-1].point(lambda px, a=alpha: int(px * a / 255))
                 mark.putalpha(mark_alpha)
             box = mark.size
         else:

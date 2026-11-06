@@ -43,7 +43,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 ; Uninstalling used to leave settings, the journal, the search index and vault
 ; snapshots behind in %APPDATA%\WinGenius.  Removing them is a choice, not a
 ; surprise: it is unchecked and only applies to the app's own data folder.
-Name: "deletedata"; Description: "Also delete my WinGenius settings, history and index"; GroupDescription: "Cleanup:"; Flags: unchecked
+Name: "deletedata"; Description: "Also delete my WinGenius settings, history, search index and API token"; GroupDescription: "Cleanup:"; Flags: unchecked
 
 [Files]
 Source: "..\dist\{#AppExe}"; DestDir: "{app}"; Flags: ignoreversion
@@ -66,14 +66,26 @@ Type: filesandordirs; Name: "{userappdata}\{#AppName}\journal_snapshots"; Tasks:
 Type: filesandordirs; Name: "{userappdata}\{#AppName}\trash"; Tasks: deletedata
 Type: filesandordirs; Name: "{userappdata}\{#AppName}\updates"; Tasks: deletedata
 ; The files WinGenius creates directly in its data folder (settings, journal,
-; queue, history, workflows, index).  Written as an explicit list so an unknown
-; folder a user put there by hand is never touched.
+; queue, history, workflows, search index, API token).  Written as an explicit
+; list — synced with the real names in app/core (data_dir() /
+; indexer.index_path() / api_server.token_path()) — so an unknown folder a user
+; put there by hand is never touched.
 Type: files; Name: "{userappdata}\{#AppName}\settings.ini"; Tasks: deletedata
 Type: files; Name: "{userappdata}\{#AppName}\journal.sqlite3"; Tasks: deletedata
+Type: files; Name: "{userappdata}\{#AppName}\journal.sqlite3-wal"; Tasks: deletedata
+Type: files; Name: "{userappdata}\{#AppName}\journal.sqlite3-shm"; Tasks: deletedata
 Type: files; Name: "{userappdata}\{#AppName}\history.json"; Tasks: deletedata
 Type: files; Name: "{userappdata}\{#AppName}\queue.json"; Tasks: deletedata
 Type: files; Name: "{userappdata}\{#AppName}\workflows.json"; Tasks: deletedata
 Type: files; Name: "{userappdata}\{#AppName}\schedules.json"; Tasks: deletedata
 Type: files; Name: "{userappdata}\{#AppName}\watch_rules.json"; Tasks: deletedata
-Type: files; Name: "{userappdata}\{#AppName}\index.sqlite3"; Tasks: deletedata
+Type: files; Name: "{userappdata}\{#AppName}\trusted_plugins.json"; Tasks: deletedata
+; The real index file is search_index.sqlite3 (app/core/indexer.py:index_path) —
+; the old "index.sqlite3" entry never matched anything.
+Type: files; Name: "{userappdata}\{#AppName}\search_index.sqlite3"; Tasks: deletedata
+Type: files; Name: "{userappdata}\{#AppName}\search_index.sqlite3-wal"; Tasks: deletedata
+Type: files; Name: "{userappdata}\{#AppName}\search_index.sqlite3-shm"; Tasks: deletedata
+; Decision: with "deletedata" the local API token is deleted too — a fresh
+; install must issue a fresh credential instead of reusing a possibly leaked one.
+Type: files; Name: "{userappdata}\{#AppName}\api_token.txt"; Tasks: deletedata
 Type: dirifempty; Name: "{userappdata}\{#AppName}"; Tasks: deletedata

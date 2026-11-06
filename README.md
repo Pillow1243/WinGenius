@@ -688,7 +688,7 @@ python packaging/make_showcase.py                                # docs/showcase
 ---
 
 ## English TL;DR
-**WinGenius 5.0.1** is a local-first PySide6 desktop assistant for Windows with **254 tools in 10 categories**,
+**WinGenius 7.1.0** is a local-first PySide6 desktop assistant for Windows with **292 tools in 11 categories**,
 and it does more than run one tool at a time:
 
 - **Encrypted vault** — `.wgv` containers using AES-256-GCM with a **scrypt** key (N=2¹⁵), an
@@ -718,10 +718,11 @@ WinGenius.exe --undo
 python tests\smoke_test.py && python tests\functional_test.py && python tests\output_test.py && python tests\ui_test.py
 ```
 
-Version 5.0 adds real PDF digital signatures with tamper detection, OCR-aware search indexing for
-scanned PDFs, and a redacted crash-report bundle. Test totals: **154 smoke · 459 functional ·
-112 output · 1,077 UI · 57 security · 39 hardening regressions · 27 packaging = 1,925 checks**, all headless, coverage
-**75%** of `app/`; `pyproject.toml` enforces a **70%** `fail_under` gate so Windows-only modules cannot break CI.
+Version 7.1 adds the flow/macro engine, the local JSON API hardening and the undo journal for file
+operations. Test totals: **154 smoke · 641 functional · 112 output · 1,259 UI · 57 security ·
+56 hardening · 28 Persian-PDF · 30 packaging = 2,337 checks**, all headless. Coverage is measured by
+`scripts/quality_gate.py` from real `coverage.py` data; `pyproject.toml` enforces a **70%** `fail_under`
+gate so Windows-only modules cannot break CI.
 
 No telemetry, no account, no background network traffic. All file processing is local; only the
 network tools you explicitly run (download, WHOIS, breach check, OCR language packs, speech

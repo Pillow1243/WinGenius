@@ -237,7 +237,9 @@ def vault_extract(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     fields=[
         Field("vault", K_TEXT, "فایل گاوصندوق", "Vault file", required=True, filt="WinGenius Vault (*.wgv)"),
         Field("password", K_PASSWORD, "رمز", "Password", required=True),
-        Field("names", K_TEXT, "نام‌ها", "Entry names", required=True),
+        Field("names", K_TEXT, "نام‌ها", "Entry names", required=True,
+              help="نام دقیق مورد ذخیره‌شده در گاوصندوق؛ چند نام را با ویرگول جدا کنید.",
+              help_en="Exact entry name(s) as stored in the vault; separate several with commas."),
     ],
 )
 def vault_remove(ctx: RunContext, v: Dict[str, Any]) -> RunResult:

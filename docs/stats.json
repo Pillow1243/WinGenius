@@ -26,7 +26,7 @@
     "packaging": 30
   },
   "checks": 2337,
-  "coverage": 75,
+  "coverage": null,
   "python": [
     "3.12",
     "3.13"
