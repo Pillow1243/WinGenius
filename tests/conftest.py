@@ -15,6 +15,8 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("WINGENIUS_NO_LAUNCH", "1")
+from tests.sandbox import isolate_profile
+isolate_profile()
 
 
 def _legacy_failures() -> int:
