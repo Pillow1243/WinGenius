@@ -1151,6 +1151,8 @@ def test_watcher(fixtures: dict) -> None:
     check("no trigger for a known file", local.scan_now() == [])
 
     (watch_dir / "new.txt").write_text("hello", encoding="utf-8")
+    # audit F-01: the first scan only arms the settle timer, even with settle=0
+    check("first sighting is only registered as pending", local.scan_now() == [])
     hits = local.scan_now()
     check("new file triggers the rule", len(hits) == 1 and hits[0][1].endswith("new.txt"), str(hits))
     check("the same file is not reported twice", local.scan_now() == [])
@@ -1163,7 +1165,8 @@ def test_watcher(fixtures: dict) -> None:
           ["new.txt", "old.txt"] or len(watcher_mod.read_folder(str(watch_dir), "*.txt")) == 2)
 
     local.reset()
-    check("reset() forgets fingerprints", len(local.scan_now()) >= 1)
+    check("reset() forgets fingerprints (pending first, hit on next scan)",
+          local.scan_now() == [] and len(local.scan_now()) >= 1)
 
     watcher_mod.mark_run(rule, str(watch_dir / "new.txt"), "auto")
     refreshed = watcher_mod.store.get(rule.id)

@@ -25,6 +25,10 @@ from .paths import data_dir
 
 log = get_logger("watcher")
 DEFAULT_PATTERNS = "*.*"
+#: Hard cap for the persisted "seen" map. Must be >= read_folder's limit so a
+#: single scan of a full folder can never be trimmed away and re-processed
+#: after a restart (audit F-10).
+SEEN_LIMIT = 5000
 
 
 # ---------------------------------------------------------------------- rule
@@ -220,7 +224,9 @@ class Watcher(QObject):
 
     def _save_seen(self) -> None:
         try:
-            trimmed = dict(sorted(self._seen.items(), key=lambda item: -item[1])[:4000])
+            # Keep at least SEEN_LIMIT entries so a full scan (read_folder limit)
+            # survives the trim and is never re-processed after a restart.
+            trimmed = dict(sorted(self._seen.items(), key=lambda item: -item[1])[:SEEN_LIMIT])
             self._seen = trimmed
             self._seen_path.write_text(json.dumps(trimmed), encoding="utf-8")
         except Exception:  # pragma: no cover
@@ -256,16 +262,24 @@ class Watcher(QObject):
 
     # ------------------------------------------------------------------ scan
     def scan_now(self) -> List[tuple]:
-        """Check every rule once; returns [(rule, path), ...] for new files."""
+        """Check every rule once; returns [(rule, path), ...] for new files.
+
+        A file is only reported after it has stopped changing for the rule's
+        `settle` seconds: the first sighting just arms a timer, and any change
+        of size/mtime restarts that timer (audit F-01).
+        """
         hits: List[tuple] = []
+        active_keys = set()
         for rule in store.rules():
             if not rule.enabled or not rule.folder:
                 continue
-            for path in read_folder(rule.folder, rule.pattern, rule.recursive):
+            for path in read_folder(rule.folder, rule.pattern, rule.recursive, limit=SEEN_LIMIT):
                 key = str(path)
+                active_keys.add(key)
                 try:
-                    mtime = path.stat().st_mtime
-                    size = path.stat().st_size
+                    stat = path.stat()
+                    mtime = stat.st_mtime
+                    size = stat.st_size
                 except OSError:
                     continue
                 if size == 0:
@@ -274,15 +288,26 @@ class Watcher(QObject):
                 if known == mtime:
                     continue
                 # let the file stop growing before acting on it
-                pending_since = self._pending.get(key)
-                if pending_since is None:
-                    self._pending[key] = time.time()
-                elif time.time() - pending_since < max(0.0, rule.settle):
+                pending = self._pending.get(key)
+                now = time.time()
+                if pending is None:
+                    self._pending[key] = (now, size, mtime)
+                    continue
+                pending_since, pending_size, pending_mtime = pending
+                if size != pending_size or mtime != pending_mtime:
+                    # the file is still being written: restart the settle window
+                    self._pending[key] = (now, size, mtime)
+                    continue
+                if now - pending_since < max(0.0, rule.settle):
                     continue
                 self._pending.pop(key, None)
                 self._seen[key] = mtime
                 hits.append((rule, key))
                 self.triggered.emit(rule, key)
+        # pending entries for files that vanished (or whose rule went away)
+        # must not grow without bound
+        for key in [k for k in self._pending if k not in active_keys]:
+            self._pending.pop(key, None)
         if hits:
             self._save_seen()
         return hits
