@@ -17,7 +17,7 @@
   },
   "suites": {
     "smoke": 154,
-    "functional": 642,
+    "functional": 641,
     "output": 112,
     "ui": 1259,
     "security": 57,
@@ -25,7 +25,7 @@
     "persian": 28,
     "packaging": 30
   },
-  "checks": 2338,
+  "checks": 2337,
   "coverage": 75,
   "python": [
     "3.12",

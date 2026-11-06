@@ -194,7 +194,7 @@ ruff check main.py app tests packaging  # lint gate (real-bug rules only)
 Everything runs headless (`QT_QPA_PLATFORM=offscreen`) on Linux, Windows and macOS,
 in CI (`.github/workflows/ci.yml`) on Python 3.12 and 3.13.
 Totals: **154 smoke · 642 functional · 112 output · 1259 UI · 57 security · 56 hardening regressions · 28 persian · 28 packaging
-= 2,338 checks** across **292 tools in 11 categories**. Coverage measures 75%; `pyproject.toml` enforces a 70% `fail_under` gate.
+= 2,337 checks** across **292 tools in 11 categories**. Coverage measures 75%; `pyproject.toml` enforces a 70% `fail_under` gate.
 
 ## Security notes
 
