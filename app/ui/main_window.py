@@ -763,7 +763,7 @@ class MainWindow(QWidget):
         if not getattr(self, "_nav_buttons", None):
             return
         icons = ("chart", "sparkles", "layers", "refresh", "clock")
-        for button, icon in zip(self._nav_buttons, icons):
+        for button, icon in zip(self._nav_buttons, icons, strict=False):   # min-length pairing on purpose
             button.setIcon(_make_icon(icon, QColor(self.palette_ref.text_dim), 34))
 
     def _retranslate_nav_rail(self) -> None:

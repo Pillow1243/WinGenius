@@ -17,7 +17,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple, Union
 from .logger import get_logger
 from .privacy import redact_known, sanitize_values, scrub_text, secret_strings
 from .registry import get as get_tool
-from .spec import Cancelled, RunContext, RunResult, ToolError, ToolSpec
+from .spec import K_DIR, K_FILE, K_FILES, Cancelled, RunContext, RunResult, ToolError, ToolSpec
 
 log = get_logger("execution")
 
@@ -608,6 +608,18 @@ class ExecutionService:
         merged: Dict[str, Any] = spec.defaults()
         if values:
             merged.update(values)
+
+        # Register every file/dir input of this invocation as protected: output
+        # helpers (save_target, …) refuse to write onto them, so a tool can
+        # never overwrite its own source by accident (src == out).
+        protected: List[str] = []
+        for f in spec.fields:
+            if f.kind in (K_FILE, K_FILES):
+                raw = merged.get(f.key)
+                items = raw if isinstance(raw, (list, tuple)) else str(raw or "").split("|")
+                protected.extend(str(p).strip() for p in items if str(p).strip())
+        if protected:
+            run_ctx.protected_inputs = sorted(set(protected) | set(getattr(run_ctx, "protected_inputs", [])))
 
         outer_policy = getattr(run_ctx, "policy", None)
         if policy is None:

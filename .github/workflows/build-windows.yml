@@ -130,6 +130,8 @@ jobs:
                   f"StringStruct('ProductVersion', '{version}.0')")
           rewrite("packaging/installer.iss", r'^#define AppVersion "[^"]+"',
                   f'#define AppVersion "{version}"')
+          # The English TL;DR headline quotes the version; keep it in sync too.
+          rewrite("README.md", r'\*\*WinGenius [0-9][^*]*\*\*', f'**WinGenius {version}**')
 
       - name: Install runtime + build dependencies
         shell: pwsh

@@ -227,7 +227,10 @@ def restore_point(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     icon="broom", order=114, windows_only=True, admin=True, danger=True,
     keywords=("dism", "winsxs", "cleanup", "پاکسازی ویندوز", "فضای دیسک", "کامپوننت"),
     fields=[
-        Field("confirm", K_TEXT, "بنویسید CLEAN برای تأیید", "Type CLEAN to confirm", placeholder="CLEAN"),
+        Field("confirm", K_TEXT, "بنویسید CLEAN برای تأیید", "Type CLEAN to confirm", placeholder="CLEAN",
+              placeholder_en="CLEAN",
+              help="این عملیات بازگشت‌ناپذیر است؛ پاکسازی واقعی فقط با نوشتن CLEAN انجام می‌شود.",
+              help_en="Irreversible; the real cleanup only runs when you type CLEAN."),
         Field("analyze_first", K_BOOL, "اول فقط تحلیل", "Analyse only", default=True),
     ],
 )

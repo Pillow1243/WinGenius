@@ -671,7 +671,9 @@ def _gsub_reverse(data: bytes, tables: Dict[str, Tuple[int, int]], known: Dict[i
                     count = struct.unpack_from(">H", data, sub + 4)[0]
                     if sub + 6 + 2 * count <= end:
                         outs = struct.unpack_from(f">{count}H", data, sub + 6)
-                        singles.extend(zip(coverage, outs))
+                        # coverage/outs come from the same cmap subtable but may
+                        # differ in length on malformed fonts; truncate safely.
+                        singles.extend(zip(coverage, outs, strict=False))
             elif actual_type == 4:
                 _fmt, cov_off, set_count = struct.unpack_from(">HHH", data, sub)
                 coverage = _coverage(data, sub + cov_off)
@@ -1158,7 +1160,7 @@ def _intervals(spans: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
     """Split overlapping cell extents into the finest non-overlapping grid lines."""
     edges = sorted({v for span in spans for v in span})
     out: List[Tuple[float, float]] = []
-    for a, b in zip(edges, edges[1:]):
+    for a, b in zip(edges, edges[1:], strict=False):   # adjacent pairs by design
         if b - a >= 3.0:
             out.append((a, b))
     return out

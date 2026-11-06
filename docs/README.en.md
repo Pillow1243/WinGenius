@@ -181,20 +181,20 @@ tokens that arrive in the query string (`allow_query_token=False`).
 
 ```bash
 python tests/smoke_test.py        # 154 real-file checks
-python tests/functional_test.py   # 638 engine/tool checks (schema, stress, fuzz, guards, CLI, v50, v60flows, v60tools, scale)
-python tests/output_test.py       # 111 output-correctness checks (is the file right?)
+python tests/functional_test.py   # 641 engine/tool checks (schema, stress, fuzz, guards, CLI, v50, v60flows, v60tools, scale)
+python tests/output_test.py       # 112 output-correctness checks (is the file right?)
 python -m pytest tests/persian_pdf_test.py -q   # 28 Persian/RTL PDF engine checks
 python tests/ui_test.py           # 1259 UI checks incl. accessibility, offscreen Qt
 python tests/security_test.py     # 57 security/consistency regression checks
 python -m pytest -q               # all suites through pytest (incl. the 28 persian_pdf tests)
-python packaging/verify_package.py  # 27 build-input checks
+python packaging/verify_package.py  # 30 build-input checks
 ruff check main.py app tests packaging  # lint gate (real-bug rules only)
 ```
 
 Everything runs headless (`QT_QPA_PLATFORM=offscreen`) on Linux, Windows and macOS,
 in CI (`.github/workflows/ci.yml`) on Python 3.12 and 3.13.
-Totals: **154 smoke · 642 functional · 112 output · 1259 UI · 57 security · 56 hardening regressions · 28 persian · 28 packaging
-= 2,337 checks** across **292 tools in 11 categories**. Coverage measures 75%; `pyproject.toml` enforces a 70% `fail_under` gate.
+Totals: **154 smoke · 641 functional · 112 output · 1,259 UI · 57 security · 56 hardening · 28 Persian-PDF · 30 packaging
+= 2,337 checks** across **292 tools in 11 categories**. Coverage is measured by `scripts/quality_gate.py` (real `coverage.py` data); `pyproject.toml` enforces a 70% `fail_under` gate.
 
 ## Security notes
 

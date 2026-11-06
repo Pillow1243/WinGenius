@@ -522,12 +522,18 @@ def test_network(f: dict, ctx_factory) -> None:
     scan = run_tool("port_scan", {"host": "127.0.0.1", "start": 1, "end": 120, "timeout": 120},
                     ctx, expect_output=False)
     record("port_scan", PASS, scan.message)
-    try:
-        dns = run_tool("net_diag", {"host": "example.com", "mode": "dns", "count": 1},
-                       ctx, expect_output=False)
-        record("net_diag(dns)", PASS, dns.message[:70])
-    except ToolError as exc:
-        record("net_diag(dns)", SKIP, f"offline: {exc}")
+    # Live DNS to a public domain is an opt-in integration check, NOT part of
+    # the default smoke suite: with WINGENIUS_LIVE_NET=1 it runs (and may PASS),
+    # otherwise it is a deterministic SKIP so an offline network never fails CI.
+    if os.environ.get("WINGENIUS_LIVE_NET", "").strip() in ("1", "true", "yes", "on"):
+        try:
+            dns = run_tool("net_diag", {"host": "example.com", "mode": "dns", "count": 1},
+                           ctx, expect_output=False)
+            record("net_diag(dns)", PASS, dns.message[:70])
+        except ToolError as exc:
+            record("net_diag(dns)", FAIL, f"live check failed: {exc}")
+    else:
+        record("net_diag(dns)", SKIP, "opt-in live network check (set WINGENIUS_LIVE_NET=1)")
 
 
 def test_windows_only(f: dict, ctx_factory) -> None:

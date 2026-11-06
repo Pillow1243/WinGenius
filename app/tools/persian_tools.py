@@ -93,7 +93,8 @@ def persian_fix(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     text = text.replace("\u06C0", "\u0647\u0654") if "\u06C0" in before and "\u06C0" in text else text
     if v.get("zero_width", True):
         text = re.sub(r"[\u200B\u200D\uFEFF\u2060]", "", text)
-    changed = sum(1 for a, b in zip(before, text) if a != b) + abs(len(before) - len(text))
+    # length difference is intentional (it is added to the change count below)
+    changed = sum(1 for a, b in zip(before, text, strict=False) if a != b) + abs(len(before) - len(text))
     half_spaces = text.count("\u200C") - before.count("\u200C")
     result = _emit(ctx, v, text)
     if half_spaces > 0:

@@ -270,6 +270,16 @@ class ApiServer:
             spec = registry.get(tool_id)
             if spec is None:
                 return 404, {"error": f"unknown tool: {tool_id}"}
+            # Structural validation happens before any policy or tool code runs,
+            # so malformed input gets a structured 400 instead of a tool error.
+            validation_errors = spec.validate_values(values, self.lang)
+            if validation_errors:
+                return 400, {
+                    "ok": False,
+                    "error": "invalid values" if self.lang == "en" else "مقادیر ورودی نامعتبر است",
+                    "code": "invalid_values",
+                    "fields": validation_errors,
+                }
             policy = ExecutionPolicy.for_api(allow_dangerous=self.allow_dangerous, dry_run=dry_run)
             assessment = classify_invocation(spec, values)
             if not policy.allows(assessment.risk):

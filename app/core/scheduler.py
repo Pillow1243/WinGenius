@@ -83,7 +83,7 @@ def parse_cron(expr: str) -> Dict[str, set]:
     if len(parts) != 5:
         raise CronError("need exactly 5 fields: minute hour day month weekday")
     parsed = {}
-    for index, (part, (low, high)) in enumerate(zip(parts, LIMITS)):
+    for index, (part, (low, high)) in enumerate(zip(parts, LIMITS, strict=True)):  # len(parts)==5 checked above
         label = FIELD_NAMES_EN[index]
         parsed[label] = _parse_field(part, low, high, label)
     return parsed

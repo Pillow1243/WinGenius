@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import ctypes
-import subprocess
 import sys
 from pathlib import Path
 
@@ -64,13 +63,6 @@ def open_with_shell(target: str) -> None:
     from .launcher import open_target
 
     open_target(target)
-
-
-def start_hidden(cmd: str) -> subprocess.Popen:
-    kwargs = {}
-    if IS_WINDOWS:
-        kwargs["creationflags"] = 0x08000000
-    return subprocess.Popen(cmd, shell=True, **kwargs)
 
 
 def screen_size() -> tuple[int, int]:

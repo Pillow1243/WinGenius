@@ -111,6 +111,8 @@ def windows_applets(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
                        ("logoff", "خروج از حساب", "Sign out"),
                        ("cancel", "لغو تایمر خاموشی", "Cancel pending shutdown")]),
         Field("delay", K_INT, "تأخیر (ثانیه)", "Delay (seconds)", default=0, minimum=0, maximum=3600,
+              help="صفر یعنی فوراً؛ مثلاً ۶۰ یعنی پس از یک دقیقه.",
+              help_en="0 means immediately; e.g. 60 runs the action after one minute.",
               visible_when=("action", ("shutdown", "restart", "logoff"))),
     ],
 )

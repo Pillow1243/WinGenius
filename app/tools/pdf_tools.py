@@ -13,8 +13,8 @@ from ..core.spec import (
 )
 from ..core.utils import human_size, unique_path
 from ._helpers import (
-    ensure_dir, files_or_raise, first_file, fmt_out_message, need_windows, out_dir,
-    page_ranges, require, save_target,
+    atomic_write_bytes, ensure_dir, files_or_raise, first_file, fmt_out_message,
+    need_windows, out_dir, page_ranges, require, same_file, save_target,
 )
 
 PDF_FILTER = "PDF (*.pdf);;همه فایلها (*)"
@@ -514,11 +514,17 @@ def pdf_rotate(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
             page.rotate(angle)
         ctx.progress(index, total, "")
     dest = save_target(ctx, v.get("out", ""), f"{src.stem}_rotated.pdf")
+    if same_file(dest, src):
+        raise ToolError(ctx.M(
+            "مسیر خروجی با فایل PDF ورودی یکی است؛ فایل اصلی بازنویسی نمی‌شود.",
+            "The output path is the same file as the source PDF; the original is never overwritten.",
+        ))
     writer = pypdf.PdfWriter()
     for page in reader.pages:
         writer.add_page(page)
-    with open(dest, "wb") as fh:
-        writer.write(fh)
+    out_buffer = io.BytesIO()
+    writer.write(out_buffer)
+    atomic_write_bytes(dest, out_buffer.getvalue())
     return RunResult(
         message=ctx.M(f"{len(targets)} صفحه چرخانده شد.", f"{len(targets)} page(s) rotated."),
         outputs=[str(dest)], open_target=str(dest),

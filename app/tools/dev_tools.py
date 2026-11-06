@@ -318,7 +318,7 @@ def cron_parse(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
         return sorted(set(values))
 
     expanded: List[List[int]] = []
-    for field_text, (low, high) in zip(fields, ranges):
+    for field_text, (low, high) in zip(fields, ranges, strict=True):   # len(fields)==5 checked above
         values = expand(field_text, low, high)
         if values is None:
             raise ToolError(ctx.M(f"بخش «{field_text}» معتبر نیست.", f"The field '{field_text}' is invalid."))

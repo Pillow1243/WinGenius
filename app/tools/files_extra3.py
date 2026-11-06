@@ -1,6 +1,7 @@
 """File extras: AES-encrypted ZIP archives and long-path auditing for Windows."""
 from __future__ import annotations
 
+import os
 import stat
 import zipfile
 from pathlib import Path
@@ -168,9 +169,15 @@ def archive_decrypt(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
                 target.mkdir(parents=True, exist_ok=True)
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)
+            if target.exists():
+                # Never overwrite an existing file: extract under a unique name.
+                unique = unique_path(target)
+                skipped.append(f"{name} → {unique.name} (already exists)")
+                target = unique
             key = password.encode("utf-8") if password else None
+            tmp = target.with_name(target.name + f".part-{os.getpid()}")
             try:
-                with archive.open(info, pwd=key) as handle, target.open("wb") as out_handle:
+                with archive.open(info, pwd=key) as handle, open(tmp, "wb") as out_handle:
                     while True:
                         chunk = handle.read(1 << 20)
                         if not chunk:
@@ -182,8 +189,12 @@ def archive_decrypt(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
                                 "Uncompressed archive size exceeded the 2 GiB safety limit.",
                             ))
                         out_handle.write(chunk)
+                os.replace(tmp, target)          # atomic: no half-written files
             except ToolError:
-                target.unlink(missing_ok=True)
+                tmp.unlink(missing_ok=True)
+                raise
+            except BaseException:
+                tmp.unlink(missing_ok=True)
                 raise
             except RuntimeError as exc:
                 if "password" in str(exc).lower() or "encrypted" in str(exc).lower():

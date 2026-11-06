@@ -199,7 +199,8 @@ def table_convert(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
             writer.writerow(headers)
             writer.writerows(rows)
     else:
-        payload = [dict(zip(headers, [_cell(value) for value in row])) for row in rows]
+        # rows may be longer than headers; extra cells are dropped on purpose.
+        payload = [dict(zip(headers, [_cell(value) for value in row], strict=False)) for row in rows]
         dest.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return RunResult(message=ctx.M(f"{len(rows)} سطر تبدیل شد.", f"{len(rows)} row(s) converted."),
                      outputs=[str(dest)], open_target=str(dest))

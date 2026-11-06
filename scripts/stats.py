@@ -72,6 +72,34 @@ def collect(diagnostics: dict | None = None) -> dict:
     return counts
 
 
+def measured_coverage():
+    """Return the real line-coverage percent from coverage.py data, or None.
+
+    `scripts/quality_gate.py` runs the suites under `coverage run`; when that
+    data exists we report it.  When it does not (lint-only job, fresh clone)
+    we report null instead of inventing a number.
+    """
+    try:
+        import coverage
+
+        cov = coverage.Coverage(data_file=str(ROOT / ".coverage"))
+        cov.load()
+        files = list(cov.get_data().measured_files())
+        if not files:
+            return None
+        total = covered = 0
+        for fname in files:
+            try:
+                _f, statements, _excl, missing, _fmt = cov.analysis2(fname)
+            except Exception:
+                continue
+            total += len(statements)
+            covered += len(statements) - len(missing)
+        return int(round(100.0 * covered / total)) if total else None
+    except Exception:
+        return None
+
+
 def static_tool_count() -> int:
     """Count declared tools without importing Qt or any third-party package."""
     return sum(len(_TOOL_DECORATOR.findall(path.read_text(encoding="utf-8")))
@@ -120,7 +148,9 @@ def run() -> int:
         "category_counts": by_category,
         "suites": counts,
         "checks": sum(counts.values()),
-        "coverage": 75,
+        # Never a hand-copied constant: read the real coverage.py data when the
+        # quality gate produced it, otherwise report null ("not measured").
+        "coverage": measured_coverage(),
         "python": ["3.12", "3.13"],
         "notes": ("Single source of truth for the numbers quoted in README, docs and the "
                   "showcase. Regenerate with: python scripts/stats.py --run"),

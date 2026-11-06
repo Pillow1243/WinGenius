@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: WinGenius Local API
-  version: 6.0.0
+  version: 7.1.0
   summary: Loopback JSON API exposed by `WinGenius.exe --serve`.
   description: |
     The server binds to `127.0.0.1` only and requires a token in the
@@ -12,8 +12,10 @@ info:
     prevent DNS rebinding. Requests are rate-limited (300/min per IP by default)
     and bodies larger than 1 MiB get a real `413`.
 
-    This API can run **any** registered tool, including destructive ones. Treat
-    the token as a local administrator credential and never expose the port.
+    By default the API policy only runs SAFE tools; destructive or
+    confirmation-gated tools are rejected with HTTP 403 unless the server was
+    started with `--allow-dangerous`. Treat the token as a local administrator
+    credential and never expose the port.
   license:
     name: AGPL-3.0-or-later
     identifier: AGPL-3.0-or-later
@@ -45,9 +47,9 @@ paths:
                 required: [app, version, status, tools, uptime, guard]
                 properties:
                   app: { type: string, example: WinGenius }
-                  version: { type: string, example: "6.0.0" }
+                  version: { type: string, example: "7.1.0" }
                   status: { type: string, example: ok }
-                  tools: { type: integer, example: 254 }
+                  tools: { type: integer, example: 292 }
                   uptime: { type: number, example: 12.4 }
                   guard:
                     type: object
@@ -176,6 +178,10 @@ paths:
               properties:
                 tool: { type: string, example: uuid_generate }
                 values: { type: object, additionalProperties: true, default: {} }
+                dry_run:
+                  type: boolean
+                  default: false
+                  description: Simulate the run (read-only preview); never executes the tool.
       responses:
         "200":
           description: Tool finished (check `ok`)
@@ -282,6 +288,7 @@ components:
       properties:
         ok: { type: boolean }
         tool: { type: string }
+        risk: { type: string, enum: [safe, confirm, destructive, elevated] }
         message: { type: string }
         outputs: { type: array, items: { type: string } }
         details: { type: string }
