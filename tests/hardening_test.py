@@ -660,18 +660,25 @@ def test_v71_crypto_wga1_enforced_and_secret_redaction(tmp_path, monkeypatch):
     assert "0 ok" in ver.message and "2 modified" in ver.message
 
 
-def test_v71_xss_qr_curl_indexer_and_persian_save(tmp_path):
+def test_v71_xss_qr_curl_indexer_and_persian_save(tmp_path, monkeypatch):
     from app.core import indexer
 
     registry.load_all()
     ctx = RunContext(lang="en", output_dir=str(tmp_path))
 
     # 1. markdown_to_html escapes <title> derived from file stem
-    evil_md = tmp_path / '<img src=x onerror="alert(1)">.md'
+    # Windows forbids angle brackets in filenames. Emulate a hostile stem at
+    # the path boundary so the same escaping is exercised on every platform.
+    evil_md = tmp_path / "input.md"
     evil_md.write_text("# Safe Heading\n", encoding="utf-8")
-    html_res = registry.get("markdown_to_html").run(
-        ctx, {"file": str(evil_md), "styled": False, "out": str(tmp_path / "out.html")}
-    )
+    path_type = type(evil_md)
+    original_stem = path_type.stem.fget
+    with monkeypatch.context() as patch:
+        patch.setattr(path_type, "stem", property(
+            lambda p: '<img src=x onerror="alert(1)">' if p == evil_md else original_stem(p)))
+        html_res = registry.get("markdown_to_html").run(
+            ctx, {"file": str(evil_md), "styled": False, "out": str(tmp_path / "out.html")}
+        )
     rendered = Path(html_res.outputs[0]).read_text(encoding="utf-8")
     assert "<title>&lt;img src=x onerror=&quot;alert(1)&quot;&gt;</title>" in rendered
 
@@ -949,11 +956,16 @@ def test_v71_update_offline_network_drop_and_cancel(tmp_path):
             httpd.shutdown()
 
 
-def test_v71_update_cryptographic_manifest_and_tamper_detection(tmp_path):
+def test_v71_update_cryptographic_manifest_and_tamper_detection(tmp_path, monkeypatch):
     import hashlib
     import http.server
     import socketserver
     from app.core import updates
+
+    # Synthetic PE is not a real signed Windows executable; test Ed25519
+    # verification independently, and inject a separate bad signature below.
+    monkeypatch.setattr(updates, "verify_authenticode", lambda _path: updates.AuthenticodeResult(
+        checked=True, signed=False, valid=False, status="NotSigned"))
 
     kp = updates.generate_signing_keypair("test-key-2026")
     trusted = {"test-key-2026": kp["public_key_b64"]}
@@ -1317,8 +1329,8 @@ def test_v71_update_non_blocking_gui_banner_changelog_and_confirmation(tmp_path,
             trust_summary_en="Cryptographically verified",
         ),
     )
+    # This is a direct synchronous slot call, not a queued worker signal.
     dlg._on_download_verified(verified_pkg)
-    app.processEvents()
     assert dlg._install_btn.isEnabled() is True
     assert exe_sha in dlg._trust_lbl.text()
 
