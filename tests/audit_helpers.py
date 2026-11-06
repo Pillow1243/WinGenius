@@ -9,7 +9,6 @@ class _HeaderServer(threading.Thread):
     """Tiny HTTP server returning configurable headers; counts requests."""
 
     def __init__(self, headers, methods=("GET", "HEAD")):
-        import http.server
 
         self.counts = {"GET": 0, "HEAD": 0}
         self._headers = headers
