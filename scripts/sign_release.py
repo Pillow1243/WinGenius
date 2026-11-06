@@ -28,6 +28,7 @@ from app.core.updates import (  # noqa: E402
     MANIFEST_FILENAME,
     build_release_manifest,
     generate_signing_keypair,
+    signing_key_matches_keyring,
     verify_release_manifest,
 )
 
@@ -62,6 +63,15 @@ def main() -> int:
         tag = args.tag.strip() or f"v{version}"
         priv_key = os.environ.get("WINGENIUS_UPDATE_SIGNING_KEY", "").strip()
         key_id = os.environ.get("WINGENIUS_UPDATE_KEY_ID", args.key_id).strip() or args.key_id
+        if priv_key:
+            # audit F-05: signing with a key the binary does not trust would
+            # produce a release that every user's updater rejects
+            pairing_ok, pairing_why = signing_key_matches_keyring(priv_key)
+            if not pairing_ok:
+                print(f"error: update signing key cannot be verified by this build: {pairing_why}\n"
+                      "       pin the matching public key in app/core/updates.py first "
+                      "(BLOCKED-NEEDS-OWNER until then)", file=sys.stderr)
+                return 2
         files = sorted(p for p in rel_dir.iterdir() if p.is_file() and p.name != MANIFEST_FILENAME)
         manifest = build_release_manifest(
             version=version,

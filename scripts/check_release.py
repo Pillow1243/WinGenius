@@ -21,6 +21,7 @@ No PyYAML, no network, no Qt: stdlib only, so the lint job can run it.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -285,6 +286,15 @@ def check_trust_store() -> list[str]:
     except Exception as exc:
         return [f"update trust store unreadable: {exc}"]
     status = keyring_status()
+    signing_key = os.environ.get("WINGENIUS_UPDATE_SIGNING_KEY", "").strip()
+    if signing_key:
+        # audit F-05: CI must prove the key it signs with is the key builds trust
+        from app.core.updates import signing_key_matches_keyring
+
+        pairing_ok, why = signing_key_matches_keyring(signing_key)
+        if not pairing_ok:
+            return [f"BLOCKED-NEEDS-OWNER: update signing key cannot be verified by "
+                    f"any shipped build ({why})."]
     if status["ready"]:
         return []
     return ["BLOCKED-NEEDS-OWNER: release trust store is not ready ("
