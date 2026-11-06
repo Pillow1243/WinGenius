@@ -246,10 +246,22 @@ class JobManager(QObject):
     def resumable(self) -> List["Job"]:
         return [job for job in self.jobs() if job.status == QUEUED and job.paused]
 
+    def waiting_secrets(self) -> List["Job"]:
+        """Restored jobs that cannot run until their secret inputs are re-entered."""
+        return [job for job in self.resumable() if job.needs_secrets]
+
     def resume_pending(self) -> int:
-        """Start the jobs restored from disk. Returns how many were resumed."""
+        """Start the jobs restored from disk. Returns how many were resumed.
+
+        Jobs flagged `needs_secrets` stay paused (audit F-06): their passwords
+        were deliberately dropped from queue.json, so they wait until the user
+        re-supplies them via `provide_secrets()`.
+        """
         resumed = 0
         for job in self.resumable():
+            if job.needs_secrets:
+                log.info("job %s waits for its secret inputs", job.tool_id)
+                continue
             job.paused = False
             resumed += 1
             self.jobUpdated.emit(job)
@@ -259,6 +271,30 @@ class JobManager(QObject):
             self.changed.emit()
             self._pump()
         return resumed
+
+    def provide_secrets(self, job_id: str, values: Dict[str, Any]) -> bool:
+        """Merge freshly entered secret values into a waiting job and resume it.
+
+        Only keys that are actually sensitive for this tool are accepted; the
+        merged values live in memory only and are scrubbed again when the job
+        finishes. Returns False when the job does not exist or still waits.
+        """
+        job = self._jobs.get(job_id)
+        if job is None or not job.paused or not job.needs_secrets:
+            return False
+        spec = get_tool(job.tool_id)
+        allowed = {key for key in (values or {})
+                   if spec is None or is_sensitive(str(key), job.tool_id)}
+        for key in allowed:
+            job.values[str(key)] = values[key]
+        job.needs_secrets = False
+        job.paused = False
+        log.info("secret inputs re-supplied for job %s", job.tool_id)
+        self._save()
+        self.jobUpdated.emit(job)
+        self.changed.emit()
+        self._pump()
+        return True
 
     # ------------------------------------------------------------------ config
     def configure(self, lang: str, output_dir: str) -> None:
@@ -393,6 +429,12 @@ class JobManager(QObject):
             job.message = message
             self.jobUpdated.emit(job)
 
+    @staticmethod
+    def _scrub_secrets(job: "Job") -> None:
+        """Drop sensitive values from the in-memory job once it is finished."""
+        for key in [k for k in (job.values or {}) if is_sensitive(str(k), job.tool_id)]:
+            job.values[key] = ""
+
     def _on_success(self, job_id: str, result: RunResult) -> None:
         job = self._jobs.get(job_id)
         if job is None:
@@ -402,6 +444,7 @@ class JobManager(QObject):
         job.outputs = list(result.outputs or [])
         job.message = result.message
         job.finished = time.time()
+        self._scrub_secrets(job)
         history.add(job)
         self._save()
         self.jobFinished.emit(job)
@@ -428,6 +471,7 @@ class JobManager(QObject):
             return
         job.status = CANCELLED
         job.finished = time.time()
+        self._scrub_secrets(job)
         self._save()
         self.jobFinished.emit(job)
         self.jobUpdated.emit(job)

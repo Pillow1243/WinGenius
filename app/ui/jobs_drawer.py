@@ -307,6 +307,10 @@ class JobsDrawer(QWidget):
     def _resume_queue(self) -> None:
         if self.manager is not None:
             self.manager.resume_pending()
+            # audit F-06: jobs whose secrets were dropped from disk stay paused;
+            # open their tool form so the user can re-enter the password and run.
+            for job in self.manager.waiting_secrets():
+                self.openToolRequested.emit(job.tool_id, dict(job.values or {}))
         self.refresh()
 
     def _clear_finished(self) -> None:
