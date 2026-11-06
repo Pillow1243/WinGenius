@@ -344,12 +344,26 @@ def site_check(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
         if not url.lower().startswith("http"):
             url = "https://" + url
         started = time.time()
+        # audit F-17: try HEAD first (no body download); fall back to a single
+        # GET only when the server does not support HEAD (405/501)
+        status = None
         try:
-            with requests.get(url, timeout=15, allow_redirects=True, stream=True,
-                              headers={"User-Agent": "WinGenius/1.0"}) as response:
+            with requests.head(url, timeout=15, allow_redirects=True,
+                               headers={"User-Agent": "WinGenius/1.0"}) as response:
+                status = response.status_code
+                if status in (405, 501):
+                    status = None                  # server cannot do HEAD
+        except Exception:
+            status = None                          # any HEAD failure → try GET once
+        if status is None:
+            try:
+                with requests.get(url, timeout=15, allow_redirects=True, stream=True,
+                                  headers={"User-Agent": "WinGenius/1.0"}) as response:
+                    status = response.status_code
+            except Exception as exc:
                 elapsed = (time.time() - started) * 1000
-                rows.append(f"{response.status_code}  {elapsed:7.0f} ms  {url}")
-        except Exception as exc:
-            elapsed = (time.time() - started) * 1000
-            rows.append(f"{'ERR':>3}  {elapsed:7.0f} ms  {url}  ({type(exc).__name__}: {exc})")
+                rows.append(f"{'ERR':>3}  {elapsed:7.0f} ms  {url}  ({type(exc).__name__}: {exc})")
+                continue
+        elapsed = (time.time() - started) * 1000
+        rows.append(f"{status}  {elapsed:7.0f} ms  {url}")
     return RunResult(message=ctx.M("وضعیت سایت‌ها", "Site status"), details="\n".join(rows))

@@ -511,6 +511,16 @@ def classify_invocation(
             "Reads saved cleartext Wi-Fi credentials from the OS",
         )
 
+    if tid == "download_file" and not _truthy(merged.get("verify", True)):
+        # audit F-17: disabling TLS verification is a higher-risk invocation;
+        # API/automation callers without confirmation cannot do it (default
+        # verify=True is unchanged)
+        return RiskAssessment(
+            tid, OperationRisk.CONFIRM,
+            "غیرفعال‌سازی راستی‌آزمایی گواهی TLS در دانلود — خطر حمله میانی (MITM)",
+            "Disables TLS certificate verification for the download — MITM risk",
+        )
+
     if tid == "bitlocker_status":
         if action == "recovery":
             return RiskAssessment(
