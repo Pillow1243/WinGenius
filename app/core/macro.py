@@ -27,12 +27,14 @@ from __future__ import annotations
 
 import json
 import shutil
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from .paths import data_dir
+from .spec import Cancelled
 from .utils import ensure_dir, unique_path
 
 STEP_TYPES = ("run", "foreach", "if", "set", "log", "copy", "move", "delete",
@@ -222,11 +224,12 @@ class MacroRunner:
                  on_log: Optional[Callable[[str], None]] = None,
                  on_progress: Optional[Callable[[int, int], None]] = None,
                  journal_enabled: bool = True,
-                 policy: Any = None) -> None:
+                 policy: Any = None, cancel_event: Optional[threading.Event] = None) -> None:
         self.lang = "en" if lang == "en" else "fa"
         self.output_dir = output_dir
         self.dry_run = dry_run
         self.policy = policy
+        self._cancel = cancel_event or threading.Event()
         self._run_tool = run_tool or self._default_run_tool
         self._on_log = on_log
         self._on_progress = on_progress
@@ -249,10 +252,17 @@ class MacroRunner:
             except Exception:
                 pass
 
+    def _check_cancel(self) -> None:
+        if self._cancel.is_set():
+            raise Cancelled(self.M("عملیات لغو شد.", "Operation cancelled."))
+
     def _progress(self, current: int, total: int = 0) -> None:
+        self._check_cancel()
         if self._on_progress:
             try:
                 self._on_progress(current, total)
+            except Cancelled:
+                raise
             except Exception:
                 pass
 
@@ -266,7 +276,7 @@ class MacroRunner:
             raise MacroError(self.M(f"ابزار «{tool_id}» پیدا نشد.", f"tool '{tool_id}' not found"))
         ctx = RunContext(lang=self.lang, output_dir=self.output_dir,
                          on_message=lambda text: self._log(str(text)),
-                         policy=self.policy)
+                         cancel_event=self._cancel, policy=self.policy)
         return execution_service.execute(spec, dict(args), ctx, policy=self.policy)
 
     @staticmethod
@@ -382,7 +392,7 @@ class MacroRunner:
         except Exception as exc:                       # noqa: BLE001 - report, never crash
             from .execution import PolicyDeniedError
 
-            if isinstance(exc, PolicyDeniedError):
+            if isinstance(exc, (PolicyDeniedError, Cancelled)):
                 raise
             self.result.errors.append(f"{type(exc).__name__}: {exc}")
 
@@ -447,7 +457,8 @@ class MacroRunner:
             elif kind == "sleep":
                 seconds = float(step.get("seconds", 0) or 0)
                 if not self.dry_run and seconds > 0:
-                    time.sleep(min(seconds, 30))
+                    self._cancel.wait(min(seconds, 30))
+                    self._check_cancel()
             elif kind == "when_error":
                 self.on_error = str(step.get("action", "stop")).lower()
             else:
@@ -468,7 +479,7 @@ class MacroRunner:
         except Exception as exc:                       # tool errors should not kill the macro
             from .execution import PolicyDeniedError
 
-            if isinstance(exc, PolicyDeniedError):
+            if isinstance(exc, (PolicyDeniedError, Cancelled)):
                 raise
             message = f"{tool_id}: {exc}"
             self.result.errors.append(message)
@@ -502,6 +513,7 @@ class MacroRunner:
         unique = unique[:limit]
         self._log(self.M(f"{len(unique)} مورد برای «{pattern}»", f"{len(unique)} item(s) for '{pattern}'"))
         for item in unique:
+            self._check_cancel()
             self.variables[name] = str(item)
             self.variables["item"] = str(item)
             self._execute_steps(step.get("steps", []) or [], depth + 1)

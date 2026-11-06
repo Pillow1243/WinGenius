@@ -448,3 +448,45 @@ def test_flow_uses_frozen_content_after_approval(tmp_path):
                  policy=ExecutionPolicy.for_api())
     assert file.exists()
     assert not (folder / "new_01.txt").exists()
+
+
+def test_macro_cancel_interrupts_sleep_and_prevents_following_step(tmp_path):
+    import threading
+    from app.core.execution import ExecutionPolicy
+    from app.core.macro import MacroRunner
+    from app.core.spec import Cancelled
+
+    cancelled = threading.Event()
+    timer = threading.Timer(0.2, cancelled.set)
+    target = tmp_path / "must-not-exist"
+    runner = MacroRunner(policy=ExecutionPolicy.for_gui(), cancel_event=cancelled)
+    timer.start()
+    started = time.monotonic()
+    try:
+        with pytest.raises(Cancelled):
+            runner.execute({"steps": [{"type": "sleep", "seconds": 20},
+                                      {"type": "write", "path": str(target), "text": "bad"}]})
+    finally:
+        timer.cancel()
+    assert time.monotonic() - started < 4
+    assert not target.exists()
+
+
+def test_macro_cancel_propagates_into_nested_tool(monkeypatch):
+    import threading
+    from app.core import registry
+    from app.core.execution import ExecutionPolicy
+    from app.core.macro import MacroRunner
+    from app.core.spec import Cancelled, RunResult, ToolSpec
+
+    cancelled = threading.Event()
+    def run(ctx, _values):
+        cancelled.set()
+        ctx.check_cancel()
+        return RunResult()
+    spec = ToolSpec(id="audit_cancel", category="dev", name="cancel", name_en="cancel", run=run)
+    monkeypatch.setitem(registry._TOOLS, spec.id, spec)
+    runner = MacroRunner(policy=ExecutionPolicy.for_api(), cancel_event=cancelled)
+    with pytest.raises(Cancelled):
+        runner.execute({"steps": [{"type": "when_error", "action": "continue"},
+                                  {"type": "run", "tool": spec.id}]})

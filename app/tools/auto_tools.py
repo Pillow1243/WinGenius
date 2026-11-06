@@ -140,6 +140,7 @@ def macro_run(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     runner = macro_module.MacroRunner(lang=ctx.lang, output_dir=str(macro_output),
                                       dry_run=dry_run,
                                       policy=getattr(ctx, "policy", None),
+                                      cancel_event=ctx._cancel,
                                       on_log=lambda message: ctx.log(message),
                                       on_progress=lambda current, total: ctx.progress(current, total))
     result = runner.execute(macro, variables)
