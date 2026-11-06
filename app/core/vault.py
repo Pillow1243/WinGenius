@@ -67,6 +67,15 @@ MAX_SCRYPT_WORK = (1 << 17) * 8 * 4
 SALT_LEN = 16
 NONCE_LEN = 12
 
+#: Size caps (audit F-11). The container is read/written as one in-memory blob
+#: (JSON + base64 ≈ 4/3× the plaintext), so both a per-file cap and a total cap
+#: are enforced *before* the file is read, to keep memory bounded. These are
+#: constants on purpose; they are not a format change and old vaults still open.
+MAX_ENTRY_BYTES = 64 * 1024 * 1024          # 64 MiB per file
+MAX_VAULT_BYTES = 512 * 1024 * 1024         # 512 MiB total plaintext per vault
+#: base64 + JSON + AES-GCM overhead on top of the plaintext total
+CONTAINER_OVERHEAD_FACTOR = 1.5
+
 V1_AAD = MAGIC_V1
 V2_AAD_PREFIX = b"WinGenius vault v2|"
 
@@ -427,6 +436,23 @@ class Vault:
         if not self.unlocked():
             self.unlock()
         items = [Path(item) for item in files]
+        # audit F-11: enforce the caps *before* reading anything into memory
+        current_total = sum(int(entry.get("size", 0)) for entry in self.entries())
+        for path in items:
+            if not path.is_file():
+                continue
+            size = path.stat().st_size
+            if size > MAX_ENTRY_BYTES:
+                raise VaultError(
+                    f"فایل «{path.name}» بزرگ‌تر از سقف مجاز ({human_size(MAX_ENTRY_BYTES)}) است و "
+                    f"قبل از خواندن رد شد.\n"
+                    f"File '{path.name}' exceeds the {human_size(MAX_ENTRY_BYTES)} per-file limit "
+                    f"and was rejected before reading.")
+            if current_total + size > MAX_VAULT_BYTES:
+                raise VaultError(
+                    f"مجموع محتوای گاوصندوق از سقف مجاز ({human_size(MAX_VAULT_BYTES)}) می‌گذرد.\n"
+                    f"Total vault content would exceed the {human_size(MAX_VAULT_BYTES)} limit.")
+            current_total += size
         added: List[str] = []
         for path in items:
             if not path.is_file():
