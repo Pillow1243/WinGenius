@@ -16,14 +16,24 @@
     "flow": 6
   },
   "suites": {
-    "smoke": 154,
     "functional": 641,
-    "output": 112,
-    "ui": 1259,
-    "security": 57,
     "hardening": 56,
+    "output": 112,
+    "packaging": 30,
     "persian": 28,
-    "packaging": 30
+    "security": 57,
+    "smoke": 154,
+    "ui": 1259
+  },
+  "skips": {
+    "functional": 1,
+    "hardening": 0,
+    "output": 1,
+    "packaging": 0,
+    "persian": 0,
+    "security": 0,
+    "smoke": 1,
+    "ui": 0
   },
   "checks": 2337,
   "coverage": null,
@@ -31,5 +41,8 @@
     "3.12",
     "3.13"
   ],
-  "notes": "Single source of truth for the numbers quoted in README, docs and the showcase. Regenerate with: python scripts/stats.py --run"
+  "notes": "Single source of truth for the numbers quoted in README, docs and the showcase. Regenerate with: python scripts/stats.py --run. A suite's number counts every check it reaches: PASS + SKIP.",
+  "unmeasured": [
+    "ui"
+  ]
 }
