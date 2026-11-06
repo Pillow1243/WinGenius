@@ -187,8 +187,10 @@ def vault_extract(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
 @tool(
     id="vault_remove", category="security", name="حذف از گاوصندوق", name_en="Remove from vault",
     danger=True,
-    desc="یک یا چند مورد را از گاوصندوق حذف می‌کند (بدون امکان بازگردانی).",
-    desc_en="Deletes one or more entries from the vault (not recoverable).",
+    desc="یک یا چند مورد را از گاوصندوق حذف می‌کند؛ یک نسخه‌ی پشتیبان در ژورنال نگه می‌دارد "
+         "تا «واگرد» بتواند برگرداند.",
+    desc_en="Deletes entries from the vault, keeping a backup in the journal so "
+            "Undo can bring them back.",
     icon="trash", order=45, keywords=("vault", "remove", "گاوصندوق", "حذف"),
     fields=[
         Field("vault", K_TEXT, "فایل گاوصندوق", "Vault file", required=True, filt="WinGenius Vault (*.wgv)"),
@@ -197,6 +199,8 @@ def vault_extract(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     ],
 )
 def vault_remove(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
+    from ..core.journal import journal
+
     vault = _vault(v, ctx)
     try:
         vault.unlock()
@@ -204,9 +208,37 @@ def vault_remove(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
         raise _friendly(ctx, exc) from exc
     names = [item.strip() for item in str(v.get("names") or "").replace("،", ",").split(",")
              if item.strip()]
-    removed = vault.remove(names)
-    return RunResult(message=ctx.M(f"{removed} مورد حذف شد.", f"{removed} entry(ies) removed."),
-                     outputs=[str(vault.path)])
+    if not names:
+        raise ToolError(ctx.M("نام موردی را که باید حذف شود بنویسید.",
+                              "Type the name of the entry to remove."))
+    known = set(vault.names())
+    wanted = [name for name in names if name in known]
+    missing = [name for name in names if name not in known]
+    if not wanted:
+        raise ToolError(ctx.M(f"چنین موردی در گاوصندوق نیست: {'، '.join(missing)}",
+                              f"No such entry in the vault: {', '.join(missing)}"))
+    # Snapshot the .wgv container *before* touching it: undoing this operation
+    # restores the file, so a typo in the name list is no longer permanent.
+    undo_id = journal().record_file_backup(
+        vault.path,
+        f"حذف {len(wanted)} مورد از گاوصندوق",
+        f"removed {len(wanted)} vault entry(ies)",
+        tool_id="vault_remove",
+    )
+    removed = vault.remove(wanted)
+    if undo_id:
+        undo_note = ctx.M("\nبا «واگرد» قابل بازگردانی است.",
+                          "\nCan be undone with Undo.")
+    else:
+        undo_note = ctx.M("\n(گاوصندوق بزرگ‌تر از حد پشتیبان بود؛ این حذف برگشت‌پذیر نیست.)",
+                          "\n(vault was too large to back up; this deletion is not reversible.)")
+    missing_note = ""
+    if missing:
+        missing_note = ctx.M(f"\nپیدا نشد: {'، '.join(missing)}",
+                             f"\nnot found: {', '.join(missing)}")
+    return RunResult(
+        message=ctx.M(f"{removed} مورد حذف شد.", f"{removed} entry(ies) removed.") + undo_note + missing_note,
+        outputs=[str(vault.path)])
 
 
 @tool(

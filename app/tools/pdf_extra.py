@@ -11,8 +11,10 @@ from ..core.spec import (
     K_BOOL, K_CHOICE, K_DIR, K_FILE, K_FILES, K_FLOAT, K_INT, K_SAVE, K_TEXT,
     Field, RunContext, RunResult, ToolError,
 )
-from ..core.utils import human_size, parse_ranges, unique_path
-from ._helpers import ensure_dir, first_file, fmt_out_message, out_dir, require, save_target
+from ..core.utils import human_size, unique_path
+from ._helpers import (
+    ensure_dir, first_file, fmt_out_message, out_dir, page_ranges, require, save_target,
+)
 from .pdf_tools import PDF_FILTER, _fitz, _open_doc, _open_reader, _pypdf
 
 
@@ -41,7 +43,7 @@ def pdf_delete_pages(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     src = first_file(v, "src", ctx)
     reader = _open_reader(ctx, src)
     total = len(reader.pages)
-    drop = set(parse_ranges(str(v.get("pages") or ""), total))
+    drop = set(page_ranges(ctx, str(v.get("pages") or ""), total))
     if not drop:
         raise ToolError(ctx.M("شماره‌ی صفحه‌ی معتبری وارد نشد.", "No valid page numbers given."))
     if len(drop) >= total:
@@ -85,7 +87,7 @@ def pdf_reorder_pages(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     src = first_file(v, "src", ctx)
     reader = _open_reader(ctx, src)
     total = len(reader.pages)
-    order = parse_ranges(str(v.get("order") or ""), total)
+    order = page_ranges(ctx, str(v.get("order") or ""), total)
     if not order:
         raise ToolError(ctx.M("الگوی ترتیب خالی است.", "The order pattern is empty."))
     pypdf = _pypdf(ctx)

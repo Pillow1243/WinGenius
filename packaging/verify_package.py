@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PACKAGING = ROOT / "packaging"
 
 problems: list[str] = []
+warnings: list[str] = []
 checks = 0
 
 
@@ -30,6 +31,16 @@ def check(name: str, condition: bool, detail: str = "") -> None:
     else:
         problems.append(f"{name} — {detail}")
         print(f"  FAIL {name}  {detail}")
+
+
+def warn(name: str, detail: str = "") -> None:
+    """A release blocker that must not fail a developer's local run.
+
+    Deliberately not counted as a check: the recorded number in docs/stats.json
+    must keep meaning "assertions that were verified".
+    """
+    warnings.append(f"{name} — {detail}")
+    print(f"  WARN {name}  {detail}")
 
 
 def read(path: Path) -> str:
@@ -99,15 +110,39 @@ def main() -> int:
     check("requirements.txt is present", (ROOT / "requirements.txt").exists(), "missing")
     check("requirements-build.txt is present", (ROOT / "requirements-build.txt").exists(), "missing")
 
+    # --------------------------------------------------- update trust store (B3)
+    sys.path.insert(0, str(ROOT))
+    try:
+        from app.core.updates import keyring_status
+    except Exception as exc:                       # pragma: no cover
+        check("update trust store is readable", False, str(exc))
+    else:
+        status = keyring_status()
+        check("update trust store parses", status["keys"] > 0, "no public key pinned")
+        if status["ready"]:
+            check("update signing key is a real key", True)
+        else:
+            warn("update signing key is not release-ready", "; ".join(status["problems"]))
+        if status["authenticode"]:
+            check("Authenticode thumbprints are pinned", True)
+        else:
+            warn("no Authenticode thumbprint pinned",
+                 "only the Ed25519 manifest can establish publisher identity")
+
     build = read(PACKAGING / "build_exe.py")
     check("build script uses the spec", "WinGenius.spec" in build, "spec not referenced")
     check("build script looks for Inno Setup", "ISCC" in build, "installer step missing")
 
-    print(f"\n{checks - len(problems)}/{checks} packaging checks passed")
+    print(f"\n{checks - len(problems)}/{checks} packaging checks passed"
+          + (f" · {len(warnings)} warning(s)" if warnings else ""))
     if problems:
         print("\nproblems:")
         for item in problems:
             print(f"  ✗ {item}")
+    if warnings:
+        print("\nwarnings (release blockers):")
+        for item in warnings:
+            print(f"  ! {item}")
     return 0 if not problems else 1
 
 

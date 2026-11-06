@@ -273,3 +273,182 @@ def test_no_persian_left_in_english_tool_forms(window):
                         offenders.append(f"{tool_id}: choice '{combo.itemText(i)[:40]}'")
     assert not offenders, "Persian text in the English UI:\n" + "\n".join(offenders[:20])
     window._on_language_changed("fa")
+
+
+# ------------------------------------------------------- B2 vault_remove is undoable
+@pytest.fixture()
+def scratch_journal(tmp_path):
+    """Point the shared journal at a throw-away database, then put it back."""
+    from app.core import journal as journal_module
+
+    previous = journal_module._JOURNAL
+    created = journal_module.reset_journal(tmp_path / "journal.sqlite3")
+    yield created
+    journal_module._JOURNAL = previous
+
+
+def test_vault_remove_can_be_undone(tmp_path, scratch_journal):
+    from app.core.spec import RunContext
+    from app.core.vault import Vault
+    from app.core.registry import get, load_all
+    from app.tools.vault_tools import vault_add, vault_create, vault_remove
+
+    load_all()
+    ctx = RunContext(lang="en", output_dir=str(tmp_path / "out"))
+    vault_path = tmp_path / "v.wgv"
+    password = "hunter2"
+    vault_create(ctx, {"vault": str(vault_path), "password": password, "confirm": password})
+    a = tmp_path / "a.txt"
+    b = tmp_path / "b.txt"
+    a.write_text("secret-A", encoding="utf-8")
+    b.write_text("secret-B", encoding="utf-8")
+    vault_add(ctx, {"vault": str(vault_path), "password": password, "files": [str(a), str(b)]})
+
+    result = vault_remove(ctx, {"vault": str(vault_path), "password": password, "names": "a.txt"})
+    assert "undo" in result.message.lower()
+    vault = Vault(vault_path, password)
+    vault.unlock()
+    assert vault.names() == ["b.txt"]
+
+    undo = scratch_journal.undo_last(1)[0]
+    assert undo["status"] == "done", undo["problems"]
+    vault = Vault(vault_path, password)
+    vault.unlock()
+    assert sorted(vault.names()) == ["a.txt", "b.txt"]
+
+
+def test_vault_remove_rejects_unknown_names(tmp_path, scratch_journal):
+    from app.core.spec import RunContext
+    from app.core.spec import ToolError
+    from app.tools.vault_tools import vault_create, vault_remove
+
+    ctx = RunContext(lang="en", output_dir=str(tmp_path))
+    vault_path = tmp_path / "v.wgv"
+    vault_create(ctx, {"vault": str(vault_path), "password": "hunter2", "confirm": "hunter2"})
+    with pytest.raises(ToolError):
+        vault_remove(ctx, {"vault": str(vault_path), "password": "hunter2", "names": "nope"})
+
+
+# --------------------------------------------------------- B8 queue survives a restart
+def test_queue_survives_restart_without_leaking_secrets(tmp_path):
+    import json
+
+    from app.core.jobs import JobManager
+    from app.core.registry import get, load_all
+
+    load_all()
+    queue = tmp_path / "queue.json"
+    first = JobManager(path=queue, restore=False)
+    first._start = lambda job: None                  # nothing actually runs in a test
+    first.submit(get("vault_remove"),
+                 {"vault": str(tmp_path / "v.wgv"), "password": "hunter2", "names": "a"})
+
+    raw = queue.read_text(encoding="utf-8")
+    assert "hunter2" not in raw, "a password must never be written to queue.json"
+    stored = json.loads(raw)
+    assert stored[0]["needs_secrets"] is True
+
+    second = JobManager(path=queue)
+    restored = second.jobs()
+    assert len(restored) == 1
+    assert restored[0].tool_id == "vault_remove"
+    assert restored[0].paused and second.has_resumable(), "restored jobs wait for a resume"
+    second._start = lambda job: None
+    assert second.resume_pending() == 1
+    assert restored[0].paused is False
+
+
+def test_queue_survives_shutdown_and_ignores_corrupt_files(tmp_path):
+    import json
+
+    from app.core.jobs import JobManager
+    from app.core.registry import get, load_all
+
+    load_all()
+    queue = tmp_path / "queue.json"
+    manager = JobManager(path=queue, restore=False)
+    manager._start = lambda job: None
+    manager.submit(get("pdf_merge"), {"src": ["x.pdf"]})
+    manager.shutdown()
+    assert [item["tool_id"] for item in json.loads(queue.read_text(encoding="utf-8"))] == ["pdf_merge"]
+
+    queue.write_text("{not json", encoding="utf-8")
+    assert JobManager(path=queue).jobs() == []
+    queue.write_text(json.dumps([{"tool_id": "no_such_tool"}]), encoding="utf-8")
+    assert JobManager(path=queue).jobs() == []
+
+
+# ------------------------------------------------------- B10 one range error everywhere
+def test_page_range_errors_are_identical_and_translated(tmp_path):
+    import pymupdf
+
+    from app.core.spec import RunContext
+    from app.core.spec import ToolError
+    from app.core.registry import get, load_all
+
+    load_all()
+    pdf_path = tmp_path / "five.pdf"
+    doc = pymupdf.open()
+    for _ in range(5):
+        doc.new_page()
+    doc.save(str(pdf_path))
+    doc.close()
+
+    ctx = RunContext(lang="fa", output_dir=str(tmp_path / "out"))
+    cases = [("pdf_rotate", "pages"), ("pdf_extract_pages", "pages"), ("pdf_delete_pages", "pages"),
+             ("pdf_reorder_pages", "order")]
+    messages = []
+    for tool_id, key in cases:
+        values = {"src": str(pdf_path), key: "سلام", "out": str(tmp_path / f"{tool_id}.pdf")}
+        with pytest.raises(ToolError) as info:
+            get(tool_id).run(ctx, values)
+        messages.append(str(info.value))
+    assert len(set(messages)) == 1, messages
+    assert "bad number" not in messages[0]
+    assert "1-3" in messages[0], "the message must show a correct example"
+
+
+# ----------------------------------------------------------- B15 the floors are real
+def test_documented_stats_clear_the_declared_floors():
+    import json
+
+    from tests.conftest import CHECK_FLOOR, SUITE_FLOORS
+
+    stats = json.loads((Path(__file__).resolve().parents[1] / "docs" / "stats.json")
+                       .read_text(encoding="utf-8"))
+    assert stats["checks"] >= CHECK_FLOOR
+    for key, floor in SUITE_FLOORS.items():
+        assert stats["suites"][key] >= floor, f"{key} floor is above the recorded count"
+
+
+# ------------------------------------------------------------ B3 release key handling
+def test_release_keyring_reports_the_placeholder():
+    from app.core.updates import keyring_status
+
+    status = keyring_status()
+    assert status["keys"] >= 1
+    assert status["ready"] is False, "the shipped key is a placeholder — this must be visible"
+    assert status["placeholder"], status
+    assert any("placeholder" in problem for problem in status["problems"])
+
+
+def test_signed_manifest_verifies_against_a_pinned_key(tmp_path):
+    from app.core.updates import (
+        build_release_manifest, generate_signing_keypair, verify_release_manifest,
+    )
+
+    keys = generate_signing_keypair("test-release")
+    payload = tmp_path / "WinGenius-Setup.exe"
+    payload.write_bytes(b"MZ" + b"\0" * 512)
+    manifest = build_release_manifest(version="7.1.0", tag="v7.1.0", files=[payload],
+                                      private_key_b64=keys["private_key_b64"],
+                                      key_id=keys["key_id"])
+    verified, key_id, assets = verify_release_manifest(
+        manifest, expected_version="7.1.0",
+        trusted_pubkeys={keys["key_id"]: keys["public_key_b64"]})
+    assert verified is True and key_id == "test-release"
+    assert assets["wingenius-setup.exe"]["size"] == payload.stat().st_size
+
+    with pytest.raises(Exception):
+        verify_release_manifest(manifest, expected_version="7.1.0",
+                                trusted_pubkeys={"other": keys["public_key_b64"]})

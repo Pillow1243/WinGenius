@@ -12,8 +12,8 @@ from ..core.spec import (
     K_BOOL, K_CHOICE, K_DIR, K_FILE, K_FILES, K_INT, K_MULTILINE, K_SAVE, K_TEXT,
     Field, RunContext, RunResult, ToolError,
 )
-from ..core.utils import human_size, parse_ranges
-from ._helpers import first_file, fmt_out_message, out_dir, save_target
+from ..core.utils import human_size
+from ._helpers import first_file, fmt_out_message, out_dir, page_ranges, save_target
 
 PDF_FILTER = "PDF (*.pdf)"
 
@@ -592,11 +592,11 @@ def pdf_redact(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
         targets = list(range(total))
     else:
         try:
-            targets = parse_ranges(pages_text, total)
-        except Exception:
+            targets = page_ranges(ctx, pages_text, total, example="1-3, 7 یا all",
+                                          example_en="1-3, 7 or all")
+        except ToolError:
             doc.close()
-            raise ToolError(ctx.M("شماره‌ی صفحه‌ها را مثل «1-3,7» یا «all» بنویسید.",
-                                 "Write the pages like “1-3,7” or “all”."))
+            raise
     if not targets:
         doc.close()
         raise ToolError(ctx.M("هیچ صفحه‌ای انتخاب نشد.", "No page was selected."))

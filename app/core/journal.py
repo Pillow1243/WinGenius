@@ -226,6 +226,19 @@ class Journal:
         return self.record(KIND_WRITE, title_fa, title_en, tool_id=tool_id,
                            payload={"path": str(path), "backup": backup or "", "existed": existed})
 
+    def record_file_backup(self, path: Path, title_fa: str, title_en: str = "",
+                           tool_id: str = "", limit_mb: int = 512) -> int:
+        """Copy `path` aside *now* so the change a tool is about to make is undoable.
+
+        Returns the new operation id, or 0 when no copy could be taken (missing
+        file, larger than `limit_mb`, I/O error).  Callers use the 0 to tell the
+        user that this particular change will not be reversible.
+        """
+        backup = self.snapshot(Path(path), limit_mb=limit_mb)
+        if backup is None:
+            return 0
+        return self.record_write(str(path), backup, True, title_fa, title_en, tool_id)
+
     def record_trash(self, items: Iterable[tuple], title_fa: str, title_en: str = "",
                      tool_id: str = "") -> int:
         pairs = [[str(orig), str(stored)] for orig, stored in items]

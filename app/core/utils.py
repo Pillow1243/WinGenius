@@ -222,7 +222,15 @@ def hash_file(path: str | Path, algo: str = "sha256", on_chunk=None) -> str:
 
 # ----------------------------------------------------------------- page ranges
 class RangeError(ValueError):
-    pass
+    """A page/row range that could not be parsed.
+
+    Carries the offending token so callers can build one clear, translated
+    message instead of leaking "bad number: …" into the UI.
+    """
+
+    def __init__(self, message: str, part: str = "") -> None:
+        super().__init__(message)
+        self.part = part or message
 
 
 def parse_ranges(text: str, max_index: int, one_based: bool = True) -> List[int]:
@@ -241,12 +249,12 @@ def parse_ranges(text: str, max_index: int, one_based: bool = True) -> List[int]
                 start = int(start_s) if start_s else (1 if one_based else 0)
                 end = int(end_s) if end_s else max_index - 1 + offset
             except ValueError:
-                raise RangeError(f"bad range: {part}")
+                raise RangeError(f"bad range: {part}", part) from None
         else:
             try:
                 start = end = int(part)
             except ValueError:
-                raise RangeError(f"bad number: {part}")
+                raise RangeError(f"bad number: {part}", part) from None
         if start > end:
             start, end = end, start
         for value in range(start, end + 1):

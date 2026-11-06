@@ -156,13 +156,49 @@ def check() -> int:
     return 0
 
 
+def verify() -> int:
+    """Re-run the suites and fail if the stored numbers no longer reproduce.
+
+    `--check` only proves the file is internally consistent; this proves the
+    published "2,336 checks" is what the suites actually report today.
+    """
+    declared = json.loads(STATS.read_text(encoding="utf-8"))
+    counts = collect()
+    errors: list[str] = []
+    for key, value in counts.items():
+        stored = (declared.get("suites") or {}).get(key)
+        if stored != value:
+            errors.append(f"{key}: stats.json says {stored}, the suite reports {value}")
+    if declared.get("checks") != sum(counts.values()):
+        errors.append(f"checks: stats.json says {declared.get('checks')}, "
+                      f"the suites report {sum(counts.values())}")
+    try:
+        live = live_tool_count()
+    except SystemExit as exc:
+        errors.append(str(exc))
+        live = 0
+    if live and declared.get("tools") != live:
+        errors.append(f"tools: stats.json says {declared.get('tools')}, the registry has {live}")
+    if errors:
+        for error in errors:
+            print(f"STALE  {error}")
+        print("\nRun `python scripts/stats.py --run` and commit docs/stats.json.")
+        return 1
+    print(f"OK  {live} tools · {sum(counts.values())} checks reproduced by the suites")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--run", action="store_true", help="run suites and rewrite stats.json")
     group.add_argument("--check", action="store_true", help="verify stored numbers only")
+    group.add_argument("--verify", action="store_true",
+                       help="run the suites and verify the stored numbers still reproduce")
     args = parser.parse_args()
-    return run() if args.run else check()
+    if args.run:
+        return run()
+    return verify() if args.verify else check()
 
 
 if __name__ == "__main__":

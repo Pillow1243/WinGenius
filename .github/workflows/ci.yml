@@ -113,6 +113,12 @@ jobs:
       - name: Security & consistency regressions
         run: python -X faulthandler -m coverage run --parallel-mode --source=app tests/security_test.py
 
+      - name: Documented numbers reproduce (stats.json)
+        # Re-runs every suite and fails when docs/stats.json is stale; one matrix
+        # leg is enough because the numbers are platform independent.
+        if: runner.os == 'Linux' && matrix.python == '3.12'
+        run: python scripts/stats.py --verify
+
       - name: Coverage gate
         run: |
           python -m coverage combine

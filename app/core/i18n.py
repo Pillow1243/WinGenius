@@ -105,6 +105,10 @@ STRINGS: Dict[str, Dict[str, str]] = {
     "jb.again": {"fa": "اجرای دوباره", "en": "Run again"},
     "jb.clear": {"fa": "پاک کردن تمام‌شده‌ها", "en": "Clear finished"},
     "jb.badge": {"fa": "{0} در حال اجرا", "en": "{0} running"},
+    "jb.resume": {"fa": "ادامه‌ی صف ({0})", "en": "Resume queue ({0})"},
+    "jb.restored": {"fa": "از نشست قبل", "en": "previous session"},
+    "jb.needs_secret": {"fa": "پس از بازکردن، رمز/کلیدش را دوباره وارد کن.",
+                        "en": "Re-enter its password/key before running."},
     # smart drop
     "dz.title": {"fa": "فایل را همین‌جا رها کنید", "en": "Drop files here"},
     "dz.hint": {"fa": "بر اساس نوع فایل، بهترین ابزارها را پیشنهاد دادیم.",

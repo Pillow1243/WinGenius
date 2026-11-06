@@ -410,7 +410,30 @@ OK (۲۹۲ ابزار، ۲۳۳۶ چک) · `scripts/check_docs.py` ۳۶/۳۶ · `
 (همان `none_dealloc` که در `ui_test` هم دیده شد). تست‌ها به‌جای اتکا به چرخه‌ی رویداد،
 درخت ویجت را مستقیم می‌پیمایند؛ روی CI (پایتون ۳.۱۲/۳.۱۳) این مشکل وجود ندارد.
 
-### دور ۲ — ⏳ در انتظار
+### دور ۲ — ✅ تمام‌شده (کامیت ۲)
+
+| مورد | فیکس | تست رگرسیون |
+|------|------|--------------|
+| B2 | `Journal.record_file_backup()` + استفاده در `vault_remove`: قبل از حذف، خودِ `.wgv` بکاپ می‌شود و Undo فایل را برمی‌گرداند؛ نام‌های ناموجود پیام می‌گیرند و اگر بکاپ ممکن نباشد (فایل بزرگ) صریحاً گفته می‌شود که برگشت‌پذیر نیست. توضیح ابزار هم دیگر ادعای «بدون امکان بازگردانی» ندارد. | `test_vault_remove_can_be_undone`, `test_vault_remove_rejects_unknown_names` |
+| B8 | صف در `data_dir()/queue.json` (نوشتن اتمیک، سقف ۵۰ کار) ذخیره می‌شود؛ در اجرای بعدی کارها **paused** برمی‌گردند و با دکمه‌ی «ادامه‌ی صف» در کشوی کارها شروع می‌شوند. رمزها/توکن‌ها هرگز روی دیسک نمی‌روند (`needs_secrets`). فایل خراب یا ابزار حذف‌شده نادیده گرفته می‌شود. `_pump` هم دیگر روی کاری که در صف گیر کرده بی‌نهایت حلقه نمی‌زند. | `test_queue_survives_restart_without_leaking_secrets`, `test_queue_survives_shutdown_and_ignores_corrupt_files` |
+| B3 | `updates.keyring_status()` وضعیت واقعی کلید عمومی را برمی‌گرداند (`ready`, `placeholder`, `invalid`, `authenticode`, `problems`); `verify_package.py` یک چک + دو هشدار «release blocker» اضافه کرد (کلید placeholder، نبود thumbprint برای Authenticode). | `test_release_keyring_reports_the_placeholder`, `test_signed_manifest_verifies_against_a_pinned_key` |
+| B10 | `_helpers.page_ranges()` تنها نقطه‌ی پارس صفحه‌ها؛ همه‌ی پنج ابزار PDF یک جمله‌ی یکسان و ترجمه‌شده می‌دهند («…» شماره‌ی صفحه نیست. نمونه‌ی درست: 1-3, 7). `RangeError` حالا توکن خراب را حمل می‌کند. | `test_page_range_errors_are_identical_and_translated` |
+| B14 | `scripts/stats.py --verify`: سوئیت‌ها را واقعاً اجرا می‌کند و اگر عدد `stats.json` بازتولید نشود fail می‌شود؛ در CI (یک لگ از ماتریس) اجرا می‌شود. | همان گیت CI + `test_documented_stats_clear_the_declared_floors` |
+| B15 | کف تعداد بررسی‌ها در `tests/conftest.py` (`SUITE_FLOORS` + `CHECK_FLOOR`): هیچ‌کس نمی‌تواند `stats.json` را کوچک‌تر از واقعیت بنویسد. | همان تست بالا |
+
+**پاکسازی موضعی که در همین دور انجام شد:** حذف `if False else …` در `pdf_reorder_pages`، حذف
+`widget.setEditable = getattr(...)` بی‌معنا در `tool_panel._create_widget`، و شمارش «هشدار»ها
+جدا از «چک»ها در `verify_package.py`.
+
+**گیت‌ها:** `pytest` ۱۸۰/۱۸۰ سبز · `ruff` پاک · `stats.py --check` OK (**۲۹۲ ابزار · ۲۳۳۷ چک**) ·
+`check_docs.py` ۳۶/۳۶ · `verify_package.py` ۲۹/۲۹ (+۲ هشدار عمدی).
+
+> **نکته‌ی اجرا:** بازتولید کامل `stats.py --run` در این سندباکس ممکن نبود، چون اسکریپت
+> `tests/ui_test.py` به‌صورت مستقل (نه زیر pytest) با همان `none_dealloc` در
+> `radial.py:_draw_orbits` می‌میرد — محدودیت CPython 3.11 + PySide6 6.12 که خودِ CI
+> هم در کامنت ماتریس نوشته است. بنابراین فقط عدد سوئیت packaging (۲۸→۲۹) و جمع کل
+> (۲۳۳۶→۲۳۳۷) به‌روز شد؛ بقیه‌ی اعداد دست‌نخورده‌اند و گیت `--verify` در CI آن‌ها را
+> روی ۳.۱۲/۳.۱۳ می‌سنجد.
 ### دور ۳ — ⏳ در انتظار
 ### دور ۴ — ⏳ در انتظار
 
