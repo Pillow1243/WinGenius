@@ -375,3 +375,26 @@ except VaultError:
             if child.poll() is None:
                 child.kill()
                 child.wait()
+
+
+def test_macro_panel_queues_confirmed_snapshot(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from PySide6.QtWidgets import QMessageBox
+    from app.core.execution import classify_invocation
+    from app.ui.main_window import MainWindow
+
+    path = tmp_path / "macro.json"
+    path.write_text(json.dumps({"steps": [{"type": "write", "path": "original", "text": "a"}]}))
+    captured = {}
+    class Jobs:
+        def submit_by_id(self, tool_id, values, policy):
+            captured.update(values)
+            return None
+    def question(*_args):
+        path.write_text(json.dumps({"steps": [{"type": "write", "path": "changed", "text": "b"}]}))
+        return QMessageBox.StandardButton.Yes
+    monkeypatch.setattr(QMessageBox, "question", question)
+    shell = SimpleNamespace(lang="en", jobs=Jobs(), _show_toast=lambda *_args: None)
+    MainWindow._on_macro_run(shell, path)
+    assert captured["_macro_snapshot"]["steps"][0]["path"] == "original"
+    assert classify_invocation("macro_run", captured).requires_confirmation

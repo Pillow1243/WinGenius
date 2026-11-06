@@ -893,14 +893,21 @@ class MainWindow(QWidget):
                 pass
             schedule_store.set_status(schedule_id, finished_job.status)
         self.jobs.jobFinished.connect(report)
+        if not job.active:
+            report(job)
 
     def _on_macro_run(self, path, dry_run: bool = False) -> None:
         """Run a macro file through the macro tool (queued, cancellable, logged)."""
         if not path:
             return
-        from ..core.execution import ExecutionPolicy, classify_invocation
+        from ..core.execution import ExecutionPolicy, classify_invocation, snapshot_invocation
+        from ..core.spec import ToolError
 
-        values = {"file": str(path), "dry_run": bool(dry_run)}
+        try:
+            values = snapshot_invocation("macro_run", {"file": str(path), "dry_run": bool(dry_run)})
+        except ToolError as exc:
+            self._show_toast(str(exc), "error")
+            return
         assessment = classify_invocation("macro_run", values)
         if assessment.requires_confirmation:
             from PySide6.QtWidgets import QMessageBox
