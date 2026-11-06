@@ -487,6 +487,10 @@ def main() -> int:
     triggered: list = []
     automation.ruleTriggered.connect(lambda rule, path: triggered.append((rule.id, path)))
     (watch_dir / "fresh.txt").write_text("hello", encoding="utf-8")
+    # audit F-01: the first sighting only arms the settle window, so a file is
+    # reported on the following scan once it has been seen unchanged
+    automation.scan_now()
+    spin(120)
     automation.scan_now()
     spin(200)
     check(bool(triggered), "watch rule did not trigger for a new file")

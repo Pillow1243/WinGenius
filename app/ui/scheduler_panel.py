@@ -180,7 +180,9 @@ class SchedulerPanel(OverlaySheet):
         buttons.addStretch(1)
         holder = QWidget()
         holder.setLayout(buttons)
-        layout.addWidget(holder, 6, 3)
+        # row 8: rows 6 and 7 hold the cron hint lines. Sharing a row with the
+        # buttons stretched the hint to the button height (audit F-07 layout).
+        layout.addWidget(holder, 8, 3)
         layout.setColumnStretch(1, 2)
         layout.setColumnStretch(2, 2)
         layout.setColumnStretch(3, 3)
