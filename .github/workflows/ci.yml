@@ -96,7 +96,7 @@ jobs:
         run: python -X faulthandler -m coverage run --parallel-mode --source=app tests/smoke_test.py
 
       - name: Functional suite
-        run: python -X faulthandler -m coverage run --parallel-mode --source=app tests/functional_test.py
+        run: python scripts/ci_capture.py python -X faulthandler -m coverage run --parallel-mode --source=app tests/functional_test.py
 
       - name: Output-correctness suite (incl. pyHanko signatures)
         run: python -X faulthandler -m coverage run --parallel-mode --source=app tests/output_test.py
