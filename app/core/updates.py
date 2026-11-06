@@ -113,10 +113,11 @@ def keyring_status() -> Dict[str, Any]:
     if not TRUSTED_RELEASE_PUBKEYS:
         problems.append("no release public key is pinned")
     if placeholder:
-        problems.append("still using the placeholder public key: "
-                        + ", ".join(sorted(placeholder)))
+        # Deliberately no key ids here: this string ends up in build logs, and the
+        # alert history should not turn into a key inventory.
+        problems.append(f"{len(placeholder)} pinned key(s) are still the shipped placeholder")
     if invalid:
-        problems.append("malformed public key: " + ", ".join(sorted(invalid)))
+        problems.append(f"{len(invalid)} pinned key(s) do not decode to 32 bytes")
     return {
         "keys": len(TRUSTED_RELEASE_PUBKEYS),
         "placeholder": placeholder,

@@ -582,10 +582,9 @@ def test_secure_delete_does_not_promise_the_impossible():
 
     load_all()
     spec = get("secure_delete")
-    text = f"{spec.desc_en} {spec.desc}"
-    assert "not a guarantee" in spec.desc_en
-    assert "guarantee" not in spec.desc_en.split("not a guarantee")[0].lower() or True
-    assert "SSD" in spec.desc_en or "SSD" in spec.desc
+    assert "not a guarantee" in spec.desc_en, "the English text must stop promising the impossible"
+    assert "unrecoverable" not in spec.desc_en.lower()
+    assert "SSD" in spec.desc_en or "SSD" in spec.desc, "the caveat must name the real cases"
 
 
 def test_vault_password_floor_and_strength_warning(tmp_path, scratch_journal):

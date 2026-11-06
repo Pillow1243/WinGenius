@@ -33,14 +33,15 @@ def check(name: str, condition: bool, detail: str = "") -> None:
         print(f"  FAIL {name}  {detail}")
 
 
-def warn(name: str, detail: str = "") -> None:
+def warn(name: str, reason: str = "") -> None:
     """A release blocker that must not fail a developer's local run.
 
     Deliberately not counted as a check: the recorded number in docs/stats.json
-    must keep meaning "assertions that were verified".
+    must keep meaning "assertions that were verified".  `reason` is a short
+    explanation, never a credential — it lands in plain build logs.
     """
-    warnings.append(f"{name} — {detail}")
-    print(f"  WARN {name}  {detail}")
+    warnings.append(f"{name} — {reason}")
+    print(f"  WARN {name}  {reason}")
 
 
 def read(path: Path) -> str:

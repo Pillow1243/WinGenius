@@ -11,10 +11,8 @@ from ..core.spec import (
     K_BOOL, K_CHOICE, K_DIR, K_FILE, K_FILES, K_FLOAT, K_INT, K_SAVE, K_TEXT,
     Field, RunContext, RunResult, ToolError,
 )
-from ..core.utils import human_size, unique_path
-from ._helpers import (
-    ensure_dir, first_file, fmt_out_message, out_dir, page_ranges, require, save_target,
-)
+from ..core.utils import human_size
+from ._helpers import first_file, page_ranges, save_target
 from .pdf_tools import PDF_FILTER, _fitz, _open_doc, _open_reader, _pypdf
 
 
