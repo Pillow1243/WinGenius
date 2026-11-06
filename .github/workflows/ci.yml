@@ -55,6 +55,22 @@ jobs:
       - name: Tagged release version sync works
         run: python scripts/check_release.py
 
+  types:
+    # Audit F-13: [tool.mypy] was configured but never executed. This job keeps
+    # the recorded baseline honest, so no new type errors can land unnoticed.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install -q --upgrade pip
+          python -m pip install -q mypy
+      - name: No new type errors
+        run: python scripts/typecheck.py
+
   tests:
     strategy:
       fail-fast: false
