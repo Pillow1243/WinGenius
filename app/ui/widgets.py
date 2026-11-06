@@ -176,13 +176,16 @@ class PathEdit(QWidget):
     def retranslate(self) -> None:
         if self.kind == "dir":
             self.button.setText(t("tp.browse_dir"))
-            self.edit.setPlaceholderText(t("tp.browse_dir"))
+            self.edit.setPlaceholderText(t("tp.path_dir"))
         elif self.kind == "save":
             self.button.setText(t("tp.save_as"))
-            self.edit.setPlaceholderText(t("tp.save_as"))
+            self.edit.setPlaceholderText(t("tp.path_save"))
+        elif self.multiple or self.kind == "files":
+            self.button.setText(t("tp.browse"))
+            self.edit.setPlaceholderText(t("tp.path_files"))
         else:
             self.button.setText(t("tp.browse"))
-            self.edit.setPlaceholderText(t("tp.browse"))
+            self.edit.setPlaceholderText(t("tp.path_file"))
 
     def _browse(self) -> None:
         folder = str(Path(self.edit.text()).parent) if self.edit.text().strip() else str(Path.home())

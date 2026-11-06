@@ -303,7 +303,7 @@ def pdf_to_html(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     keywords=("find in pdf", "search pdf", "جستجو در پی دی اف", "پیدا کردن"),
     fields=[
         Field("src", K_FILE, "فایل PDF", "PDF file", required=True, filt=PDF_FILTER),
-        Field("query", K_TEXT, "عبارت", "Phrase", required=True, placeholder="متن مورد جست‌وجو"),
+        Field("query", K_TEXT, "عبارت", "Phrase", required=True, placeholder="متن مورد جست‌وجو", placeholder_en="text to find"),
         Field("ignore_case", K_BOOL, "بدون توجه به بزرگی/کوچکی حروف", "Ignore letter case", default=True),
     ],
 )
@@ -363,7 +363,7 @@ def pdf_find_text(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
         Field("title", K_TEXT, "عنوان", "Title"),
         Field("author", K_TEXT, "نویسنده", "Author"),
         Field("subject", K_TEXT, "موضوع", "Subject"),
-        Field("keywords", K_TEXT, "کلمات کلیدی", "Keywords", placeholder="با کاما جدا کنید"),
+        Field("keywords", K_TEXT, "کلمات کلیدی", "Keywords", placeholder="با کاما جدا کنید", placeholder_en="comma separated"),
         Field("out", K_SAVE, "فایل خروجی", "Output file", filt="PDF (*.pdf)"),
     ],
 )

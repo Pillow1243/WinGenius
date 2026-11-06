@@ -58,7 +58,8 @@ def index_build(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
     keywords=("search", "find in files", "جست‌وجو", "پیدا کردن", "داخل فایل‌ها"),
     fields=[
         Field("query", K_TEXT, "عبارت جست‌وجو", "Query", required=True,
-              placeholder="قرارداد ۱۴۰۳ یا \"total revenue\""),
+              placeholder="قرارداد ۱۴۰۳ یا \"total revenue\"",
+              placeholder_en='"2026 contract" or "total revenue"'),
         Field("limit", K_INT, "حداکثر نتیجه", "Max results", default=20, minimum=1, maximum=200),
         Field("out", K_SAVE, "ذخیره‌ی گزارش در", "Save report to", filt="Text (*.txt)"),
     ],

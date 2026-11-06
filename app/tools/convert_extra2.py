@@ -309,6 +309,7 @@ def _describe(target: date, lang: str) -> str:
               "روز کاری", "محاسبه"),
     fields=[
         Field("date", K_TEXT, "تاریخ پایه", "Base date", placeholder="2026-11-03 یا 1405/08/12",
+              placeholder_en="2026-11-03 or 1405/08/12",
               help="خالی بگذارید تا امروز در نظر گرفته شود.",
               help_en="Leave empty to use today."),
         Field("calendar", K_CHOICE, "تقویم ورودی", "Input calendar", default="auto",

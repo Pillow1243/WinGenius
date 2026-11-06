@@ -158,7 +158,8 @@ def vault_list(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
         Field("vault", K_TEXT, "فایل گاوصندوق", "Vault file", required=True, filt="WinGenius Vault (*.wgv)"),
         Field("password", K_PASSWORD, "رمز", "Password", required=True),
         Field("names", K_TEXT, "نام‌ها", "Entry names", default="",
-              placeholder="a.txt, b.pdf  — خالی = همه"),
+              placeholder="a.txt, b.pdf  — خالی = همه",
+              placeholder_en="a.txt, b.pdf — empty = everything"),
         Field("out", K_DIR, "پوشه‌ی خروجی", "Output folder", default=""),
     ],
 )

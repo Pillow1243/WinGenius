@@ -399,12 +399,37 @@ class RadialMenu(QWidget):
 
         if node.badge:
             painter.setFont(theme.make_font(7.4, 600))
-            badge_rect = QRectF(center.x() + r - 10, center.y() - r - 6, 34, 16)
+            badge_rect = self._badge_rect(node.badge, center, r, painter.fontMetrics())
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(theme.alpha(accent.name(), 0.9)))
-            painter.drawRoundedRect(badge_rect, 8, 8)
+            painter.drawRoundedRect(badge_rect, badge_rect.height() / 2, badge_rect.height() / 2)
             painter.setPen(QColor("#0B1020"))
             painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, node.badge)
+
+    def _badge_rect(self, text: str, center: QPointF, radius: float, metrics) -> QRectF:
+        """The count pill above a node, sized to its text and kept out of trouble.
+
+        It used to be a fixed 34×16 rectangle, which clipped “۱۶”/“۴۳” and sat
+        exactly where the label of the *next* node is drawn.  Now the width comes
+        from the font metrics, the pill rides the upper-right diagonal (away from
+        the vertical label column) and is clamped inside the widget.
+        """
+        width = max(20.0, metrics.horizontalAdvance(text) + 13.0)
+        height = max(15.0, metrics.height() + 1.0)
+        angle = -math.pi / 4
+        anchor = QPointF(center.x() + math.cos(angle) * radius,
+                         center.y() + math.sin(angle) * radius)
+        rect = QRectF(anchor.x() - width * 0.30, anchor.y() - height * 0.55, width, height)
+        bounds = QRectF(self.rect()).adjusted(3.0, 3.0, -3.0, -3.0)
+        if rect.right() > bounds.right():
+            rect.moveRight(bounds.right())
+        if rect.left() < bounds.left():
+            rect.moveLeft(bounds.left())
+        if rect.top() < bounds.top():
+            rect.moveTop(bounds.top())
+        if rect.bottom() > bounds.bottom():
+            rect.moveBottom(bounds.bottom())
+        return rect
 
     def _pager_geometry(self):
         """Return (dots_rect, left_button_rect, right_button_rect)."""

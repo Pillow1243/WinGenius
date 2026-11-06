@@ -1,7 +1,12 @@
 """Tiny two-language (Persian / English) string table for the shell UI."""
 from __future__ import annotations
 
+import re
 from typing import Any, Dict
+
+# Persian/Arabic letters only: Persian and Arabic-Indic *digits* are legitimate
+# inside numbers and labels, so they are deliberately excluded.
+ARABIC_LETTER = re.compile(r"[\u0621-\u064A\u066E-\u06D3\u067E\u0686\u0698\u06A9\u06AF\u06CC]")
 
 STRINGS: Dict[str, Dict[str, str]] = {
     # app shell
@@ -27,6 +32,12 @@ STRINGS: Dict[str, Dict[str, str]] = {
     "tp.browse": {"fa": "انتخاب…", "en": "Browse…"},
     "tp.browse_dir": {"fa": "انتخاب پوشه…", "en": "Choose folder…"},
     "tp.save_as": {"fa": "ذخیره در…", "en": "Save as…"},
+    # Placeholders show an *example path*; the button next to the field already
+    # says "Browse…", so repeating it inside the field was pure noise.
+    "tp.path_file": {"fa": "مثال: C:\\Users\\me\\Document.pdf", "en": "e.g. C:\\Users\\me\\Document.pdf"},
+    "tp.path_files": {"fa": "یک یا چند فایل — برای افزودن دوباره بزنید", "en": "one or more files — press Browse again to add"},
+    "tp.path_dir": {"fa": "مثال: C:\\Users\\me\\Output", "en": "e.g. C:\\Users\\me\\Output"},
+    "tp.path_save": {"fa": "مثال: C:\\Users\\me\\result.pdf", "en": "e.g. C:\\Users\\me\\result.pdf"},
     "tp.ready": {"fa": "آماده", "en": "Ready"},
     "tp.running": {"fa": "در حال اجرا…", "en": "Running…"},
     "tp.done": {"fa": "پایان یافت", "en": "Finished"},

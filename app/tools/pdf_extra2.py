@@ -539,7 +539,7 @@ def pdf_compare(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
               visible_when=("mode", "search"),
               help="حساس به حروف نیست و همه‌ی تکرارها در همه‌ی صفحه‌ها پاک می‌شوند.",
               help_en="Case-insensitive; every occurrence on every page is removed."),
-        Field("pages", K_TEXT, "صفحه‌ها", "Pages", default="all", placeholder="all یا 1-3,7",
+        Field("pages", K_TEXT, "صفحه‌ها", "Pages", default="all", placeholder="all یا 1-3,7", placeholder_en="all or 1-3,7",
               help="خالی = همه‌ی صفحه‌ها.", help_en="Empty = every page."),
         Field("area", K_TEXT, "ناحیه (٪): x,y,عرض,ارتفاع", "Area (%): x,y,w,h", default="5,5,40,12",
               visible_when=("mode", "area"),

@@ -1386,6 +1386,7 @@ class MainWindow(QWidget):
         self._search_button.setAccessibleName(t("home.search"))
         self._lang_button.setAccessibleName(t("tb.lang"))
         self.quick_search.set_language(self.lang)
+        self.tool_panel.set_language(self.lang)
         self.settings_panel.set_language(self.lang)
         self.jobs_drawer.set_language(self.lang)
         self.drop_zone.set_language(self.lang)
@@ -1412,8 +1413,10 @@ class MainWindow(QWidget):
         set_language(lang)
         self._apply_theme(rebuild=False)
         self._rebuild_page()
-        if self._overlay == "tool" and self.tool_panel.spec is not None:
-            self.tool_panel.load(self.tool_panel.spec, lang, settings.output_dir)
+        # `_apply_theme()` already retranslates every panel, and
+        # `ToolPanel.set_language()` re-renders the open form *with the values the
+        # user has typed*. Reloading here as well reset the form to its defaults
+        # (a half-filled form was wiped by pressing the EN/فا button).
 
     def _show_toast(self, message: str, kind: str = "info") -> None:
         self.toast.set_palette_ref(self.palette_ref)

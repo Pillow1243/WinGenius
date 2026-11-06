@@ -384,6 +384,10 @@ QComboBox QAbstractItemView::item {{
     padding: 2px 8px;
     border-radius: 6px;
 }}
+QSpinBox, QDoubleSpinBox {{
+    padding-left: 20px;
+    padding-right: 20px;
+}}
 QSpinBox::up-button, QSpinBox::down-button,
 QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {{
     background: {alpha(p.border, 0.6)};
@@ -394,6 +398,27 @@ QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {{
 QSpinBox::up-button:hover, QSpinBox::down-button:hover,
 QDoubleSpinBox::up-button:hover, QDoubleSpinBox::down-button:hover {{
     background: {alpha(p.accent, 0.4)};
+}}
+/* A styled button without a styled arrow draws an empty grey square: the two
+   little triangles are CSS borders, so they work without shipping an image. */
+QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {{
+    width: 0;
+    height: 0;
+    border-left: 3px solid transparent;
+    border-right: 3px solid transparent;
+    border-bottom: 4px solid {alpha(p.text, 0.75)};
+}}
+QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {{
+    width: 0;
+    height: 0;
+    border-left: 3px solid transparent;
+    border-right: 3px solid transparent;
+    border-top: 4px solid {alpha(p.text, 0.75)};
+}}
+QSpinBox::up-arrow:disabled, QSpinBox::down-arrow:disabled,
+QDoubleSpinBox::up-arrow:disabled, QDoubleSpinBox::down-arrow:disabled {{
+    border-bottom-color: {alpha(p.text_dim, 0.35)};
+    border-top-color: {alpha(p.text_dim, 0.35)};
 }}
 QListWidget::item, QTreeWidget::item {{
     padding: 5px 8px;

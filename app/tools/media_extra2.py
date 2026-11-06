@@ -95,7 +95,7 @@ def render_subtitles(cues: List[Tuple[int, int, str]], fmt: str, strip_tags: boo
               choices=[("srt", "SRT", "SRT"), ("vtt", "WebVTT", "WebVTT"),
                        ("txt", "فقط متن", "Plain text")]),
         Field("shift", K_TEXT, "جابه‌جایی زمانی", "Time shift",
-              placeholder="+2.5s یا -1200ms",
+              placeholder="+2.5s یا -1200ms", placeholder_en="+2.5s or -1200ms",
               help="مثبت یعنی زیرنویس دیرتر، منفی یعنی زودتر. واحد: ms یا s یا بدون واحد (ثانیه).",
               help_en="Positive delays the subtitles, negative advances them. Units: ms, s or none (seconds)."),
         Field("strip_tags", K_INT, "پاک‌کردن تگ‌های ایتالیک", "Strip style tags", default=1,

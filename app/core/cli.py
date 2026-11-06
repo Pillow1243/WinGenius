@@ -198,30 +198,94 @@ def _parse_args(argv: List[str]) -> Dict[str, Any]:
             options["title"] = argv[index] if index < len(argv) else ""
         index += 1
     options.setdefault("mode", "list")
+    options.setdefault("warnings", [])
     return options
 
 
+class CliUsageError(Exception):
+    """A `--set`/`--file` combination the tool cannot use. Exit code 2, no traceback."""
+
+
 def _coerce(field, raw: str) -> Any:
+    """Turn one `--set key=value` string into the type the field declares.
+
+    A typo used to escape as a raw `ValueError` traceback; now every conversion
+    failure becomes one readable line that names the field, the value and the
+    expected type.  Ranges and choice lists are checked here too, so a script
+    fails loudly instead of silently running with a clamped/ignored value.
+    """
     if field is None:
         return raw
-    if field.kind in (K_INT,):
-        return int(float(raw))
-    if field.kind in (K_FLOAT,):
-        return float(raw)
-    if field.kind == K_BOOL:
-        return raw.strip().lower() in ("1", "true", "yes", "on", "بله")
-    return raw
+    text = raw.strip()
+    if field.kind == K_INT:
+        try:
+            value: Any = int(float(text))
+        except (TypeError, ValueError):
+            raise CliUsageError(f"{field.key}: '{raw}' is not a whole number") from None
+    elif field.kind == K_FLOAT:
+        try:
+            value = float(text)
+        except (TypeError, ValueError):
+            raise CliUsageError(f"{field.key}: '{raw}' is not a number") from None
+    elif field.kind == K_BOOL:
+        value = text.lower() in ("1", "true", "yes", "on", "بله", "بلی")
+    else:
+        value = raw
+    if field.kind in (K_INT, K_FLOAT):
+        low, high = float(field.minimum or 0), float(field.maximum or 0)
+        if high > low and not (low <= float(value) <= high):
+            raise CliUsageError(
+                f"{field.key}: {value} is outside {field.minimum:g}…{field.maximum:g}"
+            )
+    if field.kind == "choice" and field.choices:
+        allowed = {str(item[0]) for item in field.choices}
+        if str(value) not in allowed:
+            raise CliUsageError(
+                f"{field.key}: '{raw}' is not one of " + ", ".join(sorted(allowed))
+            )
+    return value
 
 
-def _build_values(spec, files: List[str], sets: List[tuple], out: str) -> Dict[str, Any]:
+def _suggest_key(spec, key: str) -> str:
+    """A cheap 'did you mean' for `--set` keys (typos are the common case)."""
+    keys = [f.key for f in spec.fields]
+    lowered = key.lower()
+    for candidate in keys:
+        if candidate.lower() == lowered:
+            return candidate
+    for candidate in keys:
+        if lowered in candidate.lower() or candidate.lower() in lowered:
+            return candidate
+    return ""
+
+
+def _build_values(spec, files: List[str], sets: List[tuple], out: str,
+                  warnings: Optional[List[str]] = None) -> Dict[str, Any]:
+    """Merge defaults, `--file`, `--out` and `--set` into the tool's value dict.
+
+    Anything the tool cannot use is reported in `warnings` instead of being
+    dropped silently: `--set out_dir=…` used to be accepted (and ignored) for a
+    field whose real key was `out`, which looked like the tool ignoring the flag.
+    """
+    warnings = warnings if warnings is not None else []
     values: Dict[str, Any] = spec.defaults()
     file_fields = [f for f in spec.fields if f.kind in (K_FILE, K_FILES)]
     if files and file_fields:
         target = file_fields[0]
         values[target.key] = files if target.kind == K_FILES else files[0]
+    elif files:
+        warnings.append(
+            f"--file ignored: '{spec.id}' has no file field "
+            f"(fields: {', '.join(f.key for f in spec.fields) or 'none'})"
+        )
     for key, raw in sets:
         field = spec.field(key)
         if field is None:
+            hint = _suggest_key(spec, key)
+            warnings.append(
+                f"--set {key} ignored: no such field"
+                + (f" — did you mean '{hint}'?" if hint else "")
+            )
             continue
         if field.kind == K_FILES and "," in raw:
             values[key] = [part.strip() for part in raw.split(",") if part.strip()]
@@ -232,6 +296,9 @@ def _build_values(spec, files: List[str], sets: List[tuple], out: str) -> Dict[s
             if field.kind in (K_SAVE, K_DIR) and not values.get(field.key):
                 values[field.key] = out
                 break
+        else:
+            if not any(f.kind in (K_SAVE, K_DIR) for f in spec.fields):
+                warnings.append(f"--out ignored: '{spec.id}' writes into its own output folder")
     return values
 
 
@@ -797,7 +864,15 @@ def run_cli(argv: List[str]) -> int:
     if spec is None:
         _print(f"unknown tool: {tool_id}\n\n{_usage()}")
         return 2
-    values = _build_values(spec, options["files"], options["sets"], options["out"])
+    try:
+        values = _build_values(spec, options["files"], options["sets"], options["out"],
+                               options["warnings"])
+    except CliUsageError as exc:
+        _print(f"bad value for --set: {exc}\n\n"
+               f"fields of {spec.id}: " + ", ".join(f.key for f in spec.fields))
+        return 2
+    for warning in options["warnings"]:
+        sys.stderr.write(f"warning: {warning}\n")
 
     def on_progress(current: int, total: int, message: str) -> None:
         if options["quiet"]:

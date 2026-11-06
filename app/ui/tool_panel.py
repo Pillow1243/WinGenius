@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..core import theme
-from ..core.i18n import t
+from ..core.i18n import ARABIC_LETTER, t
 from ..core.logger import get_logger
 from ..core.registry import ToolSpec
 from ..core.settings import settings
@@ -51,6 +51,7 @@ class ToolPanel(QWidget):
         self._helpers: Dict[str, QWidget] = {}
         self._runner: Optional[ToolRunner] = None
         self._result: Optional[RunResult] = None
+        self._result_is_error = False
         self._jobs = None
 
         self._card = QFrame(self)
@@ -219,9 +220,47 @@ class ToolPanel(QWidget):
         """Give the panel a job manager so runs can go to the background queue."""
         self._jobs = manager
 
+    # ------------------------------------------------------------- translation
+    def _retranslate_chrome(self) -> None:
+        """Static texts that `load()` does not own.
+
+        Before v7.2 the footer kept whatever language the panel was *built* in, so
+        switching to English left “گزارش / لغو / اجرا در پس‌زمینه / اجرا” behind —
+        the one place a user cannot miss it.
+        """
+        self._run_button.setText(t("tp.run"))
+        self._queue_button.setText(t("tp.queue"))
+        self._queue_button.setToolTip(t("tp.queued"))
+        self._cancel_button.setText(t("tp.cancel"))
+        self._log_button.setText(t("tp.log"))
+        self._open_button.setText(t("tp.open_output"))
+        self._reveal_button.setText(t("tp.show_in_folder"))
+        self._copy_button.setText(t("tp.copy"))
+        self._close_button.setToolTip(t("tp.close"))
+        self._update_favorite_icon()
+        self._update_outdir_button(settings.output_dir)
+        if self.spec is None:
+            self._status.setText(t("tp.ready"))
+
+    def set_language(self, lang: str) -> None:
+        """Switch language in place — the typed values and the visible result survive."""
+        self.lang = lang
+        result = self._result
+        running = self._runner is not None and self._runner.isRunning()
+        values = self._collect() if (self.spec is not None and self._widgets) else None
+        self._retranslate_chrome()
+        if self.spec is not None:
+            self.load(self.spec, lang, settings.output_dir, values, announce_prefill=False)
+            if result is not None:
+                self._result = result
+                self._show_result(result, error=self._result_is_error)
+                self._status.setText(t("tp.failed") if self._result_is_error else t("tp.done"))
+            if running:
+                self._status.setText(t("tp.running"))
+
     # ------------------------------------------------------------------- load
     def load(self, spec: ToolSpec, lang: str, output_dir: str,
-             values: Optional[Dict[str, Any]] = None) -> None:
+             values: Optional[Dict[str, Any]] = None, *, announce_prefill: bool = True) -> None:
         self.spec = spec
         self.lang = lang
         self._result = None
@@ -241,6 +280,14 @@ class ToolPanel(QWidget):
             item = self._form.takeAt(0)
             widget = item.widget()
             if widget is not None:
+                # Taking the item out of the layout only stops it from being
+                # laid out: the widget stays a visible child of the form host at
+                # its old geometry until deleteLater() is processed.  Detach it
+                # right away so a tool switch can never paint the previous
+                # tool's fields over the new ones (and so the widget tree always
+                # matches the tool that is currently loaded).
+                widget.hide()
+                widget.setParent(None)
                 widget.deleteLater()
         self._widgets.clear()
         self._rows.clear()
@@ -266,15 +313,20 @@ class ToolPanel(QWidget):
             if widget is not None and value not in (None, ""):
                 self._set_widget_value(widget, value, field=spec.field(key))
         if values:
-            self._prefill(values)
+            self._prefill(values, announce=announce_prefill)
         self._refresh_visibility()
         self._update_outdir_button(output_dir)
         self._run_button.setEnabled(True)
         self._scroll.verticalScrollBar().setValue(0)
 
     # ----------------------------------------------------------------- helpers
-    def _prefill(self, values: Dict[str, Any]) -> None:
-        """Fill fields from dropped files / a previous run."""
+    def _prefill(self, values: Dict[str, Any], announce: bool = True) -> None:
+        """Fill fields from dropped files / a previous run.
+
+        `announce=False` is used when the panel re-renders itself (a language
+        switch): nothing was dropped, so saying "Fields filled from dropped
+        files" would be a lie.
+        """
         from ..core.spec import K_FILES as _K_FILES
 
         filled = False
@@ -306,7 +358,7 @@ class ToolPanel(QWidget):
                     continue
             self._set_widget_value(widget, value, field)
             filled = True
-        if filled:
+        if filled and announce:
             self._status.setText(t("tp.prefilled"))
 
     def cli_command(self) -> str:
@@ -403,8 +455,9 @@ class ToolPanel(QWidget):
         label_row.addStretch(1)
         help_text = field.help_for(self.lang)
         if help_text:
-            hint = label("؟", "FieldHelp")
+            hint = label("؟" if self.lang == "fa" else "?", "FieldHelp")
             hint.setToolTip(help_text)
+            hint.setAccessibleName(help_text)
             hint.setFixedWidth(14)
             label_row.addWidget(hint)
         layout.addLayout(label_row)
@@ -432,12 +485,19 @@ class ToolPanel(QWidget):
         self._rows[field.key] = row
         self._form.insertWidget(self._form.count() - 1, row)
 
+    def _placeholder(self, field: Field) -> str:
+        """Hint text for a field; English mode never falls back to Persian."""
+        if self.lang == "en":
+            return field.placeholder_en or ("" if ARABIC_LETTER.search(field.placeholder or "")
+                                            else field.placeholder)
+        return field.placeholder or ""
+
     def _create_widget(self, field: Field) -> Optional[QWidget]:
         kind = field.kind
         if kind in (K_FILE, K_FILES, K_DIR, K_SAVE):
             widget = PathEdit(kind, field.filt, multiple=field.multiple)
             if field.placeholder:
-                widget.edit.setPlaceholderText(field.placeholder)
+                widget.edit.setPlaceholderText(self._placeholder(field))
             widget.changed.connect(self._refresh_visibility)
             return widget
         if kind == K_BOOL:
@@ -452,7 +512,6 @@ class ToolPanel(QWidget):
             for value, label_fa, label_en in field.choices:
                 text = label_en if self.lang == "en" else label_fa
                 widget.addItem(text, value)
-            widget.setEditable = getattr(widget, "setEditable", None)
             widget.currentIndexChanged.connect(self._refresh_visibility)
             return widget
         if kind == K_INT:
@@ -476,7 +535,7 @@ class ToolPanel(QWidget):
             return ColorButton(str(field.default or "#FFFFFF"))
         if kind == K_MULTILINE:
             widget = QPlainTextEdit()
-            widget.setPlaceholderText(field.placeholder or "")
+            widget.setPlaceholderText(self._placeholder(field))
             widget.setFixedHeight(110)
             return widget
         if kind in (K_TEXT, K_PASSWORD):
@@ -484,7 +543,7 @@ class ToolPanel(QWidget):
             widget.setClearButtonEnabled(True)
             if kind == K_PASSWORD:
                 widget.setEchoMode(QLineEdit.EchoMode.Password)
-            widget.setPlaceholderText(field.placeholder if self.lang != "en" else (field.placeholder_en or field.placeholder))
+            widget.setPlaceholderText(self._placeholder(field))
             return widget
         return QLineEdit()
 
@@ -708,6 +767,7 @@ class ToolPanel(QWidget):
         self.toastRequested.emit(t("tp.cancel"), "warning")
 
     def _show_result(self, result: RunResult, error: bool = False) -> None:
+        self._result_is_error = bool(error)
         self._result_card.setVisible(True)
         self._result_title.setText(t("tp.failed") if error else t("tp.done"))
         self._result_title.setStyleSheet(f"color:{self.palette_ref.danger if error else self.palette_ref.success};")
