@@ -9,8 +9,8 @@ from typing import Any, Dict, List
 
 from ..core.registry import tool
 from ..core.spec import (
-    K_CHOICE, K_DIR, K_FILE, K_FILES, K_INT, K_PASSWORD, K_SAVE, Field, RunContext, RunResult,
-    ToolError,
+    K_CHOICE, K_DIR, K_FILE, K_FILES, K_INT, K_PASSWORD, K_SAVE, Cancelled, Field, RunContext,
+    RunResult, ToolError,
 )
 from ..core.utils import ensure_dir, human_size, unique_path
 from ._helpers import files_or_raise, first_file, out_dir, reject_disk_root, save_target
@@ -193,21 +193,28 @@ def archive_decrypt(ctx: RunContext, v: Dict[str, Any]) -> RunResult:
             except ToolError:
                 tmp.unlink(missing_ok=True)
                 raise
-            except BaseException:
-                tmp.unlink(missing_ok=True)
-                raise
             except RuntimeError as exc:
+                # specific handler FIRST (audit F-14): a wrong password must not
+                # fall through to the generic catch below
+                tmp.unlink(missing_ok=True)
                 if "password" in str(exc).lower() or "encrypted" in str(exc).lower():
                     raise ToolError(ctx.M(
                         "رمز اشتباه است یا این فایل رمز دارد.",
                         "Wrong password, or the entry is encrypted."))
                 raise ToolError(ctx.M(f"استخراج ناموفق بود: {exc}", f"Extraction failed: {exc}"))
             except NotImplementedError as exc:
+                tmp.unlink(missing_ok=True)
                 raise ToolError(ctx.M(
                     f"این نوع رمزگذاری پشتیبانی نمی‌شود (احتمالاً AES): {exc}\n"
                     "با «ساخت ZIP رمزدار» خود WinGenius باز می‌شود.",
                     f"This encryption is not supported (probably AES): {exc}\n"
                     "ZIPs made by WinGenius itself always open."))
+            except Cancelled:
+                tmp.unlink(missing_ok=True)
+                raise                                    # cancellation must propagate
+            except BaseException:
+                tmp.unlink(missing_ok=True)
+                raise
             extracted.append(str(target))
     details = ctx.M(f"{len(extracted)} فایل در {folder} باز شد.",
                     f"{len(extracted)} file(s) extracted into {folder}.")
