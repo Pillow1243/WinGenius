@@ -97,6 +97,16 @@ jobs:
           "tag=$tag"        | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
+      # This is intentionally a release-only authorization gate. Ordinary CI
+      # and manual branch builds remain useful without owner-held credentials.
+      - name: Authorize signed release (owner key required)
+        if: steps.meta.outputs.tag != ''
+        shell: pwsh
+        env:
+          WINGENIUS_UPDATE_SIGNING_KEY: ${{ secrets.WINGENIUS_UPDATE_SIGNING_KEY }}
+          WINGENIUS_UPDATE_KEY_ID: ${{ vars.WINGENIUS_UPDATE_KEY_ID }}
+        run: python scripts/check_release.py --owner-release-auth
+
       - name: Sync version constants (tagged builds only)
         if: steps.meta.outputs.tag != ''
         shell: python

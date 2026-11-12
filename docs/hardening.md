@@ -2,13 +2,14 @@
 
 > Historical document: the notes below describe the earlier 5.x hardening pass,
 > not the current release. For current changes see `CHANGELOG.md` and `SECURITY.md`.
-> In particular, `ExecutionService` now exists; cancellation, resource locking,
-> sandboxing, encrypted indexing and Windows end-to-end validation remain open.
-> Cooperating vault writers now use a sidecar lock and stale-write detection;
-> this does not yet cover output files or the journal.
+> The 7.1 source now has a shared `ExecutionService`, but its presence alone is
+> not proof that every process boundary, blocking call, or resource writer is
+> comprehensively supervised. The remaining limits listed below are not claims
+> that those capabilities do not exist at all; they identify work not verified
+> end-to-end here.
 
-These changes are on the development branch. They do **not** mean that the
-published Windows 5.0.1 binary has been replaced, signed or independently tested.
+This historical document describes source changes and does **not** establish
+that a particular Windows binary has been replaced, signed or independently tested.
 
 ## Changes
 
@@ -68,7 +69,6 @@ The total in `docs/stats.json` counts this suite separately from the original
 - Code signing, Defender/SmartScreen testing and a new Windows binary release.
 - A process sandbox for arbitrary Python plugins.
 - Credential Manager/DPAPI references and secure unattended secret resolution.
-- A single ExecutionService/policy across CLI, workflows and scheduler.
 - Cross-process/per-resource locking for vaults, outputs and journal updates.
 - Guaranteed cancellation of blocking OS calls/subprocess trees and shutdown QA.
 - Encrypted search index, streaming large vaults or complete DLP for free text.

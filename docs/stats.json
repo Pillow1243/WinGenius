@@ -16,7 +16,7 @@
     "flow": 6
   },
   "suites": {
-    "functional": 641,
+    "functional": 643,
     "hardening": 56,
     "output": 112,
     "packaging": 30,
@@ -35,7 +35,7 @@
     "smoke": 1,
     "ui": 0
   },
-  "checks": 2337,
+  "checks": 2339,
   "coverage": null,
   "python": [
     "3.12",
