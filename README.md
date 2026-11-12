@@ -3,7 +3,7 @@
 <p align="center">
   <a href="https://github.com/Pillow1243/WinGenius/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Pillow1243/WinGenius/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="tools" src="https://img.shields.io/badge/tools-292-5B8CFF">
-  <img alt="checks" src="https://img.shields.io/badge/checks-2%2C337%20passing-2BD9A0">
+  <img alt="checks" src="https://img.shields.io/badge/checks-2%2C339%20passing-2BD9A0">
   <img alt="python" src="https://img.shields.io/badge/python-3.12%20%7C%203.13-3776AB">
   <img alt="platform" src="https://img.shields.io/badge/platform-Windows%2010%2F11-0078D6">
   <img alt="license" src="https://img.shields.io/badge/license-AGPL--3.0-orange">
@@ -472,7 +472,7 @@ WinGenius/
 
 ---
 
-## ۱۰. تست‌ها (۲٬۳۳۷ بررسی، ۰ خطا)
+## ۱۰. تست‌ها (۲٬۳۳۹ بررسی، ۰ خطا)
 
 ```bash
 python tests/smoke_test.py                 # ۱۵۴ تست عملکردی روی فایل‌های واقعی
@@ -502,9 +502,9 @@ python packaging/make_showcase.py                                # docs/showcase
 ```
 
 آخرین نتیجه (headless، `QT_QPA_PLATFORM=offscreen`): **smoke ۱۵۴** ·
-**functional ۶۴۱** · **output ۱۱۲** · **UI ۱٬۲۵۹ بررسی: ALL CHECKS PASSED** ·
+**functional ۶۴۳** · **output ۱۱۲** · **UI ۱٬۲۵۹ بررسی: ALL CHECKS PASSED** ·
 **security ۵۷** · **hardening ۵۶** · **persian ۲۸** · **packaging ۳۰** · **۲۹۲ ابزار، ۰ خطای بارگذاری** —
-جمعاً **۲٬۳۳۷ بررسی** (2,337 checks — آخرین `python scripts/stats.py --run`).
+جمعاً **۲٬۳۳۹ بررسی** (2,339 checks — آخرین `python scripts/stats.py --run`).
 این اعداد از `docs/stats.json` خوانده می‌شوند، نه دست‌نویس؛ هر عدد یک بررسیِ «رسیده‌شده» است
 (PASS + SKIP؛ مثلاً OCR بدون tesseract یا بررسیِ شبکه‌ی اختیاری SKIP می‌شود) و
 `python scripts/stats.py --check` هم‌خوانی آن‌ها را در CI تضمین می‌کند.
@@ -724,8 +724,8 @@ python tests\smoke_test.py && python tests\functional_test.py && python tests\ou
 ```
 
 Version 7.1 adds the flow/macro engine, the local JSON API hardening and the undo journal for file
-operations. Test totals: **154 smoke · 641 functional · 112 output · 1,259 UI · 57 security ·
-56 hardening · 28 Persian-PDF · 30 packaging = 2,337 checks**, all headless. Coverage is measured by
+operations. Test totals: **154 smoke · 643 functional · 112 output · 1,259 UI · 57 security ·
+56 hardening · 28 Persian-PDF · 30 packaging = 2,339 checks**, all headless. Coverage is measured by
 `scripts/quality_gate.py` from real `coverage.py` data; `pyproject.toml` enforces a **70%** `fail_under`
 gate so Windows-only modules cannot break CI.
 
