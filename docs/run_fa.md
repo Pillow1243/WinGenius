@@ -51,14 +51,14 @@ python main.py
 (`chcp 65001`، لازم برای فارسی) و اگر برنامه خطا داد پنجره را باز نگه می‌دارد.
 
 پنجره‌ی برنامه باید باز شود: سایدبار دسته‌ها در سمت راست (RTL)، جست‌وجوی سراسری با `Ctrl+K`،
-۲۵۴ ابزار.
+۲۹۲ ابزار.
 
 ### قدم ۶: اطمینان از سالم بودن نصب
 در همان کنسول (با `.venv` فعال):
 ```bat
 python main.py --doctor
 ```
-باید ببینی `App : WinGenius 5.0.1`، `Tools registered : 254` و همه‌ی کتابخانه‌ها با ✓.
+باید ببینی `App : WinGenius 7.1.0`، `Tools registered : 292` و همه‌ی کتابخانه‌ها با ✓.
 هر خطی که `✗` داشت، یعنی همان وابستگی نصب نشده — دقیقاً همان را نصب کن.
 
 ### قدم ۷ (اختیاری): قابلیت‌های اضافه
@@ -71,9 +71,9 @@ python main.py --doctor
 | **گفتار به متن / زیرنویس** | `python -m pip install faster-whisper` (مدل بار اول دانلود می‌شود) |
 | **ابزارهای DNS** | `python -m pip install dnspython` |
 | **تبدیل Word/Excel/PowerPoint به PDF** | `python -m pip install pywin32` + نصب بودن Office |
-| **«ارسال به» در Explorer** | `python main.py --install-sendto` (برداشتن: `--remove-sendto`) |
+| **«ارسال به» در Explorer** | `python main.py --install-sendto --yes` (برداشتن: `python main.py --remove-sendto --yes`؛ تغییر میان‌بر ویندوز تأیید `--yes` می‌خواهد) |
 
-همه‌ی این‌ها اختیاری‌اند: اگر نباشند، بقیه‌ی ۲۵۴ ابزار سالم کار می‌کند و همان ابزار پیام نصب می‌دهد.
+همه‌ی این‌ها اختیاری‌اند: اگر نباشند، بقیه‌ی ۲۹۲ ابزار سالم کار می‌کند و همان ابزار پیام نصب می‌دهد.
 
 ### قدم ۸ (اختیاری): میان‌بر روی دسکتاپ
 روی `run.bat` راست‌کلیک → **Send to → Desktop (create shortcut)** → روی میان‌بر راست‌کلیک →
@@ -81,23 +81,23 @@ python main.py --doctor
 
 ---
 
-## راه ۲ — ساختن exe روی گیت‌هاب (بدون ویندوز، توصیه‌شده)
+## راه ۲ — ساختن exe روی GitHub Actions (بدون ویندوز)
 
-این همان راهی است که یادت بود: **رانر ویندوزی گیت‌هاب** کار را انجام می‌دهد و فایل‌ها را
-همان‌جا به Release می‌چسباند. هیچ ابزاری روی لپ‌تاپ لازم نیست.
+Workflow ویندوزی می‌تواند artifact آزمایشی بسازد؛ اجرای آن یا ساخت artifact به‌تنهایی
+اثبات نصب، ارتقا یا آمادگی انتشار روی Windows 10/11 نیست.
 
-1. برو به **Actions** → **Build Windows exe** → **Run workflow** (شاخه `main`).
-   بعد از ~۱۰ دقیقه، پایین صفحه‌ی همان اجرا، بخش **Artifacts**:
-   `WinGenius-windows` = `WinGenius.exe` + `WinGenius-Setup-5.0.1.exe` + `WinGenius-portable.zip`.
-2. برای اینکه **همه** بتوانند نصب کنند (و در صفحه‌ی Releases بماند)، یا:
-   - یک تگ بزن: `git tag v5.0.1 && git push origin v5.0.1` → خودکار ساخته و به همان Release
-     چسبانده می‌شود؛ یا
-   - **Releases → Draft a new release** بساز و Publish کن (رویداد `release` هم همین کار را می‌کند).
-3. تمام. فایل‌ها با یک لینک ثابت در دسترس‌اند:
-   `https://github.com/Pillow1243/WinGenius/releases/latest`
+1. در **Actions** → **Build Windows exe** → **Run workflow** (شاخه `main`) اجرا را آغاز کنید.
+2. اگر workflow موفق شد، artifact همان اجرا را از بخش **Artifacts** دریافت کنید؛ نام خروجی‌ها
+   را از خودِ همان run بررسی کنید، چون نسخه از source یا tag محاسبه می‌شود.
+3. انتشار با tag عمداً تا زمان provision شدن کلید واقعی Ed25519 تحت کنترل مالک fail-closed است.
+   کلید ساختگی نسازید، gate را دور نزنید و artifact بدون امضای معتبر را به‌عنوان release رسمی
+   توزیع نکنید. انتشار 7.1.0 فعلاً اثبات/ادعا نمی‌شود.
 
-نکته: exe امضای کد ندارد، پس کاربر بار اول باید **More info → Run anyway** بزند
-(یا در سازمان، فایل را allowlist کند). این در `SECURITY.md` هم آمده است.
+تنها صفحه‌ی مرجع releaseها:
+`https://github.com/Pillow1243/WinGenius/releases`
+
+SmartScreen/Authenticode، نصب تمیز، upgrade و rollback باید روی Windows واقعی/VM ارزیابی شوند؛
+وجود artifact در Actions جایگزین این آزمون‌ها نیست.
 
 ---
 
@@ -116,11 +116,12 @@ packaging\build.bat
 |---|---|---|
 | `packaging\build.bat` | `dist\WinGenius.exe` | یک فایل، ساده برای دادن به دیگران، بالا آمدن کندتر |
 | `python packaging\build_exe.py --onedir` | `dist\WinGenius\` | بالا آمدن سریع‌تر، پوشه‌ی چندفایلی |
-| `python packaging\build_exe.py --installer` | `dist\WinGenius-Setup-5.0.1.exe` | نیاز به **Inno Setup 6** نصب‌شده |
+| `python packaging\build_exe.py --installer` | `dist\WinGenius-Setup-7.1.0.exe` | نیاز به **Inno Setup 6** نصب‌شده |
 | `python packaging\build_exe.py --clean` | — | `build/` و `dist/` را اول پاک می‌کند |
 
-exe امضای دیجیتال کد (code signing) **ندارد**، پس SmartScreen ممکن است بار اول هشدار بدهد:
-**More info → Run anyway**. این طبیعی است و در بخش «چه چیزی عمداً انجام نشد» هم آمده.
+artifact محلی ممکن است امضای دیجیتال نداشته باشد. هشدار SmartScreen را با **Run anyway** دور نزنید؛
+فقط artifact را برای توسعه/آزمون ایزوله نگه دارید. انتشار رسمی تا provision کلید مالک و اعتبارسنجی
+امضا fail-closed است.
 
 ---
 
@@ -133,36 +134,33 @@ python3 -m venv .venv
 ./run.sh                 # گرافیکی
 ./run.sh --doctor        # وضعیت محیط
 ```
-`run.sh` تازه اضافه شده: `.venv` را خودش پیدا می‌کند، اگر نبود `python3` را استفاده می‌کند و اگر
-وابستگی‌ها نصب نباشند، دقیقاً دستور نصب را چاپ می‌کند (تست شد، همان پیام را داد).
+`run.sh` اسکریپت اجرای مخزن است: `.venv` را پیدا می‌کند و اگر وابستگی‌ها ناقص باشند، راهنمای نصب
+چاپ می‌کند. رفتار آن را در همان محیطی که اجرا می‌کنید بررسی کنید؛ این دستورالعمل به‌تنهایی آزمون GUI نیست.
 
 اگر روی لینوکس **بدون نمایشگر** هستی (سرور، WSL، SSH):
 ```bash
 QT_QPA_PLATFORM=offscreen ./run.sh --list --quiet --category pdf
 ```
 
-خروجی واقعی اجرای من در همین محیط:
+نمونه‌ی شکل خروجی (مقادیر وابسته به محیط است؛ اجرای واقعی باید روی دستگاه شما بررسی شود):
 
 ```
 $ python main.py --doctor
-App                   : WinGenius 5.0.1
-Python                : 3.13.16 (x86_64)
-OS                    : Linux 6.1.158+
-Data folder           : /home/user/.config/WinGenius
-Data version          : 2 (current)
-✓ ffmpeg              : …/imageio_ffmpeg/binaries/ffmpeg-linux-x86_64-v9.0.2
-✓ tesseract (OCR)     : /usr/bin/tesseract
-Tools registered      : 254
+App                   : WinGenius 7.1.0
+Python                : 3.12.x or 3.13.x
+OS                    : <your operating system>
+Data folder           : <your user profile>/WinGenius
+Tools registered      : 292
 ```
 
 ---
 
 ## بدون پنجره: خط فرمان (در ویندوز و لینوکس یکسان)
 
-همه‌ی این‌ها را اجرا کردم و خروجی‌شان را دیدم:
+نمونه‌ی فرمان‌های CLI (موفقیت و اثر هرکدام به ورودی و سیستم شما بستگی دارد):
 
 ```bat
-python main.py --list                              :: فهرست ۲۵۴ ابزار
+python main.py --list                              :: فهرست ۲۹۲ ابزار
 python main.py --list --json --category pdf        :: خروجی JSON برای اسکریپت
 python main.py --describe pdf_to_images            :: فیلدهای یک ابزار + نوعشان
 python main.py --run pdf_to_images --file "C:\in.pdf" --set fmt=jpg --set dpi=150 --out "C:\out"
@@ -175,7 +173,8 @@ python main.py --run-schedule 1
 python main.py --macros                            :: کتابخانه‌ی ماکرو
 python main.py --run-macro pack.json --dry-run
 python main.py --serve --port 8770                 :: API محلی JSON
-python main.py --install-sendto / --remove-sendto  :: منوی «ارسال به» ویندوز
+python main.py --install-sendto --yes               :: افزودن میان‌بر Explorer (تأیید صریح)
+python main.py --remove-sendto --yes                :: برداشتن میان‌بر Explorer
 ```
 
 نمونه‌ی واقعی اجرای من:
@@ -189,10 +188,10 @@ $ python main.py --run pdf_to_images --file sample.pdf --set fmt=png --set dpi=1
 `--serve` موقع بالا آمدن یک **توکن** چاپ می‌کند؛ بدون آن پاسخ `401 {"error": "unauthorised"}` است:
 ```
 $ python main.py --serve --port 8770
-WinGenius API → http://127.0.0.1:8770   token: LjDNjxEzSl70Pf6npeAX0QdNQx5qpB90
+WinGenius API → http://127.0.0.1:8770   token: <token>
 
-$ curl -H "X-WinGenius-Token: LjDN…" http://127.0.0.1:8770/health
-{"app": "WinGenius", "version": "5.0.1", "status": "ok", "tools": 254, "uptime": 5.8,
+$ curl -H "X-WinGenius-Token: <token>" http://127.0.0.1:8770/health
+{"app": "WinGenius", "version": "7.1.0", "status": "ok", "tools": 292, "uptime": 5.8,
  "guard": {"rate_limit": 300, "rate_window": 60.0, "rejected": 0, "max_body": 1048576,
            "allow_query_token": false}}
 ```

@@ -1024,13 +1024,12 @@ def test_cli(fixtures: dict) -> None:
     journal_store().clear()
     code = run_cli(["--run", "no_such_tool"])
     check("cli rejects an unknown tool", code == 2, str(code))
+    # Missing --yes must fail closed on every platform; never mutate a runner's
+    # Explorer SendTo folder as a side effect of the functional test suite.
     code = run_cli(["--install-sendto"])
-    if sys.platform.startswith("win"):
-        check("cli --install-sendto exits 0 on Windows", code == 0, str(code))
-    else:
-        check("cli --install-sendto fails cleanly off Windows", code == 1, str(code))
+    check("cli --install-sendto requires explicit confirmation", code == 2, str(code))
     code = run_cli(["--remove-sendto"])
-    check("cli --remove-sendto never crashes", code in (0, 1), str(code))
+    check("cli --remove-sendto requires explicit confirmation", code == 2, str(code))
 
 
 

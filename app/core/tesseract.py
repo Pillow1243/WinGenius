@@ -9,7 +9,6 @@ from __future__ import annotations
 import os
 import re
 import shutil
-import subprocess
 from pathlib import Path
 from typing import List, Set
 
@@ -86,7 +85,9 @@ def installed_langs(exe: str = "") -> Set[str]:
     exe = exe or find_tesseract()
     if exe:
         try:
-            out = subprocess.run([exe, "--list-langs"], capture_output=True, text=True, timeout=20)
+            from .processes import run_process
+
+            out = run_process([exe, "--list-langs"], timeout=20)
             lines = [line.strip() for line in (out.stdout or "").splitlines()]
             langs = {line for line in lines if line and " " not in line and ":" not in line}
             if langs:

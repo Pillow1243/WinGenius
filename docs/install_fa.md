@@ -1,13 +1,17 @@
-# نصب و اجرای WinGenius 5.0
+# نصب و اجرای WinGenius
 
-سه راه دارید. اگر فقط می‌خواهید برنامه را ببینید، **راه ۲ (اجرا از سورس)** سریع‌ترین و
-مطمئن‌ترین است؛ اگر برای دیگران می‌خواهید، **راه ۳** یک فایل `.exe` می‌سازد.
+Source metadata این checkout نسخه‌ی 7.1.0 است؛ این سند دستورالعمل است، نه مدرک نصب یا انتشار Windows.
+کلید واقعی Ed25519 تحت کنترل مالک و امضای ناشر برای artifact فعلاً تأیید نشده‌اند. تا provision و
+اعتبارسنجی آن‌ها، artifact unsigned را release رسمی تلقی یا توزیع نکنید. جزئیات در `SECURITY.md`.
+
+برای کار توسعه، **اجرا از سورس** را انتخاب کنید؛ ساخت exe محلی هم به‌تنهایی آزمون نصب تمیز یا
+آمادگی محصول برای Windows 10/11 را ثابت نمی‌کند.
 
 ---
 
 ## راه ۱ — نصب‌کننده‌ی آماده (فقط اگر از قبل ساخته شده باشد)
 
-فایل `WinGenius-Setup-5.0.1.exe` را اجرا کنید: نصب در `%LOCALAPPDATA%\Programs\WinGenius`،
+فایل `WinGenius-Setup-7.1.0.exe` را اجرا کنید: نصب در `%LOCALAPPDATA%\Programs\WinGenius`،
 ساخت میان‌بر در Start Menu و دسکتاپ (اختیاری)، و صفحه‌ی مجوز AGPL در همان مرحله.
 
 > در این پروژه فعلاً پوشه‌ی `dist/` وجود ندارد، چون `.exe` فقط **روی ویندوز** ساخته می‌شود و
@@ -15,9 +19,9 @@
 
 ---
 
-## راه ۲ — اجرا از سورس (تأییدشده)
+## راه ۲ — اجرای سورس برای توسعه
 
-نیازمندی: **پایتون ۳.۱۱ یا بالاتر، ۶۴ بیتی** (ویندوز/لینوکس/مک).
+نیازمندی: **پایتون ۳.۱۲ یا بالاتر، ۶۴ بیتی** (ویندوز/لینوکس/مک).
 
 ### ویندوز (PowerShell)
 
@@ -51,9 +55,10 @@ python main.py
 > بدون آن بسته‌ها Qt با خطای `ImportError: libxkbcommon.so.0` بالا نمی‌آید — این تنها
 > اصطکاک واقعی روی لینوکس است.
 
-**آنچه در یک venv کاملاً تازه تست شد:** نصب همه‌ی `requirements.txt` بدون خطا، سپس
-`python main.py --self-test` با کد خروج `0`، `python main.py --version` → `WinGenius 5.0.1`
-و بارگذاری **۲۵۴ ابزار** (`--list`).
+این فرمان‌ها برای محیط مجازی تازه هستند. اجرای موفق آن‌ها باید در همان سیستم شما با
+`python main.py --self-test`, `python main.py --version` و `python main.py --list` بررسی شود؛
+در این سند نتیجه‌ی اجرای تازه یا آزمون نصب Windows ادعا نمی‌شود. Source metadata فعلی 7.1.0 و
+شمار ابزارهای ثبت‌شده در آمار ۲۹۲ است.
 
 ### اگر فایل اجرایی می‌خواهید ولی نمی‌خواهید بیلد کنید
 
@@ -96,7 +101,7 @@ python packaging\build_exe.py --installer  # + نصب‌کننده (نیاز ب�
 |---|---|
 | برنامه‌ی تک‌فایل | `dist\WinGenius.exe` |
 | حالت پوشه‌ای | `dist\WinGenius\WinGenius.exe` |
-| نصب‌کننده | `dist\WinGenius-Setup-5.0.1.exe` |
+| نصب‌کننده | `dist\WinGenius-Setup-7.1.0.exe` |
 
 Inno Setup 6 را از <https://jrsoftware.org/isdl.php> نصب کنید (یا `winget install JRSoftware.InnoSetup`)
 و مطمئن شوید `iscc.exe` در `PATH` است.
@@ -104,7 +109,7 @@ Inno Setup 6 را از <https://jrsoftware.org/isdl.php> نصب کنید (یا `
 قبل از انتشار، بررسی فایل‌های ساخت:
 
 ```powershell
-python packaging\verify_package.py         # ۲۷ بررسی: نسخه، spec، installer، آیکون، مجوز
+python packaging\verify_package.py         # ۳۰ بررسی: نسخه، spec، installer، آیکون، مجوز
 ```
 
 ---
@@ -128,8 +133,8 @@ python packaging\verify_package.py         # ۲۷ بررسی: نسخه، spec، 
 
 ```powershell
 # راست‌کلیک روی هر فایل → Send to → WinGenius
-WinGenius.exe --install-sendto
-WinGenius.exe --remove-sendto
+WinGenius.exe --install-sendto --yes
+WinGenius.exe --remove-sendto --yes
 
 # داده‌ها کنار exe (فلش، سیستم مشترک) به‌جای %APPDATA%
 WinGenius.exe --portable
@@ -164,8 +169,8 @@ WinGenius.exe --sendto "C:\in\report.pdf" "C:\in\photo.jpg"
 |---|---|
 | `ModuleNotFoundError: No module named 'PySide6'` | venv فعال نیست یا `pip install -r requirements.txt -c constraints.txt` اجرا نشده |
 | `ImportError: libxkbcommon.so.0` (لینوکس) | بسته‌های سیستمی Qt را نصب کنید (بالا) |
-| `An unexpected error occurred` هنگام اجرا | `%APPDATA%\WinGenius\logs\` را ببینید؛ نسخه‌ی پایتون باید ≥ ۳.۱۱ باشد |
-| ویندوز هشدار SmartScreen می‌دهد | exe امضای دیجیتال ندارد؛ «More info → Run anyway» یا خودتان کد را از سورس اجرا کنید |
+| `An unexpected error occurred` هنگام اجرا | `%APPDATA%\WinGenius\logs\` را ببینید؛ نسخه‌ی پایتون باید ≥ ۳.۱۲ باشد |
+| ویندوز هشدار SmartScreen می‌دهد | artifact بدون امضای معتبر را با «Run anyway» دور نزنید؛ فقط release معتبر و تأییدشده را نصب کنید (فعلاً blocker امضای مالک باز است) |
 | `Another instance is already running` | نسخه‌ی اول باز است؛ یا آن را ببندید یا `--allow-multi` |
 | OCR می‌گوید زبان پیدا نشد | `fas.traineddata` را در پوشه‌ی `tessdata` بگذارید |
 | ابزارهای ویدیو کار نمی‌کنند | `pip install imageio-ffmpeg` (داخل venv) یا ffmpeg سیستمی در `PATH` |

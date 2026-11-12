@@ -390,6 +390,7 @@ class SettingsPanel(QWidget):
         self._sendto_hint.setText(prefix + str(shortcut))
 
     def _sendto(self, action: str) -> None:
+        from ..core.execution import ExecutionPolicy, execution_service
         from ..core.registry import get as get_tool
         from ..core.spec import RunContext
 
@@ -398,7 +399,13 @@ class SettingsPanel(QWidget):
             return
         self._sendto_hint.setText("…")
         try:
-            result = tool.run(RunContext(lang=self.lang), {"action": action})
+            # Clicking the dedicated install/remove control is the user's
+            # explicit confirmation; execution still passes through risk
+            # classification, auditing, secret scrubbing and policy handling.
+            policy = ExecutionPolicy.for_gui(confirmed=True, source="settings-sendto")
+            result = execution_service.execute(
+                tool, {"action": action}, RunContext(lang=self.lang), policy=policy
+            )
             self._sendto_hint.setText(result.message)
         except Exception as exc:
             self._sendto_hint.setText(str(exc)[:160])
