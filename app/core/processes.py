@@ -73,7 +73,7 @@ def _windows_job_for(proc: subprocess.Popen) -> int | None:
                 ("PeakJobMemoryUsed", ctypes.c_size_t),
             ]
 
-        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
         kernel.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
         kernel.CreateJobObjectW.restype = wintypes.HANDLE
         kernel.SetInformationJobObject.argtypes = [
@@ -91,7 +91,7 @@ def _windows_job_for(proc: subprocess.Popen) -> int | None:
         limits.BasicLimitInformation.LimitFlags = 0x00002000  # KILL_ON_JOB_CLOSE
         ok = kernel.SetInformationJobObject(
             handle, 9, ctypes.byref(limits), ctypes.sizeof(limits)
-        ) and kernel.AssignProcessToJobObject(handle, wintypes.HANDLE(proc._handle))
+        ) and kernel.AssignProcessToJobObject(handle, wintypes.HANDLE(proc._handle))  # type: ignore[attr-defined]
         if not ok:
             kernel.CloseHandle(handle)
             return None
@@ -107,7 +107,7 @@ def _close_windows_job(handle: int | None) -> None:
         import ctypes
         from ctypes import wintypes
 
-        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
         kernel.CloseHandle.argtypes = [wintypes.HANDLE]
         kernel.CloseHandle(wintypes.HANDLE(handle))
     except Exception:
@@ -134,7 +134,7 @@ def _stop_tree(proc: subprocess.Popen, grace: float, job_handle: int | None = No
                 import ctypes
                 from ctypes import wintypes
 
-                kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+                kernel = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
                 kernel.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
                 if kernel.TerminateJobObject(wintypes.HANDLE(job_handle), 1):
                     try:
@@ -290,7 +290,7 @@ def run_process(
             remaining = None if deadline is None else deadline - time.monotonic()
             if remaining is not None and remaining <= 0:
                 out, err = _stop_tree(proc, terminate_grace, job_handle)
-                raise subprocess.TimeoutExpired(argv, timeout, output=out, stderr=err)
+                raise subprocess.TimeoutExpired(argv, float(timeout) if timeout is not None else 0.0, output=out, stderr=err)
             # Short polling keeps cancellation responsive without busy-spinning.
             wait_for = 0.1 if remaining is None else min(0.1, max(0.001, remaining))
             try:
