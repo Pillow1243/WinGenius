@@ -186,18 +186,11 @@ def invoke(tool_id: str, ctx: RunContext, values: Dict, policy=None) -> RunResul
     """Execute a registered tool through `ExecutionService` with policy enforcement."""
     from .execution import ExecutionPolicy, execution_service
 
-    active_policy = policy or ctx.policy or ExecutionPolicy.for_cli(yes=True)
-    outcome = execution_service().execute(
-        tool_id,
-        values,
-        policy=active_policy,
-        lang=ctx.lang,
-        output_dir=ctx.output_dir,
-        on_progress=ctx._progress,
-        on_message=ctx._message,
-        cancel_event=ctx._cancel,
-    )
-    return outcome.result or RunResult()
+    # A convenience API must fail closed: callers need to pass an explicit
+    # confirmation policy before invoking destructive or elevated tools.
+    active_policy = policy or ctx.policy or ExecutionPolicy.for_cli(yes=False)
+    result = execution_service.execute(tool_id, values, ctx, policy=active_policy)
+    return result or RunResult()
 
 
 def iter_keywords(spec: ToolSpec) -> Iterable[str]:

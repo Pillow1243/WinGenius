@@ -20,8 +20,8 @@
     WinGenius.exe --macros               (list the macro library)
     WinGenius.exe --run-macro pack.json [--set folder=C:/in] [--dry-run]
     WinGenius.exe --serve [--port 8770]  (local JSON API)
-    WinGenius.exe --install-sendto       (add "Send to -> WinGenius" to Explorer)
-    WinGenius.exe --remove-sendto        (take it back out)
+    WinGenius.exe --install-sendto --yes (add the Explorer SendTo shortcut)
+    WinGenius.exe --remove-sendto --yes  (remove the shortcut)
     WinGenius.exe --help                 (this text)
 
 Exit codes: 0 success, 1 tool failure, 2 usage error.
@@ -611,6 +611,7 @@ def run_cli(argv: List[str]) -> int:
         return 0 if item["status"] != "failed" else 1
 
     if mode in ("sendto-install", "sendto-remove"):
+        from .execution import ExecutionPolicy, PolicyDeniedError, execution_service
         from .spec import RunContext as _RunContext
 
         sendto_tool = get_tool("sendto_install")
@@ -618,8 +619,15 @@ def run_cli(argv: List[str]) -> int:
             _print("sendto_install tool is missing")
             return 2
         sendto_action = "install" if mode == "sendto-install" else "remove"
+        policy = ExecutionPolicy.for_cli(yes=bool(options.get("yes")))
         try:
-            result = sendto_tool.run(_RunContext(lang=options["lang"]), {"action": sendto_action})
+            result = execution_service.execute(
+                sendto_tool, {"action": sendto_action}, _RunContext(lang=options["lang"]),
+                policy=policy,
+            )
+        except PolicyDeniedError as exc:
+            _print(str(exc))
+            return 2
         except ToolError as exc:
             _print(str(exc))
             return 1

@@ -91,7 +91,7 @@ Version 4.2 added:
   (tiny → large-v3), fully local; without an engine it prints the exact install command.
 * **Frictionless OCR** — `ocr_setup` reports the engine, remembers an unusual install path and
   downloads Persian/English/Arabic language data. Every OCR tool now honours that path.
-* **Windows “Send to”** — `--install-sendto` adds the right-click shortcut; `--sendto <files>` opens
+* **Windows “Send to”** — `--install-sendto --yes` adds the right-click shortcut (explicit confirmation required); `--sendto <files>` opens
   the app with those files in the smart-drop sheet.
 * **Portable mode** — `--portable`, `WINGENIUS_PORTABLE=1` or a `portable.flag` file keeps all data
   next to the exe.

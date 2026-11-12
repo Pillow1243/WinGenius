@@ -128,7 +128,7 @@
 | **حذف واقعی محتوا از PDF** | ابزار تازه‌ی «Redaction»: عبارت یا ناحیه را انتخاب می‌کنید و متن **از محتوای فایل پاک می‌شود**، نه این‌که زیر یک مستطیل سیاه پنهان شود. بعد از ذخیره، خودِ ابزار دوباره فایل را باز می‌کند و تأیید می‌کند که عبارت دیگر استخراج نمی‌شود. (تفاوتش با «سیاه‌کردن» ظاهری همان تفاوت امنیت با تظاهر است.) |
 | **گفتار به متن + زیرنویس خودکار** | صدا یا ویدیو → متن و/یا `.srt` با Whisper، کاملاً محلی (هیچ آپلودی نیست). اگر موتور نصب نباشد، پیام دقیق نصب می‌دهد نه خطای خام. |
 | **OCR بدون دردسر** | ابزار «راه‌اندازی OCR»: وضعیت موتور را می‌گوید، مسیر نصب غیرمعمول را ثبت می‌کند و بسته‌ی زبان فارسی/عربی را **دانلود** می‌کند. الان همه‌ی ابزارهای OCR از همان مسیر استفاده می‌کنند (قبلاً فقط `PATH` را می‌دیدند). |
-| **«ارسال به» ویندوز** | یک میان‌بر در منوی راست‌کلیک Explorer: روی هر فایلی «Send to → WinGenius» بزنید و همان فایل‌ها داخل صفحه‌ی پیشنهاد هوشمند باز می‌شوند (`--install-sendto` از خط فرمان هم هست). |
+| **«ارسال به» ویندوز** | یک میان‌بر در منوی راست‌کلیک Explorer: روی هر فایلی «Send to → WinGenius» بزنید و همان فایل‌ها داخل صفحه‌ی پیشنهاد هوشمند باز می‌شوند (`--install-sendto --yes` از خط فرمان هم هست؛ تغییر میان‌بر به تأیید صریح نیاز دارد). |
 | **حالت پرتابل** | با `--portable`، متغیر `WINGENIUS_PORTABLE=1` یا یک فایل `portable.flag` کنار exe، همه‌ی داده‌ها کنار برنامه می‌نشینند (فلش، سیستم مشترک، بدون اثر در پروفایل). |
 | **دسترس‌پذیری** | هر فیلد فرم و هر دکمه‌ی نوار کناری نام دسترس‌پذیر و توضیح دارد و با تغییر زبان به‌روز می‌شود — تا صفحه‌خوان‌ها «ویرایشگر بی‌نام» نگویند. تست‌ها همه‌ی ۵۰۰+ فیلد را بازبینی می‌کنند. |
 | **۳۸ بررسی تازه‌ی خروجی** | پوشش خروجی برای ابزارهای PDF که قبلاً فقط «کرش نکردن»شان تست می‌شد: شماره‌صفحه، متادیتا، جست‌وجو، Markdown، صفحه‌ی خالی، ترتیب صفحه، برش (CropBox)، جزوه و پوستر. |
@@ -241,9 +241,10 @@ python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt
 
 ## ۴. ساخت exe (ویندوز یا گیت‌هاب)
 
-ساده‌ترین راه، **بدون ویندوز**: تب **Actions → Build Windows exe → Run workflow**. رانر ویندوزی
-گیت‌هاب `WinGenius.exe`، نصب‌کننده‌ی `WinGenius-Setup-<version>.exe` و نسخه‌ی پرتابل را می‌سازد،
-دودی‌تست می‌کند و اگر با تگ اجرا شود، به همان **Release** می‌چسباند.
+Workflow ویندوزی در **Actions → Build Windows exe → Run workflow** می‌تواند artifact بسازد؛ این
+به‌تنهایی اثبات نصب/upgrade روی Windows 10/11 نیست. Tagged release تا provision شدن کلید واقعی
+Ed25519 تحت کنترل مالک fail-closed است؛ gate را دور نزنید یا artifact unsigned را release رسمی
+معرفی نکنید. انتشار 7.1.0 فعلاً ادعا نمی‌شود.
 
 روی ویندوز خودت:
 
@@ -255,11 +256,11 @@ python packaging\build_exe.py --onedir    :: → dist\WinGenius\     (استار
 python packaging\build_exe.py --installer :: → dist\WinGenius-Setup.exe (Inno Setup)
 ```
 
-- هیچ پنجره‌ی کنسولی باز نمی‌شود؛ آیکون و اطلاعات نسخه (5.0.1) داخل exe جاسازی می‌شوند.
+- هیچ پنجره‌ی کنسولی باز نمی‌شود؛ آیکون و اطلاعات نسخه (7.1.0) داخل exe جاسازی می‌شوند.
 - ماژول‌های ابزار داینامیک import می‌شوند؛ `packaging/WinGenius.spec` با `collect_submodules("app.tools")` آن‌ها را جمع می‌کند.
 - نصب‌کننده با [Inno Setup 6](https://jrsoftware.org/isdl.php): میان‌بر Start Menu، آیکون دسکتاپ، اجرای خودکار و حذف‌کننده.
 
-> **SmartScreen:** exe بدون امضای دیجیتال ممکن است هشدار بدهد → *More info → Run anyway*.
+> **انتشار امن:** امضای ناشر/Authenticode برای artifact ویندوز اینجا تأیید نشده و کلید Ed25519 مالک هنوز provision نشده است؛ artifact unsigned را به‌عنوان نسخه‌ی رسمی نصب یا توزیع نکنید. جزئیات در `SECURITY.md`.
 
 ---
 
@@ -477,7 +478,7 @@ WinGenius/
 ```bash
 python tests/smoke_test.py                 # ۱۵۴ تست عملکردی روی فایل‌های واقعی
 python tests/smoke_test.py pdf image v3    # فقط چند گروه
-python tests/functional_test.py            # ۶۳۸ تست موتور، ابزارها و اجزای نسخه‌های ۳ تا ۷.۰
+python tests/functional_test.py            # ۶۴۳ بررسی موتور، ابزارها و اجزای نسخه‌های ۳ تا ۷.۱
 python tests/functional_test.py vault api v42 v50 v60flows v60tools  # فقط گروه‌های تازه
 python tests/functional_test.py scale      # بار سنگین: ۶۰۰ فایل + ایندکس ۲۵۰ سند
 python tests/output_test.py sign          # امضا → بررسی → دستکاری
@@ -486,7 +487,7 @@ python tests/output_test.py                # ۱۱۱ بررسی «درستی خر
 python tests/output_test.py pdf image      # فقط یک دسته از تست‌های خروجی
 python tests/ui_test.py                    # ۱٬۲۵۹ بررسی رابط: ۲۹۲ فرم، شیت‌ها، صف کارها، دسترس‌پذیری
 python -m pytest tests/persian_pdf_test.py -q   # ۲۸ تست موتور فارسی PDF (گلیف، ترتیب، نیم‌فاصله، Word، واترمارک)
-python packaging/verify_package.py         # ۲۷ بررسی ورودی‌های ساخت exe/نصب‌کننده
+python packaging/verify_package.py         # ۳۰ بررسی ورودی‌های ساخت exe/نصب‌کننده
 python main.py --self-test                 # اجرای دودی بدون کلیک
 ```
 
