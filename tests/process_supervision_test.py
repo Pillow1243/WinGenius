@@ -28,14 +28,14 @@ def test_timeout_kills_direct_child_and_reports_timeout():
 
 def test_cancellation_stops_process_promptly():
     cancelled = threading.Event()
-    errors: list[BaseException] = []
+    errors: list[Exception] = []
 
     def run() -> None:
         try:
             run_process(
                 [sys.executable, "-c", "import time; time.sleep(30)"], timeout=20, cancel_event=cancelled
             )
-        except BaseException as exc:
+        except Exception as exc:
             errors.append(exc)
 
     thread = threading.Thread(target=run)

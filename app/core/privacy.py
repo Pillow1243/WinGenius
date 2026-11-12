@@ -143,6 +143,7 @@ def atomic_json_write(path: Path, payload: Any) -> None:
             try:
                 os.unlink(name)
             except FileNotFoundError:
+                # os.replace already consumed the temp path on success.
                 pass
 
 

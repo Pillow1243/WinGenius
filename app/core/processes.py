@@ -8,6 +8,8 @@ an OS security sandbox: children retain the current user's privileges.
 
 from __future__ import annotations
 
+import ctypes
+import ctypes.wintypes as wintypes
 import os
 import signal
 import subprocess
@@ -34,8 +36,6 @@ def _windows_job_for(proc: subprocess.Popen) -> int | None:
     if not IS_WINDOWS:
         return None
     try:  # pragma: no cover - exercised on Windows CI
-        import ctypes
-        from ctypes import wintypes
 
         class IO_COUNTERS(ctypes.Structure):
             _fields_ = [
@@ -97,6 +97,8 @@ def _windows_job_for(proc: subprocess.Popen) -> int | None:
             return None
         return int(handle)
     except Exception:
+        # Job Objects are an optional hardening layer; callers retain the
+        # bounded taskkill/process fallback when this Windows API is unavailable.
         return None
 
 
@@ -104,13 +106,11 @@ def _close_windows_job(handle: int | None) -> None:
     if handle is None:
         return
     try:  # pragma: no cover - exercised on Windows CI
-        import ctypes
-        from ctypes import wintypes
-
         kernel = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
         kernel.CloseHandle.argtypes = [wintypes.HANDLE]
         kernel.CloseHandle(wintypes.HANDLE(handle))
     except Exception:
+        # Closing an invalid/unsupported handle is best-effort during cleanup.
         pass
 
 
@@ -122,26 +122,28 @@ def _stop_tree(proc: subprocess.Popen, grace: float, job_handle: int | None = No
         try:
             proc.send_signal(getattr(signal, "CTRL_BREAK_EVENT", signal.SIGTERM))
         except OSError:
+            # The root may have exited between the timeout and signal delivery.
             pass
         try:
             return proc.communicate(timeout=max(0.0, grace))
         except subprocess.TimeoutExpired:
+            # Graceful shutdown did not finish; continue to Job Object/taskkill.
             pass
         # A Job Object is the primary Windows tree boundary and also works if
         # the root process already exited while descendants retained a pipe.
         if job_handle is not None:
             try:
-                import ctypes
-                from ctypes import wintypes
-
                 kernel = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
                 kernel.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
                 if kernel.TerminateJobObject(wintypes.HANDLE(job_handle), 1):
                     try:
                         return proc.communicate(timeout=max(0.1, grace))
                     except subprocess.TimeoutExpired:
+                        # Job termination did not drain pipes; continue to taskkill.
                         pass
             except Exception:
+                # Job APIs can be unavailable under nested/managed job policies;
+                # the explicit taskkill fallback below still targets the tree.
                 pass
         # taskkill is a Windows inbox utility and /T handles descendants which
         # did not cooperate with the bounded graceful shutdown.
@@ -162,21 +164,25 @@ def _stop_tree(proc: subprocess.Popen, grace: float, job_handle: int | None = No
             try:
                 killer.wait(timeout=1.0)
             except subprocess.TimeoutExpired:
+                # The taskkill helper was itself stopped; process.kill remains below.
                 pass
         except OSError:
             try:
                 proc.kill()
             except OSError:
+                # The owned process may already have exited during fallback.
                 pass
     else:
         try:
             os.killpg(proc.pid, signal.SIGTERM)
         except ProcessLookupError:
+            # The process group already exited before the signal was delivered.
             pass
         except OSError:
             try:
                 proc.terminate()
             except OSError:
+                # The direct process likewise may have exited during fallback.
                 pass
 
     try:
@@ -186,16 +192,19 @@ def _stop_tree(proc: subprocess.Popen, grace: float, job_handle: int | None = No
             try:
                 os.killpg(proc.pid, signal.SIGKILL)
             except ProcessLookupError:
+                # The group is already gone; no further kill is needed.
                 pass
             except OSError:
                 try:
                     proc.kill()
                 except OSError:
+                    # The direct child may have exited between the two attempts.
                     pass
         else:
             try:
                 proc.kill()
             except OSError:
+                # The direct child may have exited during the timeout cleanup.
                 pass
         return proc.communicate()
 
@@ -227,6 +236,7 @@ def _cleanup_successful_group(process_group: int, grace: float) -> None:
         try:
             os.killpg(process_group, signal.SIGKILL)
         except ProcessLookupError:
+            # The descendant group exited after the liveness check.
             pass
 
 
@@ -290,7 +300,9 @@ def run_process(
             remaining = None if deadline is None else deadline - time.monotonic()
             if remaining is not None and remaining <= 0:
                 out, err = _stop_tree(proc, terminate_grace, job_handle)
-                raise subprocess.TimeoutExpired(argv, float(timeout) if timeout is not None else 0.0, output=out, stderr=err)
+                raise subprocess.TimeoutExpired(
+                    argv, float(timeout) if timeout is not None else 0.0, output=out, stderr=err
+                )
             # Short polling keeps cancellation responsive without busy-spinning.
             wait_for = 0.1 if remaining is None else min(0.1, max(0.001, remaining))
             try:
