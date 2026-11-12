@@ -172,28 +172,33 @@ def run_cmd(
     cwd: str | Path | None = None,
     shell: bool = False,
 ) -> Tuple[int, str, str]:
-    """Run a command quietly (no flashing console window on Windows)."""
-    kwargs = {}
-    if IS_WINDOWS:
-        kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
+    """Run argv quietly with timeout and process-tree cleanup.
+
+    ``shell`` remains in the signature for source compatibility, but requesting
+    a shell is refused: callers must pass an argument vector and never compose
+    command text from user input.
+    """
+    if shell:
+        return 2, "", "shell execution is disabled; pass an argument list"
     try:
-        proc = subprocess.run(
+        from .processes import ProcessCancelled, run_process
+
+        proc = run_process(
             args,
-            capture_output=True,
             timeout=timeout,
-            cwd=str(cwd) if cwd else None,
-            shell=shell,
+            cwd=cwd,
             text=True,
             encoding="utf-8",
             errors="replace",
-            **kwargs,
         )
         return proc.returncode, proc.stdout or "", proc.stderr or ""
     except FileNotFoundError as exc:
         return 127, "", str(exc)
     except subprocess.TimeoutExpired:
         return 124, "", f"timeout after {timeout}s"
-    except Exception as exc:  # pragma: no cover
+    except ProcessCancelled:
+        return 130, "", "cancelled"
+    except Exception as exc:  # pragma: no cover - caller presents a friendly error
         return 1, "", str(exc)
 
 

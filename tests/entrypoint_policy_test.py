@@ -1,4 +1,5 @@
 """Execution entry points default to the shared, fail-closed policy."""
+
 from __future__ import annotations
 
 import sys

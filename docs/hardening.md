@@ -19,7 +19,9 @@ that a particular Windows binary has been replaced, signed or independently test
 | Encryption plaintext | `text_encrypt.text` and `vault_add.note_text` are private inputs, not replay data. |
 | Replay | Runtime inputs are not changed. Persisted/exported recipes require credentials to be entered again. No credential manager or automatic secret storage is implied. |
 | Legacy data | Data schema 3 scrubs known JSON profiles and readable local migration-snapshot JSON. A fresh migration snapshot is sanitised and does not copy `api_token.txt`. External backups are not rewritten. |
-| Atomic persistence | History/workflows use private uniquely named temporary files, fsync and replace. This does not make multi-process updates transactional. |
+| Atomic persistence | JSON writes use private uniquely named temporary files, fsync, atomic replace and a per-resource cross-process lock. This serializes cooperating writes but does not make every read-modify-write store transactional. |
+| Process supervision | `app.core.processes.run_process` rejects shell command strings, enforces timeouts/cancellation, and reaps process groups on POSIX; on Windows it uses a kill-on-close Job Object when permitted plus a bounded `taskkill /T` fallback. `run_cmd` and Tesseract discovery use it. Other direct subprocess call sites and arbitrary blocking OS calls are not yet all supervised. |
+| Execution entry points | CLI and Settings SendTo operations go through `ExecutionService`; the public registry invocation helper also delegates correctly and defaults to denying risky work unless a caller supplies confirmation. |
 | API credentials | Empty/whitespace credentials and credential I/O failure prevent startup. Clearing the token while running denies subsequent requests. The server binds only to IPv4 loopback. |
 | API execution | Destructive tools are denied by default. A Python integrator must explicitly set `allow_dangerous=True` if necessary. Simultaneous tool execution is bounded (default 3), sockets time out and JSON request bodies must be objects. |
 | API console | The credential file path is printed, not the full bearer credential. |
@@ -69,8 +71,9 @@ The total in `docs/stats.json` counts this suite separately from the original
 - Code signing, Defender/SmartScreen testing and a new Windows binary release.
 - A process sandbox for arbitrary Python plugins.
 - Credential Manager/DPAPI references and secure unattended secret resolution.
-- Cross-process/per-resource locking for vaults, outputs and journal updates.
-- Guaranteed cancellation of blocking OS calls/subprocess trees and shutdown QA.
+- Transactional read-modify-write coordination across every JSON store and file-output path; current sidecar locks protect cooperating writes and the vault's existing revision-checked update path.
+- Migration of every direct subprocess caller and cancellation of arbitrary blocking OS calls; the new supervisor currently covers `run_cmd` and Tesseract discovery, with regression tests for real process trees on CI.
+- Actual Windows 10/11 installer, upgrade, rollback, SmartScreen and clean-machine validation in a Windows VM.
 - Encrypted search index, streaming large vaults or complete DLP for free text.
 - Reproducible dependency lock/SBOM for a Windows artifact not built here.
 

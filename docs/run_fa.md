@@ -173,7 +173,8 @@ python main.py --run-schedule 1
 python main.py --macros                            :: کتابخانه‌ی ماکرو
 python main.py --run-macro pack.json --dry-run
 python main.py --serve --port 8770                 :: API محلی JSON
-python main.py --install-sendto --yes / --remove-sendto --yes  :: منوی «ارسال به» ویندوز
+python main.py --install-sendto --yes               :: افزودن میان‌بر Explorer (تأیید صریح)
+python main.py --remove-sendto --yes                :: برداشتن میان‌بر Explorer
 ```
 
 نمونه‌ی واقعی اجرای من:

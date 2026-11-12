@@ -115,18 +115,35 @@ def atomic_json_write(path: Path, payload: Any) -> None:
     """Unique, private temp file + replace; failures keep the previous file."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, ensure_ascii=False, indent=1)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(name, path)
-    finally:
+    # Atomic rename prevents torn reads; the sidecar lock also serializes
+    # competing cooperating writers so a slow writer cannot interleave its
+    # replacement with another profile/database metadata write.
+    from .resource_lock import resource_lock
+
+    with resource_lock(path):
+        fd, name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
         try:
-            os.unlink(name)
-        except FileNotFoundError:
-            pass
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, ensure_ascii=False, indent=1)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(name, path)
+            if os.name != "nt":
+                try:
+                    dir_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+                    try:
+                        os.fsync(dir_fd)
+                    finally:
+                        os.close(dir_fd)
+                except OSError:
+                    # Some filesystems do not support directory fsync. The
+                    # file itself was already fsynced before the atomic rename.
+                    pass
+        finally:
+            try:
+                os.unlink(name)
+            except FileNotFoundError:
+                pass
 
 
 def scrub_profile_file(path: Path) -> bool:
