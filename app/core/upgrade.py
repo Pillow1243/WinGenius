@@ -16,14 +16,18 @@ is retried next launch instead of being skipped.
 """
 from __future__ import annotations
 
+import contextlib
 import json
+import os
 import shutil
 import sqlite3
+import tempfile
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .paths import data_dir
+from .paths import data_dir, secure_private_file
 from .privacy import PROFILE_JSON, atomic_json_write, sanitize_document, scrub_profile_file
 
 DATA_VERSION = 3
@@ -73,44 +77,67 @@ def needs_upgrade(root: Optional[Path] = None) -> bool:
 
 
 def safe_copy_sqlite(src: Path, dst: Path) -> None:
-    """Create a transactionally consistent snapshot of a live SQLite database."""
+    """Snapshot a database with SQLite, including committed WAL contents.
+
+    A raw file copy is not a safe fallback for a live WAL database. Propagate
+    errors so callers cannot mistake an incomplete snapshot for a backup.
+    """
     dst.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        with sqlite3.connect(str(src)) as src_conn, sqlite3.connect(str(dst)) as dst_conn:
+    uri = src.resolve().as_uri() + "?mode=ro"
+    with contextlib.closing(sqlite3.connect(uri, uri=True)) as src_conn:
+        with contextlib.closing(sqlite3.connect(str(dst))) as dst_conn:
             src_conn.backup(dst_conn)
-    except sqlite3.Error:
-        shutil.copy2(src, dst)
 
 
-# --------------------------------------------------------------------- backup
 def backup_data_dir(root: Optional[Path] = None, reason: str = "upgrade") -> Optional[Path]:
-    """Copy the data folder next to itself; keeps the newest MAX_BACKUPS."""
+    """Create a completed profile snapshot, or return None on failure.
+
+    Staging directories are never returned as backups. Other files are copied
+    individually; this is not a globally atomic snapshot of concurrent writers.
+    """
     base = root or data_dir()
     target_root = base / BACKUP_DIR
-    target_root.mkdir(parents=True, exist_ok=True)
-    stamp = time.strftime("%Y%m%d-%H%M%S")
-    target = target_root / f"{reason}-v{current_version(base)}-{stamp}"
+    staging: Optional[Path] = None
     try:
-        target.mkdir(parents=True, exist_ok=False)
+        target_root.mkdir(parents=True, exist_ok=True)
+        staging = Path(tempfile.mkdtemp(prefix=".incomplete-", dir=target_root))
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        target = target_root / f"{reason}-v{current_version(base)}-{stamp}-{uuid.uuid4().hex[:12]}"
         for item in base.iterdir():
             if item.name in {BACKUP_DIR, "api_token.txt"} or item.is_symlink():
                 continue
             if item.name.endswith((".sqlite3-wal", ".sqlite3-shm")):
                 continue
             if item.is_dir():
-                shutil.copytree(item, target / item.name, symlinks=False, dirs_exist_ok=True)
+                # Do not follow nested links outside the profile.
+                def ignore_links(folder, names):
+                    return [name for name in names if (Path(folder) / name).is_symlink()]
+
+                shutil.copytree(item, staging / item.name, ignore=ignore_links)
             elif item.name in PROFILE_JSON:
-                # Do not create a fresh plaintext-secret copy before scrubbing.
+                # Valid profile JSON can be sanitized, but an unreadable file
+                # cannot safely be scrubbed. Preserve its exact bytes privately
+                # instead of falsely claiming an empty file was backed up.
+                raw_bytes = item.read_bytes()
                 try:
-                    raw = json.loads(item.read_text(encoding="utf-8"))
-                except ValueError:
-                    raw = []  # malformed input cannot be safely exported
-                atomic_json_write(target / item.name, sanitize_document(raw))
+                    raw = json.loads(raw_bytes.decode("utf-8"))
+                except (ValueError, UnicodeDecodeError):
+                    destination = staging / item.name
+                    fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                    with os.fdopen(fd, "wb") as handle:
+                        handle.write(raw_bytes)
+                    secure_private_file(destination)
+                else:
+                    atomic_json_write(staging / item.name, sanitize_document(raw))
             elif item.suffix == ".sqlite3":
-                safe_copy_sqlite(item, target / item.name)
+                safe_copy_sqlite(item, staging / item.name)
             else:
-                shutil.copy2(item, target / item.name)
-    except OSError:
+                shutil.copy2(item, staging / item.name)
+        os.rename(staging, target)
+        staging = None
+    except (OSError, sqlite3.Error, ValueError):
+        if staging is not None:
+            shutil.rmtree(staging, ignore_errors=True)
         return None
     _prune_backups(base)
     return target
@@ -119,7 +146,7 @@ def backup_data_dir(root: Optional[Path] = None, reason: str = "upgrade") -> Opt
 def _prune_backups(root: Path) -> None:
     folder = root / BACKUP_DIR
     try:
-        entries = sorted((p for p in folder.iterdir() if p.is_dir()),
+        entries = sorted((p for p in folder.iterdir() if p.is_dir() and not p.name.startswith(".incomplete-")),
                          key=lambda p: p.stat().st_mtime, reverse=True)
     except OSError:
         return
@@ -198,10 +225,7 @@ def write_stamp(root: Optional[Path] = None, history: Optional[List[Dict[str, An
         "updated": time.time(),
         "history": (previous.get("history") or []) + (history or []),
     }
-    try:
-        stamp_path(base).write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
-    except OSError:
-        pass
+    atomic_json_write(stamp_path(base), payload)
 
 
 def migrate(root: Optional[Path] = None, logger=None) -> Dict[str, Any]:
@@ -239,13 +263,20 @@ def migrate(root: Optional[Path] = None, logger=None) -> Dict[str, Any]:
             if logger:
                 logger.error("migration %s→%s failed: %s", version, version + 1, exc)
             break
+        if report["problems"]:
+            report["ok"] = False
+            break
         report["steps"].append(f"{version}→{version + 1}")
         version += 1
 
     if report["ok"]:
-        write_stamp(base, [{"from": report["from"], "to": DATA_VERSION, "at": time.time(),
-                            "steps": report["steps"]}])
-    if logger and report["steps"]:
+        try:
+            write_stamp(base, [{"from": report["from"], "to": DATA_VERSION, "at": time.time(),
+                                "steps": report["steps"]}])
+        except OSError as exc:
+            report["problems"].append(f"could not write migration stamp: {exc}")
+            report["ok"] = False
+    if logger and report["ok"] and report["steps"]:
         logger.info("data migrated %s (backup: %s)", ", ".join(report["steps"]),
                     report["backup"] or "none")
     return report
@@ -254,6 +285,9 @@ def migrate(root: Optional[Path] = None, logger=None) -> Dict[str, Any]:
 def summary(report: Dict[str, Any], lang: str = "fa") -> str:
     """One-paragraph human summary, used by --doctor and the settings panel."""
     fa = lang != "en"
+    if not report.get("ok", True):
+        prefix = "ارتقای داده‌ها ناموفق بود: " if fa else "Data upgrade failed: "
+        return prefix + "; ".join(report.get("problems") or [])
     if not report.get("steps"):
         return ("پرونده‌ی داده‌ها به‌روز است (نسخه‌ی " + str(DATA_VERSION) + ")." if fa
                 else f"Data folder is up to date (version {DATA_VERSION}).")

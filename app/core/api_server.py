@@ -384,6 +384,20 @@ def _make_handler(server: ApiServer):
                 self.close_connection = True
                 self._reply(501, {"error": "Transfer-Encoding is not supported"})
                 return False
+            lengths = self.headers.get_all("Content-Length", [])
+            lengths = [value.strip() for value in lengths]
+            if (len(lengths) > 1 or
+                    (lengths and (len(lengths[0]) > 20 or not lengths[0].isascii()
+                                  or not lengths[0].isdigit()))):
+                self.close_connection = True
+                self._reply(400, {"error": "invalid Content-Length"})
+                return False
+            if self.command == "GET" and lengths and int(lengths[0]) != 0:
+                # GET never consumes a body. Keeping the socket open would let
+                # leftover bytes be parsed as a subsequent HTTP request.
+                self.close_connection = True
+                self._reply(400, {"error": "GET body is not supported"})
+                return False
             return True
 
         def _authorised(self, query: Dict[str, list]) -> bool:
@@ -411,9 +425,12 @@ def _make_handler(server: ApiServer):
                     self._reply(429, {"error": "too many failed authentication attempts",
                                       "retry_after": server.auth_limiter.retry_after()})
                     return False
+                # No request body has been consumed on rejected requests.
+                self.close_connection = True
                 self._reply(401, {"error": "unauthorised"})
                 return False
             if not server.limiter.allow(client):
+                self.close_connection = True
                 self._reply(429, {"error": "too many requests",
                                   "retry_after": server.limiter.retry_after()})
                 return False

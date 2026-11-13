@@ -81,7 +81,9 @@ def create_app(argv: List[str] | None = None) -> "QApplication":
     setup_logging(debug="--debug" in (argv if argv is not None else sys.argv))
     try:
         report = upgrade.migrate(logger=log)
-        if report.get("steps"):
+        if not report.get("ok", True):
+            log.error(upgrade.summary(report, settings.lang))
+        elif report.get("steps"):
             log.info(upgrade.summary(report, settings.lang))
     except Exception as exc:                      # never block startup on a migration
         log.error("data migration failed: %s", exc)
