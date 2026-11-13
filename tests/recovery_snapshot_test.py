@@ -87,5 +87,3 @@ def test_update_preparation_aborts_if_backup_fails(tmp_path, monkeypatch):
     with pytest.raises(updates.UpdateError, match="profile backup"):
         updates.prepare_rollback_snapshot(target_version="8.0.0", install_mode="portable", root=tmp_path)
     assert not updates.rollback_state_path(tmp_path).exists()
-
-
