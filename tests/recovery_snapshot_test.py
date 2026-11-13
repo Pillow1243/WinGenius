@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from pathlib import Path
 import pytest
 
 from app.core import upgrade, updates
@@ -45,12 +46,14 @@ def test_failed_backup_is_not_published_or_used_for_migration(tmp_path, monkeypa
     assert "failed" in upgrade.summary(report, "en").lower()
 
 
-def test_malformed_profile_refuses_backup_without_replacing_data(tmp_path):
+def test_malformed_profile_is_preserved_in_backup_and_rescue(tmp_path):
     history = tmp_path / "history.json"
     history.write_text("{broken", encoding="utf-8")
-    assert upgrade.backup_data_dir(tmp_path) is None
-    assert history.read_text(encoding="utf-8") == "{broken"
-    assert list((tmp_path / "backups").iterdir()) == []
+    report = upgrade.migrate(tmp_path)
+    assert report["ok"]
+    assert (Path(report["backup"]) / "history.json").read_text(encoding="utf-8") == "{broken"
+    assert (tmp_path / "history.json.broken").read_text(encoding="utf-8") == "{broken"
+    assert json.loads(history.read_text(encoding="utf-8")) == []
 
 
 def test_consecutive_backups_have_distinct_names(tmp_path):

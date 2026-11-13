@@ -27,7 +27,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .paths import data_dir
+from .paths import data_dir, secure_private_file
 from .privacy import PROFILE_JSON, atomic_json_write, sanitize_document, scrub_profile_file
 
 DATA_VERSION = 3
@@ -115,9 +115,20 @@ def backup_data_dir(root: Optional[Path] = None, reason: str = "upgrade") -> Opt
 
                 shutil.copytree(item, staging / item.name, ignore=ignore_links)
             elif item.name in PROFILE_JSON:
-                # Refuse malformed profiles rather than claiming an empty backup.
-                raw = json.loads(item.read_text(encoding="utf-8"))
-                atomic_json_write(staging / item.name, sanitize_document(raw))
+                # Valid profile JSON can be sanitized, but an unreadable file
+                # cannot safely be scrubbed. Preserve its exact bytes privately
+                # instead of falsely claiming an empty file was backed up.
+                raw_bytes = item.read_bytes()
+                try:
+                    raw = json.loads(raw_bytes.decode("utf-8"))
+                except (ValueError, UnicodeDecodeError):
+                    destination = staging / item.name
+                    fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                    with os.fdopen(fd, "wb") as handle:
+                        handle.write(raw_bytes)
+                    secure_private_file(destination)
+                else:
+                    atomic_json_write(staging / item.name, sanitize_document(raw))
             elif item.suffix == ".sqlite3":
                 safe_copy_sqlite(item, staging / item.name)
             else:
