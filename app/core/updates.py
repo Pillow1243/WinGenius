@@ -23,10 +23,10 @@ Security Architecture
        release signing key (`TRUSTED_RELEASE_PUBKEYS` baked into the binary) **or** a
        valid OS-trusted Windows Authenticode signature (`require_signature=True` by default).
 4. **User Data Preservation & Transactional Rollback**:
-   Before applying any update, `prepare_rollback_snapshot()` creates a transactional
-   SQLite/profile backup (`upgrade.backup_data_dir`) and backs up the current `.exe`
-   with its SHA-256 in `<data_dir>/updates/rollback/`. User settings, Vault `.wgv`
-   containers, journal databases, macros, and personal files are never deleted.
+   Before applying an update, `prepare_rollback_snapshot()` requires a profile backup
+   (`upgrade.backup_data_dir`) and backs up the current `.exe` with its SHA-256 in
+   `<data_dir>/updates/rollback/`. SQLite files are snapshotted individually; the
+   entire profile is not a transactionally consistent point-in-time snapshot.
 """
 from __future__ import annotations
 
@@ -1152,6 +1152,8 @@ def prepare_rollback_snapshot(
     base = root or data_dir()
     rb_folder = rollback_dir(base)
     data_backup = upgrade.backup_data_dir(root=base, reason=f"pre-update-{current_version}")
+    if data_backup is None:
+        raise UpdateError("Could not create a profile backup; update preparation aborted.")
 
     exe_source = current_exe if current_exe is not None else (Path(sys.executable) if IS_FROZEN else None)
     backup_exe_path = ""
