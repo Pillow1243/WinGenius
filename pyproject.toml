@@ -42,7 +42,7 @@ dependencies = [
     "markdown>=3.5",
     "mss>=9.0",
     "imageio-ffmpeg>=0.4.9",
-    "opencv-python-headless>=4.9,<5; platform_system != 'Darwin'",
+    "opencv-python-headless>=4.9,<6; platform_system != 'Darwin'",
     "pytesseract>=0.3.10",
     "dnspython>=2.6",
     "pywin32>=306; sys_platform == 'win32'",
